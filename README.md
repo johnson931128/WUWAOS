@@ -1,30 +1,49 @@
-# OS-Simulator
+# WUWAOS
 
-OS-Simulator is an OS Simulator / OS Algorithm Visualizer project.
+## Project Overview
 
-The long-term goal is to build the project step by step and use it to understand operating system concepts such as CPU scheduling, process states, memory management, page replacement, deadlock detection, and disk scheduling.
+WUWAOS is a terminal-first, Linux-like OS simulator.
 
-## Current Stage
+It is not a real bootable operating system.
+Instead, it simulates operating system behavior inside a normal C++ application so the project can be built step by step and inspected more easily.
 
-The project is currently in the terminal-based CPU scheduling simulator bootstrap stage.
+## Current Features
 
-At this point, the project only provides:
+- C++17 / CMake project structure
+- Minimal terminal shell loop
+- `help` / `clear` / `exit` commands
 
-- A minimal C++ / CMake project structure
-- Placeholder source files for future simulator components
-- A simple executable that confirms the bootstrap runs successfully
+Not implemented yet:
 
-No scheduling logic has been implemented yet.
+- Process model
+- Kernel simulator
+- Scheduler
+- Memory / file system / I/O subsystems
+- SFML visualization
 
-## Build
+## Build / Run
 
 ```powershell
 cmake -S . -B build
 cmake --build build
-```
-
-## Run
-
-```powershell
 .\build\os_simulator.exe
 ```
+
+## Example Usage
+
+```text
+wuwaos$ help
+wuwaos$ clear
+wuwaos$ exit
+```
+
+## Roadmap
+
+- Process model
+- `run` / `ps` / `kill` commands
+- Kernel simulator
+- Simulated time step
+- FCFS / Round Robin scheduling
+- Memory manager
+- Virtual file system
+- Optional SFML visualization
