@@ -6,14 +6,17 @@
 - Build environment
 - Minimal terminal shell loop
 - Basic shell commands: `help`, `clear`, `exit`
+- Basic `Process` model
 
 ## Next Step
 
-- Create a basic `Process` model
+- Create a kernel skeleton or process table
 
 ## Not Finished Yet
 
-- Process management
-- FCFS scheduling
-- Gantt chart output
+- `run` command
+- `ps` command
+- Scheduler
+- Memory manager
+- Virtual file system
 - SFML visualization
