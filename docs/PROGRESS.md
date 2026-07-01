@@ -7,15 +7,14 @@
 - Minimal terminal shell loop
 - Basic shell commands: `help`, `clear`, `exit`
 - Basic `Process` model
+- Basic Kernel skeleton and process table
 
 ## Next Step
 
-- Create a kernel skeleton or process table
+- Connect shell commands to Kernel: `run` / `ps`
 
 ## Not Finished Yet
 
-- `run` command
-- `ps` command
 - Scheduler
 - Memory manager
 - Virtual file system

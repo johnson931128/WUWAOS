@@ -10,6 +10,7 @@ add_executable(os_simulator
     src/main.cpp
     src/core/Process.cpp
     src/core/Simulation.cpp
+    src/kernel/Kernel.cpp
     src/schedulers/FCFSScheduler.cpp
     src/shell/Shell.cpp
 )

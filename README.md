@@ -11,14 +11,16 @@ Instead, it simulates operating system behavior inside a normal C++ application 
 
 - C++17 / CMake project structure
 - Minimal terminal shell loop
+- Basic `Process` model
+- Basic Kernel skeleton with process table
 - `help` / `clear` / `exit` commands
 
 Not implemented yet:
 
-- Process model
-- Kernel simulator
+- Advanced process commands (`run`, `ps`, `kill`)
 - Scheduler
 - Memory / file system / I/O subsystems
+- Simulated time step
 - SFML visualization
 
 ## Build / Run
@@ -39,9 +41,8 @@ wuwaos$ exit
 
 ## Roadmap
 
-- Process model
 - `run` / `ps` / `kill` commands
-- Kernel simulator
+- Expand Kernel simulator
 - Simulated time step
 - FCFS / Round Robin scheduling
 - Memory manager
