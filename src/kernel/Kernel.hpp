@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/Process.hpp"
+#include "schedulers/FCFSScheduler.hpp"
 
 #include <string>
 #include <vector>
@@ -21,7 +22,12 @@ public:
     int getSystemTime() const;
 
 private:
+    Process* findProcessByPid(int pid);
+    const Process* findProcessByPid(int pid) const;
+
     int systemTime;
     int nextPid;
+    int currentRunningPid;
     std::vector<Process> processes;
+    FCFSScheduler scheduler;
 };

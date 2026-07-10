@@ -2,8 +2,8 @@
 
 #include "schedulers/Scheduler.hpp"
 
-// Placeholder for the FCFS scheduler.
+// Minimal FCFS scheduler that chooses the earliest ready process.
 class FCFSScheduler : public Scheduler {
 public:
-    FCFSScheduler() = default;
+    int selectNextPid(const std::vector<Process>& processes) const override;
 };

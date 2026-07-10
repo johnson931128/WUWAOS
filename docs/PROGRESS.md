@@ -12,15 +12,17 @@
 - `run` / `ps` / `kill` commands
 - System call interface layer
 - System step skeleton
+- FCFS scheduler baseline
 
 ## Next Step
 
-- Add FCFS scheduler baseline
+- Add Round Robin scheduling and metrics
 
 ## Not Finished Yet
 
 - Scheduler
-- Process execution tick
+- Round Robin scheduling
+- Waiting / turnaround metrics
 - Memory manager
 - Virtual file system
 - SFML visualization
