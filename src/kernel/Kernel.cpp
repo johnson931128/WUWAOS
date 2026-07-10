@@ -25,6 +25,16 @@ bool Kernel::killProcess(int pid) {
     return false;
 }
 
+void Kernel::step() {
+    systemTime += 1;
+
+    for (auto& process : processes) {
+        if (process.getState() == ProcessState::New) {
+            process.setState(ProcessState::Ready);
+        }
+    }
+}
+
 const std::vector<Process>& Kernel::getProcesses() const {
     return processes;
 }

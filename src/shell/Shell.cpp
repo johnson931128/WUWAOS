@@ -30,6 +30,12 @@ bool Shell::handleCommand(const std::string& input) {
         return true;
     }
 
+    if (input == "step") {
+        syscalls.sysStep();
+        std::cout << "Time advanced to " << syscalls.sysGetTime() << "." << std::endl;
+        return true;
+    }
+
     if (input.rfind("run", 0) == 0) {
         handleRunCommand(input);
         return true;
@@ -65,6 +71,7 @@ void Shell::printHelp() const {
     std::cout << "  run <programName> <burstTime> - Create a simulated process" << std::endl;
     std::cout << "  ps    - List simulated processes" << std::endl;
     std::cout << "  kill <pid> - Terminate a simulated process" << std::endl;
+    std::cout << "  step  - Advance simulated time by one tick" << std::endl;
     std::cout << "  exit  - Exit the shell" << std::endl;
 }
 

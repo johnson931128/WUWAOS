@@ -14,6 +14,7 @@ public:
                int memoryUsage = 0);
 
     bool sysKill(int pid);
+    void sysStep();
     const std::vector<Process>& sysPs() const;
     int sysGetTime() const;
 

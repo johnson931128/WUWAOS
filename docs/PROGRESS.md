@@ -11,15 +11,16 @@
 - Shell connected to Kernel
 - `run` / `ps` / `kill` commands
 - System call interface layer
+- System step skeleton
 
 ## Next Step
 
-- Add system step skeleton
+- Add FCFS scheduler baseline
 
 ## Not Finished Yet
 
 - Scheduler
-- System step
+- Process execution tick
 - Memory manager
 - Virtual file system
 - SFML visualization
