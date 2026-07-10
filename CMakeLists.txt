@@ -13,6 +13,7 @@ add_executable(os_simulator
     src/kernel/Kernel.cpp
     src/schedulers/FCFSScheduler.cpp
     src/shell/Shell.cpp
+    src/system/SystemCallInterface.cpp
 )
 
 target_include_directories(os_simulator

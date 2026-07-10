@@ -10,10 +10,11 @@
 - Basic Kernel skeleton and process table
 - Shell connected to Kernel
 - `run` / `ps` / `kill` commands
+- System call interface layer
 
 ## Next Step
 
-- Add system call interface layer
+- Add system step skeleton
 
 ## Not Finished Yet
 

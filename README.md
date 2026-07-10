@@ -13,12 +13,12 @@ Instead, it simulates operating system behavior inside a normal C++ application 
 - Minimal terminal shell loop
 - Basic `Process` model
 - Basic Kernel skeleton with process table
+- System call interface layer
 - `help` / `clear` / `exit` commands
 - `run <programName> <burstTime>` / `ps` / `kill <pid>` commands
 
 Not implemented yet:
 
-- System call interface layer
 - Scheduler
 - Memory / file system / I/O subsystems
 - Simulated time step
@@ -45,7 +45,6 @@ wuwaos$ exit
 
 ## Roadmap
 
-- System call interface layer
 - Expand Kernel simulator
 - Simulated time step
 - FCFS / Round Robin scheduling

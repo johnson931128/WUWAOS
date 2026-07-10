@@ -105,13 +105,13 @@ void Shell::handleRunCommand(const std::string& input) {
         return;
     }
 
-    const int pid = kernel.createProcess(programName, burstTime);
+    const int pid = syscalls.sysRun(programName, burstTime);
     std::cout << "Created process PID=" << pid
               << " NAME=" << programName << std::endl;
 }
 
 void Shell::handlePsCommand() const {
-    const auto& processes = kernel.getProcesses();
+    const auto& processes = syscalls.sysPs();
 
     if (processes.empty()) {
         std::cout << "No processes." << std::endl;
@@ -121,7 +121,7 @@ void Shell::handlePsCommand() const {
     std::cout << std::left
               << std::setw(6) << "PID"
               << std::setw(10) << "NAME"
-              << std::setw(10) << "STATE"
+              << std::setw(14) << "STATE"
               << std::setw(10) << "ARRIVAL"
               << std::setw(8) << "BURST"
               << std::setw(10) << "REMAINING"
@@ -131,7 +131,7 @@ void Shell::handlePsCommand() const {
         std::cout << std::left
                   << std::setw(6) << process.getPid()
                   << std::setw(10) << process.getName()
-                  << std::setw(10) << processStateToString(process.getState())
+                  << std::setw(14) << processStateToString(process.getState())
                   << std::setw(10) << process.getArrivalTime()
                   << std::setw(8) << process.getBurstTime()
                   << std::setw(10) << process.getRemainingTime()
@@ -170,7 +170,7 @@ void Shell::handleKillCommand(const std::string& input) {
         return;
     }
 
-    if (!kernel.killProcess(pid)) {
+    if (!syscalls.sysKill(pid)) {
         std::cout << "Error: process not found." << std::endl;
         return;
     }

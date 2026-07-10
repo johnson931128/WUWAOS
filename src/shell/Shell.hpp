@@ -1,6 +1,6 @@
 #pragma once
 
-#include "kernel/Kernel.hpp"
+#include "system/SystemCallInterface.hpp"
 
 #include <string>
 
@@ -17,5 +17,5 @@ private:
     void handlePsCommand() const;
     void handleKillCommand(const std::string& input);
 
-    Kernel kernel;
+    SystemCallInterface syscalls;
 };
