@@ -14,10 +14,11 @@ Instead, it simulates operating system behavior inside a normal C++ application 
 - Basic `Process` model
 - Basic Kernel skeleton with process table
 - `help` / `clear` / `exit` commands
+- `run <programName> <burstTime>` / `ps` / `kill <pid>` commands
 
 Not implemented yet:
 
-- Advanced process commands (`run`, `ps`, `kill`)
+- System call interface layer
 - Scheduler
 - Memory / file system / I/O subsystems
 - Simulated time step
@@ -36,12 +37,15 @@ cmake --build build
 ```text
 wuwaos$ help
 wuwaos$ clear
+wuwaos$ run editor 5
+wuwaos$ ps
+wuwaos$ kill 1
 wuwaos$ exit
 ```
 
 ## Roadmap
 
-- `run` / `ps` / `kill` commands
+- System call interface layer
 - Expand Kernel simulator
 - Simulated time step
 - FCFS / Round Robin scheduling

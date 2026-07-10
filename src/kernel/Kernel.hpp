@@ -14,6 +14,7 @@ public:
                       int burstTime,
                       int priority = 0,
                       int memoryUsage = 0);
+    bool killProcess(int pid);
 
     const std::vector<Process>& getProcesses() const;
     int getSystemTime() const;

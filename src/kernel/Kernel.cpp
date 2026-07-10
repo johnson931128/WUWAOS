@@ -14,6 +14,17 @@ int Kernel::createProcess(const std::string& name,
     return pid;
 }
 
+bool Kernel::killProcess(int pid) {
+    for (auto& process : processes) {
+        if (process.getPid() == pid) {
+            process.setState(ProcessState::Terminated);
+            return true;
+        }
+    }
+
+    return false;
+}
+
 const std::vector<Process>& Kernel::getProcesses() const {
     return processes;
 }
