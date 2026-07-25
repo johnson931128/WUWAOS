@@ -111,3 +111,15 @@ Initial milestone:
 6. Calculate waiting time and turnaround time.
 
 After the terminal version is stable, add SFML visualization.
+
+## Agent skills
+
+WUWAOS uses `mattpocock/skills` as an auxiliary Codex workflow, but these skills do not replace the project rules above.
+
+- If a request is unclear, use `grill-with-docs` before planning or editing.
+- After discussion is clear, use `to-spec` to organize the work into a small, verifiable slice.
+- After the spec is confirmed, use `implement`.
+- `implement` may use `tdd` at suitable, pre-agreed test seams, and should finish with `code-review`.
+- When a bug is hard to explain or reproduce, use `diagnosing-bugs`.
+- Use `domain-modeling` to keep `CONTEXT.md` and `docs/adr/` aligned with WUWAOS terminology and decisions.
+- All skills must still follow WUWAOS small-step development, plan-before-editing, terminal-first direction, and existing documentation rules.
