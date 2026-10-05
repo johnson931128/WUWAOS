@@ -1,125 +1,16 @@
 # AGENTS.md
 
-## Project Goal
+## 專案目標
 
-This project is an OS Simulator / OS Algorithm Visualizer.
+WUWAOS 將從零開始，實作真正可在 QEMU 上啟動的小型 RISC-V 作業系統。
 
-The goal is to build the project step by step, starting from small and understandable features.
-The project should help visualize operating system concepts such as CPU scheduling, process states, memory management, page replacement, deadlock detection, and disk scheduling.
+## 執行動作前說明設計
 
-The main purpose is not only to generate code, but also to improve understanding of C++, data structures, algorithms, and operating system design.
+執行任何動作前，須先向使用者說明本次工作的設計方法、相關演算法、架構設計、修改範圍與驗證方式。
+說明深度依任務調整；不涉及演算法或架構變更時，說明實際採用的方法即可。
 
-## Collaboration Rules
+## 先整理 spec，再執行
 
-Before modifying code, explain the plan first.
-
-For every task, follow this order:
-
-1. Explain what the feature should do.
-2. List the files that may need to be changed.
-3. Describe the smallest reasonable implementation step.
-4. Wait for confirmation if the change is large or unclear.
-5. Modify only the necessary code.
-6. After modifying, summarize the changes clearly.
-
-## Coding Style
-
-Keep the code simple and readable.
-
-Prefer small classes and small functions.
-Avoid large rewrites unless clearly necessary.
-Do not introduce complicated architecture too early.
-
-Use clear names for classes, functions, and variables.
-
-Examples:
-
-- `Process`
-- `Scheduler`
-- `FCFSScheduler`
-- `Simulation`
-- `ReadyQueue`
-- `GanttChart`
-
-## Learning Rule
-
-Do not only provide finished code.
-
-After every important change, explain:
-
-1. What was changed.
-2. Why it was changed.
-3. How the new code works.
-4. Which part is worth reading carefully.
-5. What can be practiced manually next.
-
-## Task Size Rule
-
-Each task should be small.
-
-Good task examples:
-
-- Create the `Process` class.
-- Implement FCFS scheduling.
-- Print a terminal-based Gantt chart.
-- Add one simulation tick.
-- Show the ready queue.
-- Add Round Robin time quantum.
-
-Bad task examples:
-
-- Build the whole OS simulator.
-- Add all scheduling algorithms at once.
-- Rewrite the entire project structure.
-- Add GUI, scheduling, memory, and deadlock together.
-
-## Project Progress Rule
-
-After each completed task, update or suggest updates to the project notes.
-
-The notes should include:
-
-- What is completed.
-- How to run the project.
-- What is not finished yet.
-- What the next small step should be.
-
-## Testing Rule
-
-Whenever possible, provide a simple way to verify the result.
-
-For example:
-
-- Build command.
-- Run command.
-- Expected terminal output.
-- Small test input.
-- Expected Gantt chart.
-- Expected scheduling result.
-
-## Current Development Direction
-
-Start with a terminal-based CPU Scheduling Simulator.
-
-Initial milestone:
-
-1. Create a basic `Process` structure.
-2. Implement FCFS scheduling.
-3. Simulate time step by step.
-4. Print the running process at each tick.
-5. Print a simple Gantt chart.
-6. Calculate waiting time and turnaround time.
-
-After the terminal version is stable, add SFML visualization.
-
-## Agent skills
-
-WUWAOS uses `mattpocock/skills` as an auxiliary Codex workflow, but these skills do not replace the project rules above.
-
-- If a request is unclear, use `grill-with-docs` before planning or editing.
-- After discussion is clear, use `to-spec` to organize the work into a small, verifiable slice.
-- After the spec is confirmed, use `implement`.
-- `implement` may use `tdd` at suitable, pre-agreed test seams, and should finish with `code-review`.
-- When a bug is hard to explain or reproduce, use `diagnosing-bugs`.
-- Use `domain-modeling` to keep `CONTEXT.md` and `docs/adr/` aligned with WUWAOS terminology and decisions.
-- All skills must still follow WUWAOS small-step development, plan-before-editing, terminal-first direction, and existing documentation rules.
+將使用者的 prompt 及後續討論彙整成 spec 後，才能執行動作。
+spec 應包含目標、工作範圍、設計方案、執行步驟與驗收條件，可直接整理在對話中。
+需求有歧義時先釐清；後續討論改變需求時，先更新 spec，再依更新後的 spec 執行。
