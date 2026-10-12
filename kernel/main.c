@@ -1,30 +1,13 @@
-/* QEMU virt's NS16550 UART. This milestone uses a fixed platform layout. */
-#define UART_BASE 0x10000000UL
-#define UART_LINE_STATUS 5
-#define UART_TRANSMIT_READY (1U << 5)
-
-static void uart_putc(char character) {
-    volatile unsigned char *uart = (volatile unsigned char *)UART_BASE;
-
-    while ((uart[UART_LINE_STATUS] & UART_TRANSMIT_READY) == 0) {
-    }
-    uart[0] = (unsigned char)character;
-}
-
-static void uart_puts(const char *text) {
-    while (*text != '\0') {
-        if (*text == '\n') {
-            uart_putc('\r');
-        }
-        uart_putc(*text++);
-    }
-}
+#include "console.h"
+#include "process.h"
+#include "trap.h"
+#include "vm.h"
 
 void kernel_main(void) {
-    uart_puts("WUWAOS booting...\n");
-
-    /* No scheduler or interrupts yet. Keep the booted kernel idle. */
-    for (;;) {
-        __asm__ volatile("wfi");
-    }
+    console_puts("WUWAOS booting...\n");
+    trap_init();
+    console_puts("[trap] Direct entry installed\n");
+    const uintptr_t page_table = vm_init();
+    process_init(page_table);
+    process_start();
 }

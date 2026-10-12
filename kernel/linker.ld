@@ -9,13 +9,17 @@ MEMORY
 
 SECTIONS
 {
-    .text : ALIGN(16) {
+    .text : ALIGN(4096) {
         KEEP(*(.text.entry))
         *(.text .text.*)
+        . = ALIGN(4096);
+        __text_end = .;
     } > RAM
 
-    .rodata : ALIGN(16) {
+    .rodata : ALIGN(4096) {
         *(.rodata .rodata.* .srodata .srodata.*)
+        . = ALIGN(4096);
+        __rodata_end = .;
     } > RAM
 
     .data : ALIGN(16) {
@@ -33,4 +37,7 @@ SECTIONS
         . += 16K;
         __stack_top = .;
     } > RAM
+    . = ALIGN(4096);
+    __kernel_end = .;
+    ASSERT(__kernel_end <= 0x80400000, "Kernel exceeds fixed 2 MiB mapping window")
 }
