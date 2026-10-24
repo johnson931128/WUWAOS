@@ -5,8 +5,36 @@
 #define SYS_WRITE 1
 #define SYS_GETPID 2
 #define SYS_EXIT 3
+#define SYS_SPAWN 4
+#define SYS_YIELD 5
+#define SYS_SLEEP 6
+#define SYS_WAKEUP 7
+#define SYS_WAIT 8
+#define SYS_PS 9
+#define SYS_PCB 10
+#define SYS_KILL 11
+#define SYS_READ 12
+#define SYS_PIPELINE 13
+#define SYS_TRACE 14
+#define SYS_FORK 15
+#define SYS_EXEC 16
+#define SYS_FS_LIST 17
+#define SYS_FS_MKDIR 18
+#define SYS_FS_TOUCH 19
+#define SYS_FS_READ 20
+#define SYS_FS_WRITE 21
+
+#define PROGRAM_WORKER 1
+#define PROGRAM_QUICK 2
+#define PROGRAM_WRITER 3
+#define PROGRAM_READER 4
+#define PROGRAM_COUNTER 5
+
+#define ERR_NO_CHILD (-10L)
+#define ERR_NO_SLOT (-11L)
 #define ERR_INVALID (-22L)
 #define ERR_ADDRESS (-14L)
 #define ERR_NO_SYSCALL (-38L)
+#define ERR_BROKEN_PIPE (-32L)
 
 #endif

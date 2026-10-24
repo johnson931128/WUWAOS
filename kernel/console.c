@@ -28,6 +28,28 @@ void console_hex(unsigned long value) {
     }
 }
 
+void console_number(long value) {
+    char digits[20];
+    unsigned long number = (unsigned long)value;
+    if (value < 0) {
+        console_putc('-');
+        number = 0UL - number;
+    }
+    int length = 0;
+    do {
+        digits[length++] = (char)('0' + number % 10);
+        number /= 10;
+    } while (number != 0);
+    while (length > 0) {
+        console_putc(digits[--length]);
+    }
+}
+
+int console_getc(void) {
+    volatile unsigned char *uart = (volatile unsigned char *)UART_BASE;
+    return (uart[UART_LINE_STATUS] & 1) ? uart[0] : -1;
+}
+
 _Noreturn void kernel_idle(void) {
     for (;;) {
         __asm__ volatile("wfi");

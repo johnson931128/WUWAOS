@@ -18,6 +18,49 @@ long getpid(void) {
     return syscall3(SYS_GETPID, 0, 0, 0);
 }
 
+long spawn(long program) {
+    return syscall3(SYS_SPAWN, program, 0, 0);
+}
+
+long yield(void) {
+    return syscall3(SYS_YIELD, 0, 0, 0);
+}
+
+long sleep(long channel) {
+    return syscall3(SYS_SLEEP, channel, 0, 0);
+}
+
+long wakeup(long channel) {
+    return syscall3(SYS_WAKEUP, channel, 0, 0);
+}
+
+long wait(long pid, long *status) {
+    return syscall3(SYS_WAIT, pid, (long)status, 0);
+}
+
+long read(long fd, char *buffer, unsigned long length) {
+    return syscall3(SYS_READ, fd, (long)buffer, (long)length);
+}
+
+long ps(void) { return syscall3(SYS_PS, 0, 0, 0); }
+long pcb(long pid) { return syscall3(SYS_PCB, pid, 0, 0); }
+long kill(long pid) { return syscall3(SYS_KILL, pid, 0, 0); }
+long pipeline(long pids[2]) { return syscall3(SYS_PIPELINE, (long)pids, 0, 0); }
+long trace(long enabled) { return syscall3(SYS_TRACE, enabled, 0, 0); }
+long fork(void) { return syscall3(SYS_FORK, 0, 0, 0); }
+long exec(long program) { return syscall3(SYS_EXEC, program, 0, 0); }
+long fs_list(const char *path, char *buffer, unsigned long capacity) {
+    return syscall3(SYS_FS_LIST, (long)path, (long)buffer, (long)capacity);
+}
+long fs_mkdir(const char *path) { return syscall3(SYS_FS_MKDIR, (long)path, 0, 0); }
+long fs_touch(const char *path) { return syscall3(SYS_FS_TOUCH, (long)path, 0, 0); }
+long fs_readfile(const char *path, char *buffer, unsigned long capacity) {
+    return syscall3(SYS_FS_READ, (long)path, (long)buffer, (long)capacity);
+}
+long fs_writefile(const char *path, const char *buffer, unsigned long length) {
+    return syscall3(SYS_FS_WRITE, (long)path, (long)buffer, (long)length);
+}
+
 _Noreturn void exit(long status) {
     syscall3(SYS_EXIT, status, 0, 0);
     for (;;) {

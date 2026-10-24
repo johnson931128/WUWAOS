@@ -1,0 +1,6 @@
+#ifndef WUWAOS_PROCESS_LIMITS_H
+#define WUWAOS_PROCESS_LIMITS_H
+
+#define PROCESS_LIMIT 4
+
+#endif

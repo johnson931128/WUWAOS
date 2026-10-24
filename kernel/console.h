@@ -4,6 +4,8 @@
 void console_putc(char character);
 void console_puts(const char *text);
 void console_hex(unsigned long value);
+void console_number(long value);
+int console_getc(void);
 _Noreturn void kernel_idle(void);
 
 #endif

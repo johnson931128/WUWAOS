@@ -13,12 +13,15 @@ void trap_init(void) {
                      : : "r"((uintptr_t)trap_entry) : "memory");
 }
 
-void trap_handler(TrapFrame *frame) {
+TrapFrame *trap_handler(TrapFrame *frame) {
     const int from_user = (frame->sstatus & SSTATUS_SPP) == 0;
+    if (from_user) {
+        process_current()->frame = frame;
+    }
     if (from_user && frame->scause == USER_ECALL) {
         frame->sepc += 4; /* ECALL is a 32-bit instruction. */
         syscall_dispatch(frame);
-        return;
+        return process_resume();
     }
 
     console_puts(from_user ? "[trap] User trap" : "[trap] Kernel trap");
@@ -31,6 +34,7 @@ void trap_handler(TrapFrame *frame) {
     console_putc('\n');
     if (from_user) {
         process_exit(-1);
+        return process_resume();
     }
     kernel_idle();
 }

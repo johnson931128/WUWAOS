@@ -1,73 +1,73 @@
-# Spec：第一個使用者行程與基本系統呼叫
+# Spec 05：Fork → Exec → 合作式排程 → 回收
 
 ## 目標與範圍
 
-在現有 RV64 / QEMU virt / OpenSBI 的 S-mode（監督模式）啟動基礎上，建立一個具有隔離位址空間的 U-mode（使用者模式）行程，完成 write、getpid、exit 三個 syscall（系統呼叫）。
-本規格彙整使用者要求與後續討論；本次完成實作及基本功能驗證後 commit / push 到目前 branch。
-不加入排程、多核心、檔案系統、動態記憶體配置器、ELF loader（執行檔載入器）或測試框架。
-未經同意不加入測試程式碼；user/demo.c 是本次實際執行的使用者示範程式，不加入負面測試程式。
+使用者希望接續 fork（複製行程）／exec（替換程式），完成從建立 process（行程）到排程與回收的流程。
+本階段串接既有合作式排程、sleep/wakeup、exit/wait 與管道，不加入計時器搶占、COW（寫入時複製）、任意 ELF 解析、磁碟檔案系統或通用描述號表。
+保留前階段尚未提交的內容，不自行 commit / push。未經同意不新增測試程式碼，透過正常 shell 命令與內建工作程式驗收。
+舊 spec 01–04 保留歷史，本文件為當前規格。
 
-## 設計
+## 架構
 
-- trap（中斷／例外造成的控制權轉移）採 Direct mode（共同入口模式）。
-- stvec（監督模式陷阱向量暫存器）指定 trap.S；組合語言保存一般暫存器及相關控制暫存器，再呼叫 C handler（處理函式）。
-- sscratch（監督模式暫存用途暫存器）在 U-mode 存放核心堆疊頂端，在核心執行時為 0；用於切換堆疊。
-- Sv39（三級分頁）以固定 4 KiB 頁面映射核心、UART（序列埠）、使用者程式碼、資料與堆疊。核心以相同虛實位址映射。
-- 使用者程式碼位址 0x400000、資料 0x401000、堆疊 0x800000–0x801000；三頁各有獨立實體儲存區。
-- 使用者程式碼為 RX（可讀／可執行），資料與堆疊為 RW（可讀寫）；核心及 UART 的頁面不帶 U（使用者可存取）權限。
-- 一個 Process（行程資料結構），PID（行程識別碼）為 1，狀態為 Ready / Running / Exited（就緒／執行中／已結束），記錄頁表、堆疊與 TrapFrame（陷阱執行狀態）。
-- user 程式獨立編譯成固定布局，轉成 binary（原始機器碼映像）後嵌入核心。最多兩頁，不解析 ELF。
-- sret（監督模式陷阱返回指令）進入 U-mode，或返回被系統呼叫暫停的程式。
-- 建置禁用 linker relaxation（連結指令改寫），不依賴 gp（全域資料指標）；使用者浮點／向量狀態停用，只執行整數指令。
+- fork 完整複製使用者 code/data/stack（程式碼／資料／堆疊），為子行程建立新的 PCB（行程控制區塊）、PID、頁表、核心堆疊與 TrapFrame（暫存器保存狀態）。
+- 不直接複製核心堆疊或整份 PCB；等待與 I/O 請求重新初始化，父 PID 指向呼叫者。
+- 複製的是已越過 ecall（環境呼叫指令）的使用者狀態。父返回新 PID，子 a0（返回值暫存器）為 0，兩者從同一位置繼續。
+- 複製現有輸入／輸出管道端點並增加 reader/writer（讀／寫端）參照數，exit/kill 時照原本機制減少。exec 保留端點。
+- exec(program_id) 先在一份備用 AddressSpace（位址空間）完整準備嵌入映像，再交換位址空間所有權並切換 satp（頁表設定暫存器）。失敗時保留原程式與資料。
+- 交換後的舊空間成為下一次 exec 的備用空間；所有空間的核心映射相同，切換中目前核心堆疊仍可存取。
+- 成功 exec 保留 PID、父子關係與端點，清除舊使用者暫存器、資料／堆疊與等待欄位，設定新入口／參數，不返回舊程式；失敗回傳錯誤。
+- shell 與 app（工作程式）分別連結成獨立 ELF，再轉 binary（原始映像）嵌入核心；不是只改 PCB 角色而繼續原 shell 映像。
+- 位址布局維持 16 KiB code、4 KiB data、4 KiB user stack、每行程 16 KiB kernel stack，最多 4 個行程，另加一份備用位址空間。
 
-## 系統呼叫介面
+## 介面與操作
 
-a7（參數暫存器）放呼叫編號，a0–a2 放參數，a0 放回傳值。這是 WUWAOS 自訂介面，不是 Linux ABI（呼叫介面）。
+新增系統呼叫 15=fork()、16=exec(program_id)。program_id 1=worker、2=quick、3=writer、4=reader、5=counter。
 
-| 編號 | 介面 | 結果 |
-| --- | --- | --- |
-| 1 | write(fd, buffer, length) | 只支援 fd=1，成功回傳 byte 數；0 長度回傳 0 |
-| 2 | getpid() | 回傳 1 |
-| 3 | exit(status) | 記錄狀態、標記 Exited，輸出訊息後核心等待，不返回使用者 |
+- fork：複製一次 shell 執行狀態；父取得子 PID，子得到 0，列出各自私有 sequence（操作序號）及 stack marker（堆疊資料）。父主動 yield 讓子先修改，再顯示自己的原值；子 exit(0)，由 wait 回收。
+- run worker：fork 子行程後 exec app 的 worker，yield 後等事件通道 7；wakeup 7 後結束。
+- run quick：fork 後 exec quick，返回結果 40。
+- run counter：fork 後 exec counter，等待事件通道 9，再輸出倒數資料並逐次 yield，展示兩個行程的合作式交替執行。
+- 子行程開始執行 exec 前輸出 fork 的子返回值，核心輸出保留的 PID、載入 app 映像與 program ID，便於觀察交接。
+- spawn 舊命令維持可用；pipe 仍為固定 writer | reader，不擴成通用 shell。
 
-錯誤：-22 為不合法參數，-14 為不可讀的使用者記憶體，-38 為未知系統呼叫。
-write 在輸出前檢查整段 buffer 的使用者頁面讀取權限、跨頁與整數溢位；由核心映射的實體頁讀取，避免直接信任使用者指標。
-僅確認為 U-mode ecall（使用者環境呼叫指令，原因編號 8）時，返回位址 sepc 加 4；不對所有例外套用相同處理。
-首次進入與每次 syscall 的來源模式、呼叫編號、回傳值記入 console（終端輸出），方便理解執行流程。
-未處理的核心例外顯示原因、指令位址與額外資訊後停止；使用者例外終止該行程。
+## 最小步驟
 
-## 執行步驟
-
-1. 抽出 UART 共用輸出，加入 trap 保存／返回流程與診斷。
-2. 建立固定 Sv39 頁表與使用者記憶體讀取介面。
-3. 建立單行程及 U-mode 初始狀態。
-4. 加入 syscall 分派、使用者 wrapper（呼叫包裝函式）與示範程式。
-5. 更新 Makefile、README、CODE_GUIDE 及本規格的實際驗收紀錄。
-6. 編譯並在 QEMU 觀察完整流程；確認提交範圍後 commit / push。
+1. 拆出 user/print.c/h 共用輸出，user/app.c 獨立工作映像；shell 不再內含工作程式本體。
+2. vm 支援選擇映像、複製使用者頁、以備用空間原子替換。
+3. process 加入 fork/exec，管道增加端點繼承，dispatcher 正確處理 exec 成功時不可覆寫新 a0 的規則。
+4. shell 加 fork/run 指令及正常狀態輸出，更新 Makefile、README 與 CODE_GUIDE。
+5. 完整建置，於 QEMU 互動觀察建立、狀態切換、獨立記憶體、exec、結束與欄位重用；填入驗收結果。
 
 ## 驗收條件
 
-- 建置無警告或未解析符號；正常啟動訊息仍存在。
-- 真正收到 U-mode ecall，而非核心直接呼叫示範函式。
-- getpid 回傳 1，write 回傳正確長度，示範程式使用回傳值決定 exit 狀態。
-- exit(0) 將行程標記 Exited，後續不返回使用者程式。
-- 檢查頁表配置確認核心／UART 不可被 U-mode 存取；使用者程式碼不可寫，資料／堆疊不可執行。
-- 所有程式碼檔案在 CODE_GUIDE 中有功能、硬體關係與演算法說明，術語附中文用途。
-- 不加入未授權測試程式碼。未執行的負面路徑必須明確標示。
+- 完整建置無警告／未解析符號，shell／app 為獨立 ELF 與嵌入映像。
+- fork 父取得子 PID、子取得 0，私有 stack／data 修改不影響父；父子使用不同頁表與實體頁。
+- exec 前後 PID 相同，執行獨立 app，初始化資料正確，舊 shell 不在子行程中繼續接受命令。
+- 同時 run 兩個 counter，ps 可見兩個 Waiting；wakeup 9 後依 yield 交替執行，結果各自獨立。
+- exit → Zombie → wait 回收正常，反覆建立／執行可重用欄位；ps 最終僅留 shell、空閒欄位 3。
+- 既有固定管線仍傳送完整 80 bytes 並回收。
+- 文件明確記錄哪些邊界尚未動態驗證；不把正常示範當成完整測試覆蓋。
 
 ## 實際驗收紀錄
 
-2026-10-12 完成，使用 WSL Ubuntu、Clang 18.1.3、LLD、QEMU 8.2.2、OpenSBI 1.3。
+2026-10-16，WSL Ubuntu、Clang 18.1.3、QEMU 8.2.2、OpenSBI 1.3；virt／單核心／128 MiB。
 
-- clean build（完整重新建置）成功，-Wall -Wextra -Werror 無警告；kernel.elf 與 user.elf 無未解析符號。
-- 核心入口為 0x80200000，使用者入口為 0x400000。
-- QEMU console 顯示 Ready → Running → Exited；getpid 回傳 1，write 輸出 `[user] Hello from PID 1` 並回傳 0x18（24 bytes），exit 狀態為 0。
-- QEMU 的硬體陷阱紀錄有三次原因 8、desc=user_ecall，指令位置依序為 0x400022（getpid）、0x400014（write）、0x40002e（exit）；與使用者程式反組譯一致。
-- QEMU monitor（虛擬機檢查介面）的 info mem 顯示：使用者 code 為 r-xu、data／stack 為 rw-u；UART 與核心頁沒有 u 權限，核心 code 為 r-x、唯讀資料為 r--。
-- monitor 讀取實際 Process 記憶體，PID=1、state=2（Exited）、exit_status=0。CSR（控制與狀態暫存器）中 satp 的模式為 Sv39，scause=8，sscratch=0（已在核心）。
-- 最後調整使用者浮點／向量狀態後，重新完整建置並執行 QEMU，三個呼叫與 exit(0) 結果仍成功。
-- 驗證期間核心結束後保持等待；最後一次執行由主機 timeout 在 5 秒後停止，這是預定清理動作，不是核心失敗。
-- 本機 build/qemu-console.log 與 build/qemu-traps.log 保存最後一次輸出，build/ 不納入提交。可用 README 的命令重跑。
+- `make clean && make` 通過 -Wall/-Wextra/-Werror。最後調整 fork 命令的父行程 yield 次序後再次 make，kernel.elf／user.elf／app.elf 的 `llvm-nm -u` 都沒有未解析符號。
+- shell 與 app 分開連結、轉 binary、嵌入核心；最終 user.bin 為 4672 bytes、app.bin 為 16392 bytes，後者包含 16 KiB 位址間距後的初始 remaining=3 資料。
+- 最終映像 QEMU 正常操作 `fork; wait 2; run counter; run counter; ps; wakeup 9; wait 3; wait 4; run quick; wait 5; ps`（實際每條按 Enter）。PID 2 子返回 0、data=101／stack=101；子結束後父顯示 data=1／stack=100。狀態含 New→Ready→Running→Zombie→Unused。
+- PID 3／4 fork 後各自 exec，PID 不變，進 Waiting channel 9。wakeup 回傳 2；倒數輸出順序為 3:3、4:3、3:2、4:2、3:1、4:1，兩者狀態反覆 Running→Ready→Running，再 exit(0)／wait 回收。PID 5 quick 結果為 40。最後僅 PID 1、空閒欄位 3。
+- 前一輪同核心實作的完整互動：run worker PID 6 於通道 7 等待，kill／wait 取得 -9；PID 7 正常 wakeup／wait 得 0。固定管線 PID 8／9、10／11 連續兩次完整收到 80 bytes／EOF，均回收。PID 12 再次 run quick／wait 得 40，證明多次 exec 與欄位重用。
+- 同輪建立 PID 13／14／15 填滿四欄後，run quick 的 fork 回傳 -11，既有三個 Waiting 行程仍存在；依序 kill／wait 得 -9。重複 wait 15 回傳 -10，ps 恢復空閒 3，下一次 fork 成功取得 PID 16。
+- 該輪 QEMU monitor 的 info mem：shell code 0x400000→0x8020e000、data 0x404000→0x80212000、stack 0x800000→0x80213000，權限各為 RXU／RWU／RWU；UART、核心映射沒有 U 權限。
+- PCB 根表：shell 0x8020a000、fork 子 PID 2 0x80214000；exec 後 counter PID 4／5 為 0x80214000／0x80232000。位址空間儲存區會輪替，不能把 PID 永久綁定實體位置。
+- 後續 PID 16 fork 的子根表 0x80214000；其 user_l0 的 data PTE=0x200870d7，指向實體 0x8021c000。monitor `xp /1gx` 讀得父 data 實體 0x80212000 值 2、子 data 實體 0x8021c000 值 0x66（102），與第二次 fork 的正常輸出相符。子 code PTE 同樣指向自己的私有頁。
+- 本機紀錄：build/lifecycle-console.log、build/lifecycle-traps.log 為完整流程；build/lifecycle-final-console.log、build/lifecycle-final-traps.log 為最終 fork 次序調整後的操作。build/ 被 Git 忽略，未加入測試檔案。
+- 最終 QEMU 記錄含 181 次 user_ecall（使用者環境呼叫），console 沒有 User trap／Kernel trap 的非預期例外診斷；git diff --check 通過。
 
-驗收限制：頁面隔離已從執行中的實際頁表核對，未加入故意讀寫核心／UART 的負面測試程式；非法 buffer、未知 syscall、非 syscall 例外的 runtime 路徑尚未執行。這些分支完成程式碼檢查，不宣稱已完成動態驗證。
-未加入測試框架或負面測試程式碼。下一個小步驟為第二個固定行程與 yield（主動讓出 CPU）的合作式排程。
+### 尚未動態驗證與目前限制
+
+- 未對未知 exec ID／無效使用者指標注入 syscall，也未執行持有管道端點後 fork 的工作程式；這些僅完成程式碼檢查，不宣稱動態覆蓋。固定管線通過不等於端點繼承路徑已動態驗證。
+- exec 只有固定內建映像與預配置資源，錯誤 ID 在修改前拒絕；沒有一般 ELF 格式錯誤／磁碟讀取失敗等路徑。
+- 回收將 PCB 欄位變成 Unused，頁表與記憶體預留儲存區留待下次建立重新清除，不是一般動態實體頁分配器。
+- 合作式排程要求程式 yield／阻塞／退出；無限運算的使用者程式仍可獨占 CPU。sleep 是事件通道，並非計時睡眠。沒有計時器搶占、完整訊號或 Ctrl+C 取消。
+- 未建立測試框架或測試程式碼；上述為正常 shell／工作程式的實機模擬互動驗收。

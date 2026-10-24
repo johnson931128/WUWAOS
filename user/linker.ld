@@ -9,12 +9,12 @@ SECTIONS
         *(.text .text.*)
         *(.rodata .rodata.* .srodata .srodata.*)
     }
-    ASSERT(. <= 0x401000, "User code exceeds one page")
-    . = 0x401000;
+    ASSERT(. <= 0x404000, "User code exceeds four pages")
+    . = 0x404000;
     .data : { *(.data .data.* .sdata .sdata.*) }
     .bss (NOLOAD) : {
         *(.bss .bss.* .sbss .sbss.*)
         *(COMMON)
     }
-    ASSERT(. <= 0x402000, "User data exceeds one page")
+    ASSERT(. <= 0x405000, "User data exceeds one page")
 }

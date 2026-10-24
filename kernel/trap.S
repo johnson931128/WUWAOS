@@ -59,6 +59,8 @@ trap_entry:
 
     mv a0, sp
     call trap_handler
+    # C may select another process, returning its saved frame in a0.
+    mv sp, a0
     j trap_restore
 
     .globl user_enter
