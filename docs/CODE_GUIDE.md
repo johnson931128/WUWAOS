@@ -1,6 +1,6 @@
 # WUWAOS 程式碼與架構紀錄
 
-記錄目前所有手寫程式碼、標頭、連結及建置設定。當前規格在 SPEC.md 與 SPEC-06；SPEC-01／02／03／04 保留舊里程碑，不代表現在的限制。
+記錄目前所有手寫程式碼、標頭、連結及建置設定。當前規格由 SPEC.md、SPEC-06 與 SPEC-07 組成；SPEC-07 更新排程政策，SPEC-01／02／03／04 保留舊里程碑，不代表現在的限制。
 術語第一次出現附中文用途。原始碼與實際 QEMU 執行是行為依據，尚未執行的路徑不稱為已驗證。
 
 ## 1. 架構與控制權
@@ -15,7 +15,7 @@ QEMU → OpenSBI（機器模式韌體）
       → kernel/io.c 輪詢 UART，完成一行並喚醒 shell
       → user/shell.c 解析指令
       → user/api.c 的 ecall → kernel/trap.S → trap.c → syscall.c
-          ├─ process.c：PCB、建立／終止／查詢／排程
+          ├─ process.c → scheduler.c：PCB 狀態／生命週期 → FIFO 就緒佇列
           └─ io.c：console／pipe 的輸入輸出與阻塞
           └─ fs.c → block.c：檔案路徑／WUFS inode → VirtIO → QEMU 磁碟
       → process_resume 選擇行程，切換頁表
@@ -36,6 +36,7 @@ CPU 執行記憶體中的機器碼，不知道來源檔名。OpenSBI 負責早�
 | kernel/trap.c / trap.h | 共同例外入口設定、TrapFrame（保存狀態結構）、原因分派 |
 | kernel/vm.c / vm.h | 各行程頁表、使用者映像、記憶體權限與安全複製 |
 | kernel/process.c / process.h | PCB（行程控制區塊）、生命週期、合作式排程、查詢與終止 |
+| kernel/scheduler.c / scheduler.h | 單向鏈結 FIFO 就緒佇列、入列／取隊首／移除與順序查閱 |
 | kernel/io.c / io.h | 行輸入、固定管道、pending I/O（尚未完成的輸入輸出） |
 | kernel/block.c / block.h | FDT 裝置探索、VirtIO-MMIO 區塊讀寫佇列 |
 | kernel/fs.c / fs.h | WUFS 區塊配置、inode、目錄與路徑操作 |
@@ -151,6 +152,7 @@ fork 另有 O(U) 使用者頁複製，U 固定 24 KiB；exec 清除並複製新�
 
 原本的 Process 結構現在以 ProcessControlBlock 標記，仍只有一份真實狀態。processes[4] 是行程表，kernel_stacks 每欄預留 16 KiB。
 PCB 保存 PID／父 PID／角色／狀態／結束碼、頁表與兩種 stack、frame、等待原因／事件通道／子 PID／結果位址、stdin/stdout pipe（輸入／輸出端點）、待完成 I/O 的種類／位址／長度／進度。
+`ready_next` 指向下一個就緒 PCB，`ready_queued` 標示是否已入列；只有 Ready 行程位於佇列，Running／Waiting／Zombie／Unused 不佔據佇列節點。行程表仍保存所有狀態，佇列不複製 PCB。
 
 ```text
 Unused（可用）→ New（建立中）→ Ready（就緒）→ Running（執行中）
@@ -166,8 +168,8 @@ Running／Waiting／Ready → exit／kill → Zombie（待回收） → wait →
 - process_init 建立 PID 1 的 shell；process_spawn 只接受 worker／quick，父 PID 為目前行程。
 - process_fork 建立尚未公布 Ready 的子 PCB，複製使用者頁及父 TrapFrame，設定子 a0=0、繼承端點後才改成 Ready；回傳新 PID 給父。trap_handler 已將 sepc 越過 ecall，父子都從 fork 呼叫後繼續。核心 stack 不複製，子使用新的保存框架。
 - process_exec 先拒絕未知 ID，再準備／交換位址空間。清除舊使用者暫存器、設定 sp／入口／a0 角色，保留原本合法的 sstatus、PID／父子關係／核心 stack／端點，清除等待及 I/O 欄位。切換 satp 後，trap.S 直接恢復新入口，不會返回舊 shell。所有空間共用核心映射，所以切換時目前核心 stack 仍有效。
-- transition 統一記錄與更新狀態；trace_enabled 可關閉子行程的追蹤。只有 PID 1 不輸出狀態紀錄，以免打斷提示字元，仍有真實狀態供 ps／pcb 查閱。fork 出來但還沒 exec 的 shell 子行程照常記錄。
-- process_resume 先輪詢 I/O；原行程仍 Running 時繼續它，否則從下一欄循環選 Ready。這是 Round Robin（輪流選取）合作式排程。
+- transition 統一記錄與更新狀態，進入 Ready 時排到 FIFO 隊尾，離開 Ready 時移除；scheduler_next 已出列的節點不重複移除。trace_enabled 可關閉子行程的追蹤，但不會停用佇列維護。只有 PID 1 不輸出狀態紀錄，以免打斷提示字元，仍有真實狀態供 ps／pcb 查閱。fork 出來但還沒 exec 的 shell 子行程照常記錄。
+- process_resume 先輪詢 I/O；原行程仍 Running 時繼續它，否則回收無父行程 Zombie，再呼叫 scheduler_next 取出最早入列的 Ready PCB。這是 FIFO 非搶占式排程；普通 syscall 不讓出 CPU，主動 yield 才重新排到隊尾。
 - 返回使用者前更新 satp，將所選 frame 返回 trap.S；不保存暫停中的 C 呼叫堆疊，原 kernel stack 在返回時被放棄。
 - 沒有 Ready 但有人等待 console 時持續輪詢 UART；沒有事件來源的全部阻塞顯示診斷；全部回收後進 kernel_idle。
 
@@ -183,10 +185,18 @@ reap 只將欄位改為 Unused，不立即清除仍可能使用中的 stack／�
 
 ### 查詢與固定管線建立
 
-process_list 列出有效 PCB 及剩餘欄位；process_inspect 顯示實際頁表、保存指令位置、stack、等待資訊、結束碼、端點與 I/O 請求。
+process_list 列出有效 PCB、剩餘欄位與 scheduler_print_ready 的 FIFO 順序；process_inspect 顯示實際頁表、保存指令位置、stack、等待資訊、結束碼、端點、I/O 請求與 ready_queued。
 process_pipeline 先驗證兩個 PID 的回寫範圍與資源，分配 pipe，再建立 writer／reader，設定 writer 的 stdout 與 reader 的 stdin；失敗時回收未公布的資源。
 同一個核心系統呼叫內不會被其他行程插入，因此沒有建立到一半被排程的狀況。
-固定表大小為 P=4，尋找／選取／喚醒為 O(P)；建立另加固定空間清理／映像複製。
+固定表大小為 P=4，尋找／喚醒為 O(P)；建立另加固定空間清理／映像複製。候選行程由 FIFO 隊首 O(1) 取出，但 process_resume 仍有 I/O 與 orphan 回收掃描，不宣稱整個呼叫都是 O(1)。
+
+### scheduler.c / scheduler.h：保存 Ready 行程的 FIFO
+
+`ReadyQueue` 保存 `Process *head`、`Process *tail` 與 count。節點鏈結直接放在 PCB，無需 malloc 或額外複製行程資料。
+`scheduler_enqueue` 先檢查 ready_queued 防止重複入列，再接到 tail；`scheduler_next` 取出 head、清除該 PCB 的鏈結與入列標記，取走最後一個節點時也清空 tail。兩者 O(1)。
+`scheduler_remove` 尋找指定 PCB 的前一個節點，再重接鏈結；同時處理隊首、中間、隊尾與唯一節點，耗時 O(P)。kill Ready 行程與管線建立失敗回收時，透過 transition 移除節點，避免欄位重用後仍被舊鏈結排程。
+排程順序依實際入列時間，同一輪 wakeup／I/O 完成仍按既有 PCB 掃描順序入列，不按 PID 排序。單核心且核心中斷關閉，無佇列並行修改；未實作多核心鎖或時間片。
+參考筆記：`notes/ch5 CPU schedueling.md`「FCFS 理論觀念與數學剖析」。原始 FCFS 的非搶占特性保留，專案額外保留主動 yield 後排到隊尾的介面；counter 交替是主動讓出造成的，不是 timer 搶占。
 
 ## 8. io.c / io.h：行輸入與真實管道
 
@@ -292,7 +302,7 @@ all 建置、run 啟動、clean 清理 build 產物。更改 flags（編譯選�
 
 ## 13. 驗證與閱讀練習
 
-行程驗收與 QEMU monitor 證據在 SPEC.md；VirtIO／WUFS 磁碟重啟持久性在 SPEC-06。ps／pcb 是讀取真實 PCB；pipe 的 80 bytes 必須通過 16-byte 緩衝區與多次狀態切換。
+行程驗收與 QEMU monitor 證據在 SPEC.md；VirtIO／WUFS 磁碟重啟持久性在 SPEC-06；FIFO 與 Ready 行程移除驗收在 SPEC-07。ps／pcb 是讀取真實 PCB 與就緒佇列；pipe 的 80 bytes 必須通過 16-byte 緩衝區與多次狀態切換。
 未完成 runtime 驗證的邊界不可等同已測試；沒有新增未經同意的測試程式碼。
 可先照 README 操作 worker，對照 saved sepc（保存指令位置）說明恢復後從哪裡繼續；再追蹤 writer 滿管道時的 buffer 位址如何留在 PCB。
 

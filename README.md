@@ -52,7 +52,9 @@ ps
 
 `wakeup 9` 後兩者各自從 3 倒數至 1，每次 yield（主動讓出 CPU）使另一個 Ready（就緒）行程取得執行機會；`wait` 回收結果 0。最後 ps 應只剩 shell、Free PCB slots: 3。
 
-這是合作式 Round Robin（循環輪流選取），沒有計時器搶占。印出的提示字元與背景輸出可能交錯；`run` 不自動回收，請依輸出的 PID 執行 wait。若不是全新啟動，PID 不一定是上述數字。
+目前使用 FIFO（先進先出）就緒佇列進行非搶占式排程：新建立或被喚醒的行程排到隊尾，從隊首取出下一個行程；Running 行程執行普通 syscall 時繼續執行，直到阻塞、結束或主動 yield。保留合作式 yield，讓出後重新排到隊尾，沒有計時器時間片。印出的提示字元與背景輸出可能交錯；`run` 不自動回收，請依輸出的 PID 執行 wait。若不是全新啟動，PID 不一定是上述數字。
+
+`ps` 會附上 `Ready queue (FIFO), count=N: ...`，只列出等待 CPU 的 Ready 行程，不含正在執行的 shell。`pcb <pid>` 的 `ready_queued=1` 表示該 PCB 已在佇列中；0 表示不在佇列。背景行程可能在輸入下一條命令前已經完成，因此 ps 看到空佇列也是正常情況。
 
 也可用 `run quick` 觀察結束碼 40，或 `run worker` 搭配 `wakeup 7`／`wait <pid>`。下方保留直接 spawn（建立指定程式）的操作。
 
@@ -134,7 +136,7 @@ cat /home/user/notes/today.txt
 | 指令 | 功能 |
 | --- | --- |
 | help | 指令說明 |
-| ps | 有效行程、父 PID、名稱、狀態、等待原因與空閒欄位 |
+| ps | 有效行程、父 PID、名稱、狀態、等待原因、空閒欄位與 FIFO 就緒佇列 |
 | pcb <pid> | 特定 PCB 的實際保存資料 |
 | spawn worker / spawn quick | 建立背景子行程 |
 | fork | 複製 shell，顯示父子返回值與私有資料，子行程結束後等待回收 |
@@ -159,6 +161,7 @@ cat /home/user/notes/today.txt
 - 最多 4 個行程，每個獨立 Sv39（三級分頁）頁表、16 KiB 使用者 code（程式碼）、4 KiB data（資料）、4 KiB stack（堆疊）及 16 KiB 核心堆疊。
 - fork 採完整複製，不使用 COW（寫入時複製）。exec 以額外一份 40 KiB 備用位址空間準備映像，再交換並切換頁表；只接受內建程式 ID。
 - PCB 是原本 Process 的延伸，沒有第二份重複的狀態。包含父子關係、等待資訊、管道端點與待完成 I/O。
+- `processes[4]` 保存完整 PCB；`scheduler.c` 的單向鏈結 FIFO 只保存 Ready PCB 的指標，入列與取出隊首 O(1)，移除任意節點 O(P)。
 - read/write、行程管理與查詢都透過使用者模式系統呼叫。核心與 UART（序列埠）頁面仍不可由使用者模式直接存取。
 - 檔案系統經由 VirtIO-MMIO block driver（虛擬區塊裝置驅動）讀寫 QEMU 磁碟。UART、pipe 與磁碟檔案走不同 I/O 路徑；目前檔案呼叫以路徑為參數，尚未有通用檔案描述號或 POSIX `open/close`。
 - 仍是合作式排程；shell 提示前讓出兩輪，讓本版內建 worker 到達穩定的等待點。不是時間片或 timer（計時器）搶占。
@@ -167,11 +170,12 @@ cat /home/user/notes/today.txt
 
 ## 文件與閱讀順序
 
-- [SPEC.md](docs/SPEC.md)：目前 fork／exec／排程／回收規格與驗收紀錄。
+- [SPEC.md](docs/SPEC.md)：fork／exec／回收里程碑規格與驗收紀錄；目前排程以 SPEC-07 為準。
 - [CODE_GUIDE.md](docs/CODE_GUIDE.md)：所有程式碼功能、演算法與硬體關係。
 - [SPEC-01](docs/SPEC-01-user-syscalls.md)、[SPEC-02](docs/SPEC-02-process-lifecycle.md)、[SPEC-03](docs/SPEC-03-shell-pipe.md)：使用者呼叫、行程生命週期與互動 shell／pipe 規格。
 - [SPEC-04](docs/SPEC-04-boot-splash.md)：開機動畫規格與驗收紀錄。
 - [SPEC-06](docs/SPEC-06-filesystem.md)：VirtIO 區塊 I/O、WUFS 與持久磁碟驗收紀錄。
+- [SPEC-07](docs/SPEC-07-fifo-scheduler.md)：FIFO 就緒佇列、非搶占式排程與驗收紀錄。
 
 先讀 user/shell.c 的 shell_main／command，再追蹤 user/api.c → kernel/syscall.c → process.c 或 io.c，最後看 trap.S 如何交還使用者程式。
 手動練習：對照 pcb 2 顯示的等待通道與 sepc（保存的指令位址），說明 wakeup 後為什麼從 sleep 呼叫後面繼續。

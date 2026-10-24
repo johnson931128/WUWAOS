@@ -16,6 +16,9 @@ typedef struct ProcessControlBlock {
     long pid;
     long parent_pid;
     ProcessState state;
+    /* Intrusive FIFO links; only Ready processes belong to the queue. */
+    struct ProcessControlBlock *ready_next;
+    int ready_queued;
     long exit_status;
     uintptr_t page_table;
     uintptr_t kernel_stack_top;

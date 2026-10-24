@@ -3,6 +3,7 @@
 #include "syscall_numbers.h"
 #include "vm.h"
 #include "io.h"
+#include "scheduler.h"
 #include <limits.h>
 
 static Process processes[PROCESS_LIMIT];
@@ -20,21 +21,27 @@ static const char *state_name(ProcessState state) {
 }
 
 static void transition(Process *process, ProcessState next, const char *reason) {
+    const ProcessState previous = process->state;
+    if (previous == PROCESS_READY && next != PROCESS_READY) {
+        scheduler_remove(process);
+    }
+    process->state = next;
+    if (next == PROCESS_READY) {
+        scheduler_enqueue(process);
+    }
     /* Keep the interactive prompt readable; inspect the shell through pcb. */
     if (!trace_enabled || process->pid == 1) {
-        process->state = next;
         return;
     }
     console_puts("[process] PID=");
     console_number(process->pid);
     console_putc(' ');
-    console_puts(state_name(process->state));
+    console_puts(state_name(previous));
     console_puts(" -> ");
     console_puts(state_name(next));
     console_puts(" (");
     console_puts(reason);
     console_puts(")\n");
-    process->state = next;
 }
 
 Process *process_current(void) {
@@ -99,6 +106,7 @@ static long create_process(long program, long parent_pid, int publish) {
 }
 
 void process_init(void) {
+    scheduler_init();
     if (create_process(0, 0, 1) != 1) {
         console_puts("[process] Cannot create init\n");
         kernel_idle();
@@ -346,6 +354,7 @@ long process_list(void) {
     console_puts("Free PCB slots: ");
     console_number(PROCESS_LIMIT - count);
     console_putc('\n');
+    scheduler_print_ready();
     return count;
 }
 
@@ -362,6 +371,8 @@ long process_inspect(long pid) {
     console_puts(program_name(process->program));
     console_puts(" state=");
     console_puts(state_name(process->state));
+    console_puts(" ready_queued=");
+    console_number(process->ready_queued);
     console_puts("\npage_table=");
     console_hex(process->page_table);
     console_puts(" kernel_stack_top=");
@@ -469,14 +480,10 @@ TrapFrame *process_resume(void) {
                 reap(&processes[i]);
             }
         }
-        for (int step = 1; step <= PROCESS_LIMIT; ++step) {
-            const int slot = (current_index + step) % PROCESS_LIMIT;
-            Process *next = &processes[slot];
-            if (next->state != PROCESS_READY) {
-                continue;
-            }
+        Process *next = scheduler_next();
+        if (next != 0) {
             finish_wait(next);
-            current_index = slot;
+            current_index = (int)(next - processes);
             transition(next, PROCESS_RUNNING, "schedule");
             vm_enable(next->page_table);
             return next->frame;
