@@ -1,5 +1,6 @@
 #include "vm.h"
 #include "console.h"
+#include "syscall_numbers.h"
 
 #define PTE_V (1UL << 0)
 #define PTE_R (1UL << 1)
@@ -21,6 +22,7 @@ static uintptr_t extra_mmio_base;
 extern unsigned char __text_end[], __rodata_end[];
 extern const unsigned char __user_image_start[], __user_image_end[];
 extern const unsigned char __app_image_start[], __app_image_end[];
+extern const unsigned char __fan_image_start[], __fan_image_end[];
 
 static _Noreturn void vm_panic(const char *message) {
     console_puts("[vm] ");
@@ -82,7 +84,8 @@ void vm_use_kernel(void) {
 
 void vm_init(const void *fdt) {
     if ((uintptr_t)__user_image_end - (uintptr_t)__user_image_start > USER_CODE_SIZE + PAGE_SIZE ||
-        (uintptr_t)__app_image_end - (uintptr_t)__app_image_start > USER_CODE_SIZE + PAGE_SIZE) {
+        (uintptr_t)__app_image_end - (uintptr_t)__app_image_start > USER_CODE_SIZE + PAGE_SIZE ||
+        (uintptr_t)__fan_image_end - (uintptr_t)__fan_image_start > USER_CODE_SIZE + PAGE_SIZE) {
         vm_panic("User image exceeds code/data limits");
     }
     page_init(fdt);
@@ -173,10 +176,11 @@ uintptr_t vm_create(long program) {
             return 0;
         }
     }
-    const unsigned char *image = program == 0 ? __user_image_start : __app_image_start;
-    const size_t length = program == 0
-        ? (uintptr_t)__user_image_end - (uintptr_t)image
-        : (uintptr_t)__app_image_end - (uintptr_t)image;
+    const unsigned char *image = program == 0 ? __user_image_start :
+        program == PROGRAM_FAN ? __fan_image_start : __app_image_start;
+    const unsigned char *end = program == 0 ? __user_image_end :
+        program == PROGRAM_FAN ? __fan_image_end : __app_image_end;
+    const size_t length = (uintptr_t)end - (uintptr_t)image;
     /* Initialization uses supervisor identity mappings, including RX user code pages. */
     for (size_t copied = 0; copied < length;) {
         const uintptr_t physical = user_physical(root, USER_ENTRY + copied, PTE_R);

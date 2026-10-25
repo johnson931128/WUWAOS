@@ -23,16 +23,19 @@
 #define SYS_FS_TOUCH 19
 #define SYS_FS_READ 20
 #define SYS_FS_WRITE 21
+#define SYS_CONSOLE_MODE 22
 
 #define PROGRAM_WORKER 1
 #define PROGRAM_QUICK 2
 #define PROGRAM_WRITER 3
 #define PROGRAM_READER 4
 #define PROGRAM_COUNTER 5
+#define PROGRAM_FAN 6
 
 #define ERR_NO_CHILD (-10L)
 #define ERR_NO_SLOT (-11L)
 #define ERR_NO_MEMORY (-12L)
+#define ERR_BUSY (-16L)
 #define ERR_INVALID (-22L)
 #define ERR_ADDRESS (-14L)
 #define ERR_NO_SYSCALL (-38L)

@@ -11,3 +11,9 @@ __user_image_end:
 __app_image_start:
     .incbin "build/app.bin"
 __app_image_end:
+    .balign 16
+    .globl __fan_image_start
+    .globl __fan_image_end
+__fan_image_start:
+    .incbin "build/fan.bin"
+__fan_image_end:

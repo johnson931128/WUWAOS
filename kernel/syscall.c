@@ -74,11 +74,22 @@ void syscall_dispatch(TrapFrame *frame) {
     case SYS_FORK:
         result = process_fork();
         break;
-    case SYS_EXEC:
-        result = process_exec((long)frame->registers[10]);
+    case SYS_EXEC: {
+        char argument[FS_PATH_MAX];
+        const long program = (long)frame->registers[10];
+        if (program == PROGRAM_FAN &&
+            copy_path(process_current()->page_table, frame->registers[11], argument) < 0) {
+            result = ERR_ADDRESS;
+            break;
+        }
+        result = process_exec(program, program == PROGRAM_FAN ? argument : 0);
         if (result == 0) {
             return; /* Preserve the new image's initial a0 and entry point. */
         }
+        break;
+    }
+    case SYS_CONSOLE_MODE:
+        result = io_console_mode((long)frame->registers[10]);
         break;
     case SYS_FS_LIST: {
         Process *process = process_current();

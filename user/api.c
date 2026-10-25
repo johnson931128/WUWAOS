@@ -49,6 +49,10 @@ long pipeline(long pids[2]) { return syscall3(SYS_PIPELINE, (long)pids, 0, 0); }
 long trace(long enabled) { return syscall3(SYS_TRACE, enabled, 0, 0); }
 long fork(void) { return syscall3(SYS_FORK, 0, 0, 0); }
 long exec(long program) { return syscall3(SYS_EXEC, program, 0, 0); }
+long exec_arg(long program, const char *argument) {
+    return syscall3(SYS_EXEC, program, (long)argument, 0);
+}
+long console_mode(long raw) { return syscall3(SYS_CONSOLE_MODE, raw, 0, 0); }
 long fs_list(const char *path, char *buffer, unsigned long capacity) {
     return syscall3(SYS_FS_LIST, (long)path, (long)buffer, (long)capacity);
 }

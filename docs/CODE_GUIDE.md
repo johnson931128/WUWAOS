@@ -37,22 +37,23 @@ CPU 執行記憶體中的機器碼，不知道來源檔名。OpenSBI 負責早�
 | kernel/vm.c / vm.h | 各行程頁表、使用者映像、記憶體權限與安全複製 |
 | kernel/process.c / process.h | PCB（行程控制區塊）、生命週期、合作式排程、查詢與終止 |
 | kernel/scheduler.c / scheduler.h | 單向鏈結 FIFO 就緒佇列、入列／取隊首／移除與順序查閱 |
-| kernel/io.c / io.h | 行輸入、固定管道、pending I/O（尚未完成的輸入輸出） |
+| kernel/io.c / io.h | 行輸入／raw console、固定管道、pending I/O（尚未完成的輸入輸出） |
 | kernel/block.c / block.h | FDT 裝置探索、VirtIO-MMIO 區塊讀寫佇列 |
 | kernel/fs.c / fs.h | WUFS 區塊配置、inode、目錄與路徑操作 |
 | kernel/memory.c | freestanding（無標準執行環境）建置所需的 byte-wise memset／memcpy |
 | kernel/page.c / page.h | 4 KiB 實體頁面空閒串列、配置／回收、配置 bitmap 與頁數查詢 |
-| kernel/syscall.c / syscall.h | 21 個 syscall（系統呼叫）的編號分派 |
-| kernel/user_image.S | 把 shell 的 user.bin 與工作程式 app.bin 嵌入核心的唯讀資料 |
+| kernel/syscall.c / syscall.h | 22 個 syscall（系統呼叫）的編號分派 |
+| kernel/user_image.S | 把 user.bin、app.bin 與 fan.bin 三份獨立映像嵌入核心唯讀資料 |
 | kernel/linker.ld | 核心入口、記憶體區段與權限邊界 |
 | include/syscall_numbers.h | 共用系統呼叫編號、內建程式角色、錯誤碼 |
 | include/process_limits.h | 行程與位址空間共用的上限 4 |
-| user/entry.S | 使用者入口，將核心給的角色交給 user_main，返回後 exit |
+| user/entry.S | 使用者入口，將核心給的角色與可選路徑交給 user_main，返回後 exit |
 | user/api.c / api.h | 使用者系統呼叫包裝函式 |
 | user/shell.c / shell.h | 互動 shell、命令解析、fork／run／管線操作 |
 | user/demo.c | shell 映像的 user_main，呼叫 shell_main |
 | user/app.c | 獨立 app 映像的 user_main，分派 worker、quick、writer、reader、counter |
-| user/print.c / print.h | 兩種映像共用的字串／數字輸出與短寫處理 |
+| user/fan.c | 獨立文字編輯器映像、緩衝區編輯、按鍵解碼、TUI、儲存與退出確認 |
+| user/print.c / print.h | 三種映像共用的字串／數字輸出與短寫處理 |
 | tools/make_disk.py | 建立／更新 WUFS 磁碟映像中的 kernel.elf，保留其他檔案 |
 | user/linker.ld | 使用者映像固定布局與大小限制 |
 | Makefile | 交叉編譯、連結、映像嵌入、持久 QEMU 磁碟與啟動 |
@@ -134,11 +135,11 @@ Sv39（三級分頁）把位址拆成三個 9-bit 索引與 12-bit 頁內 offset
 
 所有範圍左閉右開。相同虛擬位址在不同 PCB 的根表指向不同實體頁。核心另有 identity mapping（虛實位址相同映射）用於存取私有頁的實體儲存區。
 
-- table_entry 建立下一級 PPN（實體頁編號）及 V（有效）bit；leaf_entry 加入 R/W/X/U 權限與 A/D（已存取／已寫入）bit。
+- table_entry 建立下一級 PPN（實體頁編號）及 V（有效）bit；vm_map 的末級表項加入 R/W/X/U 權限與 A/D（已存取／已寫入）bit。
 - vm_init(fdt) 初始化頁面配置器、建立常駐核心／RAM／UART／VirtIO 映射，檢查嵌入映像大小，啟用核心根表。
 - vm_walk(root, address, allocate) 從 L2 開始，用 `(address >> (12 + 9 * level)) & 511` 取索引；L2／L1 缺少下層表且允許配置時向 page_alloc 取得零頁，最後回傳 L0 表項位置。查詢模式不配置頁面。
 - vm_map 安裝對齊的 4 KiB 實體頁映射，拒絕覆蓋有效表項；不支援中間層大頁面。
-- vm_create(program) 配置私有表與使用者頁，再複製 shell／app 映像；新頁已清零。失敗時以 vm_destroy 清理完成及部分完成的表樹，回傳 0。
+- vm_create(program) 配置私有表與使用者頁，再複製 shell／app／fan 映像；新頁已清零。失敗時以 vm_destroy 清理完成及部分完成的表樹，回傳 0。
 - vm_clone(destination, source) 透過兩份表各自查出使用者頁的實體位置，複製 24 KiB 內容，絕不複製父頁表指標；因此不要求使用者實體頁連續。
 - vm_destroy／free_table 對照核心表範本，跳過共用分支，遞迴釋放私有使用者頁與私有表。拒絕銷毀常駐核心根表及 satp 正在使用的根表。
 - exec 的替換流程由 process_exec 管理：先 vm_create 完整新空間，成功後切換 satp 再 vm_destroy 舊空間；失敗不改原程式。
@@ -176,7 +177,7 @@ Running／Waiting／Ready → exit／kill → Zombie（待回收） → wait →
 - process_init 建立 PID 1 的 shell；process_spawn 只接受 worker／quick，父 PID 為目前行程。
 - process_fork 建立尚未公布 Ready 的子 PCB，複製使用者頁及父 TrapFrame，設定子 a0=0、繼承端點後才改成 Ready；回傳新 PID 給父。trap_handler 已將 sepc 越過 ecall，父子都從 fork 呼叫後繼續。核心 stack 不複製，子使用新的保存框架。
 - process_exec 先拒絕未知 ID，再準備／交換位址空間。清除舊使用者暫存器、設定 sp／入口／a0 角色，保留原本合法的 sstatus、PID／父子關係／核心 stack／端點，清除等待及 I/O 欄位。切換 satp 後，trap.S 直接恢復新入口，不會返回舊 shell。所有空間共用核心映射，所以切換時目前核心 stack 仍有效。
-- transition 統一記錄與更新狀態，進入 Ready 時排到 FIFO 隊尾，離開 Ready 時移除；scheduler_next 已出列的節點不重複移除。trace_enabled 可關閉子行程的追蹤，但不會停用佇列維護。只有 PID 1 不輸出狀態紀錄，以免打斷提示字元，仍有真實狀態供 ps／pcb 查閱。fork 出來但還沒 exec 的 shell 子行程照常記錄。
+- transition 統一記錄與更新狀態，進入 Ready 時排到 FIFO 隊尾，離開 Ready 時移除；scheduler_next 已出列的節點不重複移除。trace_enabled 可關閉子行程的追蹤，但不會停用佇列維護。PID 1 與 fan 不輸出逐次狀態紀錄，以免打斷提示字元或編輯畫面，仍有真實狀態供 ps／pcb 查閱。fork 出來但還沒 exec 的 shell 子行程照常記錄。
 - process_resume 先切換常駐核心根表，再輪詢 I/O；原行程仍 Running 時切回其根表繼續它，否則回收無父行程 Zombie，再呼叫 scheduler_next 取出最早入列的 Ready PCB。finish_wait 可在此時安全釋放剛退出行程的表。這是 FIFO 非搶占式排程；普通 syscall 不讓出 CPU，主動 yield 才重新排到隊尾。
 - 返回使用者前更新 satp，將所選 frame 返回 trap.S；不保存暫停中的 C 呼叫堆疊，原 kernel stack 在返回時被放棄。
 - 沒有 Ready 但有人等待 console 時持續輪詢 UART；沒有事件來源的全部阻塞顯示診斷；全部回收後進 kernel_idle。
@@ -214,6 +215,8 @@ io_read 先驗證 fd（描述號）、長度與完整可寫範圍。fd0 未接�
 process_block_io 將緩衝區／長度存入 PCB、設定 IO_CONSOLE_READ，狀態改為 Waiting。不是在使用者程式持續讀硬體。
 console_read_line 非阻塞輪詢字元、回顯、處理 CR／LF 與 Backspace。CR 後的 LF 會忽略；超長行丟棄到換行後回傳錯誤，不執行截斷命令。
 完成時回寫換行與長度，process_complete_io 把結果填入保存 a0，再將行程改成 Ready。
+
+`console_mode(1)` 取得 raw console 的單一持有權。持有者 read(0, buffer, 1) 設定 IO_CONSOLE_RAW，console_read_raw 取得一個 byte 後直接寫回、不回顯，不要求 Enter。其他 console 讀取者（包括已掛起的請求）回 -16，避免讀走編輯器按鍵；fork 不繼承持有權，exit／kill／成功 exec 釋放它。切換時略過 shell 命令 CR 後尚未消耗的 LF。這是自訂的簡化介面，沒有完整 termios、信號與前景 process group。
 
 ### Pipe 環形緩衝區
 
@@ -259,7 +262,7 @@ WUWAOS 自訂 ABI（呼叫約定）：a7（呼叫編號暫存器）、a0–a2（
 | 9 | ps | 有效 PCB 列表 |
 | 10 | pcb(pid) | 特定 PCB 保存資料 |
 | 11 | kill(pid) | 終止直接子行程 |
-| 12 | read(fd, buffer, length) | console 行輸入／pipe byte 讀取 |
+| 12 | read(fd, buffer, length) | console 行輸入／raw byte／pipe byte 讀取 |
 | 13 | pipeline(pids) | 固定 writer／reader 建立 |
 | 14 | trace(enabled) | 開關子行程追蹤 |
 | 15 | fork() | 複製使用者執行狀態，父返回子 PID、子返回 0 |
@@ -269,13 +272,14 @@ WUWAOS 自訂 ABI（呼叫約定）：a7（呼叫編號暫存器）、a0–a2（
 | 19 | fs_touch(path) | 建立空檔案或確認既有檔案 |
 | 20 | fs_readfile(path, buffer, capacity) | 從檔案開頭讀取最多 capacity bytes |
 | 21 | fs_writefile(path, buffer, length) | 建立或覆寫檔案 |
+| 22 | console_mode(raw) | 取得／釋放逐字元、不回顯的終端輸入模式 |
 
 syscall_dispatch 用 switch 分派；正常立即結果填 frame->a0，阻塞時先存 placeholder（暫存結果），由排程中的 I/O 或 wait 完成處理替換後才真正返回。
 exec 成功時 dispatcher 立即返回，不能把正常返回值 0 再寫進 frame->a0，否則會破壞新程式所需的初始角色參數。失敗才按一般規則回傳錯誤。
 filesystem syscall 先從呼叫者頁表逐 byte 驗證並複製 NUL 結尾路徑；資料 buffer 驗證完整使用者範圍後才透過核心暫存區交給 fs.c。user/api.c 的 syscall3 使用固定暫存器與 memory clobber（記憶體可能改變宣告）執行 ecall，二十一個包裝函式供使用者程式呼叫。
 錯誤碼：-10 非直接子行程／沒有該子行程、-11 資源不足、-14 記憶體不可存取、-22 非法參數、-32 管道無讀者、-38 未知呼叫。
 
-## 11. user/shell.c、demo.c、app.c、print.c
+## 11. user/shell.c、demo.c、app.c、fan.c、print.c
 
 shell_main 顯示提示、read 一行、tokenize（切分命令）、command（分派），全程在 U-mode 執行。
 每次提示前 yield 兩輪，足以讓本版 worker（自身先 yield 一次）到達等待點，避免背景文字蓋過新提示；不是通用工作控制或時間片。
@@ -286,13 +290,19 @@ help、ps、pcb、spawn、fork、run、yield、wakeup、wait、kill、trace、�
 fork_shell 先增加全域 fork_sequence，再 fork。子行程修改自己的全域資料及區域 stack marker，印出子返回值 0，exit(0)；父顯示子 PID，主動 yield 讓子先修改，再顯示自己仍保留的原資料／堆疊值，留下子行程給 wait 回收。這是正常互動命令，不含測試斷言。
 run_program 將 worker／quick／counter 轉成 ID，先 fork，只有子分支呼叫 exec；成功不回來，失敗印錯誤並 exit(127)。父立即返回命令列，由使用者觀察、喚醒、終止或回收。
 
+`run_fan(path)` 採前景 fork → exec_arg(PROGRAM_FAN, path) → wait；父 shell 等編輯器退出後自動回收，恢復終端顏色、游標與替代畫面。exec 的 a1 可傳 fan 的路徑指標；dispatcher 在替換前複製並驗證舊地址字串。process_exec 把路徑放在新使用者 stack 的最高 128 bytes，a1 指向它，sp 從此位置向下生長；不是完整 argc／argv 或任意程式載入。
+
+fan.c 的 user_main(program, path) 開檔時讀最多 2049 bytes，超過 2048 或含非 ASCII／LF／Tab bytes 時直接拒絕，不寫回。不存在的檔案先在 RAM 編輯，儲存時才建立。buffer 固定 2049 bytes，插入／刪除搬移後段 O(N)，cursor 是 byte offset，line_start／line_end 與 vertical 掃描換行決定移動，上下移動保留目標欄。
+
+`decode` 用狀態機逐 byte 處理 CSI／SS3 按鍵序列；`handle` 實作一般編輯與未儲存退出確認。`render` 計算垂直／水平視窗，保留 78×20 編輯區，逐行比對畫面快取後只重畫有變動的行，Ctrl+L 強制完整重畫。`save` 對 WUFS 整檔覆寫，完整成功才清除 dirty；失敗保留緩衝區及錯誤訊息。實作與限制見 SPEC-09。
+
 print.c 的 user_write_all 迴圈處理短寫；user_puts 掃描字串；user_number 以除 10 與反轉輸出十進位，支援超過 9 的 PID。print.h 宣告共用輸出，shell.h 只宣告 shell 入口。
 命令解析 O(L)，L 最多 126；不支援引號、一般參數、多段管線或通用檔案描述號。
 
 demo.c 的 user_main 只進入 shell；app.c 是另一份獨立映像，依初始 a0 角色分派：1 worker（yield 後 sleep(7)，醒後 exit 0）、2 quick（exit 40）、3 writer、4 reader、5 counter。
 counter 先等待通道 9，再讀寫自己初始化為 3 的 volatile 全域 remaining，每次輸出後減一並 yield，至 0 結束。兩份 counter 各自從 3 開始，展示初始化資料與交替執行；沒有硬體時間片。
 writer 正常輸出 80 bytes，以 user_write_all 處理管道短寫；reader 每次最多讀 12 bytes，等 EOF 後將完整訊息輸出到 console。接收緩衝區有界，不能無限制累積資料。
-user/entry.S 保留初始 a0 呼叫 user_main，返回值再交給 exit；exit 如果意外返回就在使用者模式迴圈。
+user/entry.S 保留初始 a0／a1 呼叫 user_main，返回值再交給 exit；exit 如果意外返回就在使用者模式迴圈。
 
 ## 12. Linker 與 Makefile
 
@@ -301,7 +311,7 @@ kernel/linker.ld 由 0x80200000 配置 .text（程式碼）、.rodata（唯讀�
 NOLOAD 不攜帶初始化內容但保留記憶體，KEEP 保護入口，ALIGN 決定對齊；限制核心不超過 0x80400000，保留低位址核心開機大小預算。RAM 映射現由多張 L0 動態建立，不再受單張 L0 的 2 MiB 覆蓋範圍限制。
 
 user/linker.ld 的入口固定 0x400000，code／唯讀資料最多 16 KiB，data／BSS 從 0x404000 開始最多 4 KiB；ASSERT（連結期限制）防止超出。stack 由核心映射，不在 user.bin 中。
-Makefile 將 user/entry.S、api.c、print.c、demo.c、shell.c 連結為 user.elf；另一組 entry.S、api.c、print.c、app.c 連結為 app.elf。兩者各有自己的 user_main，但不互相連結。llvm-objcopy 轉成 user.bin／app.bin，kernel/user_image.S 的 incbin 嵌入核心唯讀資料，vm 依程式 ID 複製映像。不是 ELF parser（執行檔解析器）。
+Makefile 將 user/entry.S、api.c、print.c、demo.c、shell.c 連結為 user.elf；entry.S、api.c、print.c、app.c 連結為 app.elf；entry.S、api.c、print.c、fan.c 連結為 fan.elf。三者各有自己的 user_main，但不互相連結。llvm-objcopy 轉成 user.bin／app.bin／fan.bin，kernel/user_image.S 的 incbin 嵌入核心唯讀資料，vm 依程式 ID 複製映像。不是 ELF parser（執行檔解析器）。
 `make run` 先呼叫 tools/make_disk.py 建立或更新 `build/wuwaos.img`，再以 `-drive` 與 `virtio-blk-device` 接上 QEMU。Python 工具用相同 WUFS metadata layout 建立空卷、Linux 風格目錄與 `/boot/kernel.elf`；辨識已格式化映像後只更新 kernel inode，保留其他檔案。`make clean` 特意保留磁碟映像。
 binary 以 0x400000 為起點，若有初始化 .data，會保留到 0x404000 的位址間距；vm 將前 16 KiB 放 code，其後放 data。BSS 不攜帶映像內容，page_alloc 配置零頁保證其初值。
 

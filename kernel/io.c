@@ -20,6 +20,16 @@ typedef struct {
 
 static Pipe pipes[PIPE_LIMIT];
 static int skip_lf;
+static long raw_owner;
+
+long io_console_mode(long raw) {
+    Process *process = process_current();
+    if (raw != 0 && raw != 1) return ERR_INVALID;
+    if (raw_owner != 0 && raw_owner != process->pid) return ERR_BUSY;
+    if (raw && (process->input_pipe >= 0 || process->output_pipe >= 0)) return ERR_INVALID;
+    raw_owner = raw ? process->pid : 0;
+    return 0;
+}
 
 int io_pipe_create(void) {
     for (int i = 0; i < PIPE_LIMIT; ++i) {
@@ -51,6 +61,7 @@ void io_inherit(Process *child, const Process *parent) {
 }
 
 void io_close_process(Process *process) {
+    if (raw_owner == process->pid) raw_owner = 0;
     if (process->input_pipe >= 0) {
         --pipes[process->input_pipe].readers;
         process->input_pipe = -1;
@@ -111,6 +122,12 @@ long io_read(long fd, uintptr_t buffer, size_t length) {
         return 0;
     }
     if (process->input_pipe < 0) {
+        if (raw_owner != 0) {
+            if (raw_owner != process->pid) return ERR_BUSY;
+            if (length > 128) return ERR_INVALID;
+            process_block_io(IO_CONSOLE_RAW, buffer, length);
+            return 0;
+        }
         if (length < 2 || length > 128) {
             return ERR_INVALID;
         }
@@ -184,6 +201,21 @@ static long console_read_line(Process *process) {
     return IO_PENDING;
 }
 
+static long console_read_raw(Process *process) {
+    int character;
+    while ((character = console_getc()) >= 0) {
+        /* Consume only the LF paired with the shell command's preceding CR. */
+        if (character == '\n' && skip_lf) {
+            skip_lf = 0;
+            continue;
+        }
+        skip_lf = 0;
+        user_write_byte(process->page_table, process->io_buffer, (unsigned char)character);
+        return 1;
+    }
+    return IO_PENDING;
+}
+
 void io_poll(void) {
     int progress;
     do {
@@ -194,8 +226,13 @@ void io_poll(void) {
                 continue;
             }
             long result = IO_PENDING;
-            if (process->io_operation == IO_CONSOLE_READ) {
+            if ((process->io_operation == IO_CONSOLE_READ || process->io_operation == IO_CONSOLE_RAW) &&
+                raw_owner != 0 && raw_owner != process->pid) {
+                result = ERR_BUSY; /* Includes reads pending before raw mode was acquired. */
+            } else if (process->io_operation == IO_CONSOLE_READ) {
                 result = console_read_line(process);
+            } else if (process->io_operation == IO_CONSOLE_RAW) {
+                result = console_read_raw(process);
             } else if (process->io_operation == IO_PIPE_READ) {
                 result = pipe_read(process, process->io_buffer, process->io_length);
             } else if (process->io_operation == IO_PIPE_WRITE) {
@@ -212,7 +249,8 @@ void io_poll(void) {
 int io_console_waiting(void) {
     for (int i = 0; i < PROCESS_LIMIT; ++i) {
         const Process *process = process_slot(i);
-        if (process->state == PROCESS_WAITING && process->io_operation == IO_CONSOLE_READ) {
+        if (process->state == PROCESS_WAITING &&
+            (process->io_operation == IO_CONSOLE_READ || process->io_operation == IO_CONSOLE_RAW)) {
             return 1;
         }
     }

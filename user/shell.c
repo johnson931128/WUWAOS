@@ -136,6 +136,25 @@ static void run_program(const char *name) {
     result_line("[run parent] child PID/result=", child);
 }
 
+static void run_fan(const char *path) {
+    if (path[0] != '/') {
+        user_puts("Usage: fan /absolute/path\n");
+        return;
+    }
+    const long child = fork();
+    if (child == 0) {
+        result_line("fan exec error: ", exec_arg(PROGRAM_FAN, path));
+        exit(127);
+    }
+    if (child < 0) {
+        result_line("fan fork error: ", child);
+        return;
+    }
+    wait_child(child);
+    /* Also recover the terminal if the editor exited through a user trap. */
+    user_puts("\033[0m\033[?25h\033[?1049l");
+}
+
 static void help(void) {
     user_puts("help | ps | pcb <pid> | spawn worker|quick | yield\n"
               "fork | run worker|quick|counter\n"
@@ -146,6 +165,7 @@ static void help(void) {
               "counter waits on channel 9; run two, then wakeup 9.\n"
               "fork/run leave children for explicit wait <pid> collection.\n"
               "filesystem: ls/mkdir/touch/cat/write <absolute-path>\n"
+              "fan /absolute/path: editor; Ctrl+O save, Ctrl+X exit\n"
               "write saves one text token; files persist on the QEMU disk.\n"
               "Only cooperative scheduling; no host commands.\n");
 }
@@ -202,6 +222,10 @@ static int command(int count, char *words[4]) {
         return 1;
     }
     if (count == 2) {
+        if (equal(words[0], "fan")) {
+            run_fan(words[1]);
+            return 1;
+        }
         if (equal(words[0], "run")) {
             run_program(words[1]);
             return 1;

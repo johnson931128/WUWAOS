@@ -10,7 +10,7 @@ typedef enum {
 } ProcessState;
 
 typedef enum { WAIT_NONE, WAIT_CHANNEL, WAIT_CHILD, WAIT_IO } WaitReason;
-typedef enum { IO_NONE, IO_CONSOLE_READ, IO_PIPE_READ, IO_PIPE_WRITE } IoOperation;
+typedef enum { IO_NONE, IO_CONSOLE_READ, IO_CONSOLE_RAW, IO_PIPE_READ, IO_PIPE_WRITE } IoOperation;
 
 typedef struct ProcessControlBlock {
     long pid;
@@ -45,7 +45,7 @@ _Noreturn void process_start(void);
 TrapFrame *process_resume(void);
 long process_spawn(long program);
 long process_fork(void);
-long process_exec(long program);
+long process_exec(long program, const char *argument);
 long process_yield(void);
 long process_sleep(long channel);
 long process_wakeup(long channel);

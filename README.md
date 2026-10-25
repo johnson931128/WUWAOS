@@ -60,6 +60,18 @@ ps
 
 也可用 `run quick` 觀察結束碼 40，或 `run worker` 搭配 `wakeup 7`／`wait <pid>`。下方保留直接 spawn（建立指定程式）的操作。
 
+## fan 文字編輯器
+
+在 QEMU 的 `wuwaos>` 輸入：
+
+```text
+fan /home/user/note.txt
+```
+
+直接輸入文字、空白及 Enter 換行。方向鍵移動，Home／End 到行首／行尾，Backspace／Delete 刪除，PageUp／PageDown 捲動，Tab 插入空白。`Ctrl+O` 儲存，`Ctrl+X` 離開；有未儲存內容時選 `y` 儲存後離開、`n` 捨棄、`c` 或 Escape 取消。`Ctrl+L` 完整重畫。離開後用 `cat /home/user/note.txt` 讀回，QEMU 重啟後檔案仍保留。
+
+fan 是在 WUWAOS 使用者模式執行的獨立 C 程式，畫面經 UART 與 ANSI 控制碼顯示在終端，需至少 80×24。第一版支援最多 2 KiB ASCII／LF 文字；超大檔案、UTF-8 或不支援的控制字元會拒絕開啟，避免截斷覆寫。既有 Tab 以 `>` 顯示並保留。新檔案直到儲存才建立，父目錄須先存在。沒有 Vim 命令模式、undo 或一般磁碟執行檔載入；fan 映像仍嵌入核心。詳見 [Spec 09](docs/SPEC-09-fan.md)。
+
 ## 直接建立行程並觀察
 
 從全新啟動開始，一次輸入一條：
@@ -154,6 +166,7 @@ cat /home/user/notes/today.txt
 | touch <path> | 建立空檔案；檔案已存在時不清空 |
 | write <path> <text> | 建立或覆寫檔案，文字不含空白 |
 | cat <path> | 顯示檔案前 2048 bytes；若內容未以換行結尾，顯示後補換行 |
+| fan <path> | 前景文字編輯器，Ctrl+O 儲存、Ctrl+X 離開並自動回收行程 |
 | exit | 結束 shell |
 
 輸入上限為 126 個內容字元加換行；超長行顯示錯誤，不執行截斷命令。只有固定命令與正整數參數，不支援引號、一般參數展開、背景 & 語法或主機命令。
@@ -161,7 +174,7 @@ cat /home/user/notes/today.txt
 ## 架構與限制
 
 - 最多 4 個行程，每個獨立 Sv39（三級分頁）頁表、16 KiB 使用者 code（程式碼）、4 KiB data（資料）、4 KiB stack（堆疊）及 16 KiB 核心堆疊。
-- fork 採完整複製，不使用 COW（寫入時複製）。exec 以額外一份 40 KiB 備用位址空間準備映像，再交換並切換頁表；只接受內建程式 ID。
+- fork 採完整複製，不使用 COW（寫入時複製）。exec 動態準備新位址空間，切換頁表後釋放舊空間；只接受內建程式 ID，fan 可額外接收一個檔案路徑參數。
 - PCB 是原本 Process 的延伸，沒有第二份重複的狀態。包含父子關係、等待資訊、管道端點與待完成 I/O。
 - `processes[4]` 保存完整 PCB；`scheduler.c` 的單向鏈結 FIFO 只保存 Ready PCB 的指標，入列與取出隊首 O(1)，移除任意節點 O(P)。
 - read/write、行程管理與查詢都透過使用者模式系統呼叫。核心與 UART（序列埠）頁面仍不可由使用者模式直接存取。
@@ -178,6 +191,8 @@ cat /home/user/notes/today.txt
 - [SPEC-04](docs/SPEC-04-boot-splash.md)：開機動畫規格與驗收紀錄。
 - [SPEC-06](docs/SPEC-06-filesystem.md)：VirtIO 區塊 I/O、WUFS 與持久磁碟驗收紀錄。
 - [SPEC-07](docs/SPEC-07-fifo-scheduler.md)：FIFO 就緒佇列、非搶占式排程與驗收紀錄。
+- [SPEC-08](docs/SPEC-08-memory.md)：動態實體頁配置、三級分頁與回收。
+- [SPEC-09](docs/SPEC-09-fan.md)：fan 編輯器、raw console 與路徑參數傳遞。
 
 先讀 user/shell.c 的 shell_main／command，再追蹤 user/api.c → kernel/syscall.c → process.c 或 io.c，最後看 trap.S 如何交還使用者程式。
 手動練習：對照 pcb 2 顯示的等待通道與 sepc（保存的指令位址），說明 wakeup 後為什麼從 sleep 呼叫後面繼續。

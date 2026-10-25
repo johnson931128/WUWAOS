@@ -6,6 +6,7 @@ KERNEL_SOURCES := main console trap page vm process scheduler syscall io splash 
 OBJECTS := build/entry.o build/trap_entry.o build/user_image.o $(addprefix build/kernel_,$(addsuffix .o,$(KERNEL_SOURCES)))
 USER_OBJECTS := build/user_entry.o build/user_api.o build/user_print.o build/user_demo.o build/user_shell.o
 APP_OBJECTS := build/user_entry.o build/user_api.o build/user_print.o build/user_app.o
+FAN_OBJECTS := build/user_entry.o build/user_api.o build/user_print.o build/user_fan.o
 ARCH_FLAGS := --target=riscv64-unknown-elf -march=rv64imac_zicsr_zifencei -mabi=lp64 -mcmodel=medany -msmall-data-limit=0 -mno-relax
 CFLAGS := $(ARCH_FLAGS) -std=c11 -O2 -g -Wall -Wextra -Werror -ffreestanding -fno-builtin -fno-stack-protector -fno-pic -fno-pie -Iinclude -MMD -MP
 LDFLAGS := $(ARCH_FLAGS) -fuse-ld=lld -nostdlib -static -Wl,--build-id=none
@@ -43,7 +44,13 @@ build/app.elf: $(APP_OBJECTS) user/linker.ld
 build/app.bin: build/app.elf
 	$(OBJCOPY) -O binary $< $@
 
-build/user_image.o: kernel/user_image.S build/user.bin build/app.bin | build
+build/fan.elf: $(FAN_OBJECTS) user/linker.ld
+	$(CC) $(LDFLAGS) -Wl,-T,user/linker.ld $(FAN_OBJECTS) -o $@
+
+build/fan.bin: build/fan.elf
+	$(OBJCOPY) -O binary $< $@
+
+build/user_image.o: kernel/user_image.S build/user.bin build/app.bin build/fan.bin | build
 	$(CC) $(ARCH_FLAGS) -g -c $< -o $@
 
 $(TARGET): $(OBJECTS) kernel/linker.ld
@@ -56,6 +63,6 @@ run: $(TARGET) disk-image
 	$(QEMU) -machine virt -smp 1 -m 128M -nographic -bios default -kernel $(TARGET) -global virtio-mmio.force-legacy=false -drive file=build/wuwaos.img,if=none,format=raw,id=wuwaos,cache=writeback -device virtio-blk-device,drive=wuwaos
 
 clean:
-	rm -f build/*.o build/*.d build/kernel.elf build/kernel.map build/user.elf build/user.bin build/app.elf build/app.bin
+	rm -f build/*.o build/*.d build/kernel.elf build/kernel.map build/user.elf build/user.bin build/app.elf build/app.bin build/fan.elf build/fan.bin
 
 -include $(wildcard build/*.d)

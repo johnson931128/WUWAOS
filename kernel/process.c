@@ -30,7 +30,7 @@ static void transition(Process *process, ProcessState next, const char *reason) 
         scheduler_enqueue(process);
     }
     /* Keep the interactive prompt readable; inspect the shell through pcb. */
-    if (!trace_enabled || process->pid == 1) {
+    if (!trace_enabled || process->pid == 1 || process->program == PROGRAM_FAN) {
         return;
     }
     console_puts("[process] PID=");
@@ -148,21 +148,32 @@ long process_fork(void) {
     return pid;
 }
 
-long process_exec(long program) {
-    if (program < PROGRAM_WORKER || program > PROGRAM_COUNTER) {
+long process_exec(long program, const char *argument) {
+    if (program < PROGRAM_WORKER || program > PROGRAM_FAN ||
+        (program == PROGRAM_FAN && (argument == 0 || argument[0] != '/'))) {
         return ERR_INVALID; /* Preserve the current image on failure. */
     }
     Process *process = process_current();
     const uintptr_t root = vm_create(program);
     if (root == 0) return ERR_NO_MEMORY;
+    uintptr_t stack = USER_STACK_TOP;
+    if (program == PROGRAM_FAN) {
+        stack -= 128; /* Keep the path above the downward-growing call stack. */
+        for (size_t i = 0; i < 128; ++i) {
+            user_write_byte(root, stack + i, (unsigned char)argument[i]);
+            if (argument[i] == 0) break;
+        }
+    }
+    (void)io_console_mode(0); /* Successful exec resets raw input ownership. */
     const uintptr_t old_root = process->page_table;
     const uint64_t status = process->frame->sstatus;
     volatile unsigned char *bytes = (volatile unsigned char *)process->frame;
     for (size_t i = 0; i < sizeof(TrapFrame); ++i) {
         bytes[i] = 0;
     }
-    process->frame->registers[2] = USER_STACK_TOP;
+    process->frame->registers[2] = stack;
     process->frame->registers[10] = (uint64_t)program;
+    process->frame->registers[11] = program == PROGRAM_FAN ? stack : 0;
     process->frame->sepc = USER_ENTRY;
     process->frame->sstatus = status;
     process->program = program;
@@ -315,7 +326,7 @@ void process_block_io(IoOperation operation, uintptr_t buffer, size_t length) {
     process->io_count = 0;
     process->io_overflow = 0;
     process->wait_reason = WAIT_IO;
-    transition(process, PROCESS_WAITING, operation == IO_CONSOLE_READ ? "console read" :
+    transition(process, PROCESS_WAITING, (operation == IO_CONSOLE_READ || operation == IO_CONSOLE_RAW) ? "console read" :
                operation == IO_PIPE_READ ? "pipe read" : "pipe write");
 }
 
@@ -327,7 +338,7 @@ void process_complete_io(Process *process, long result) {
 }
 
 static const char *program_name(long program) {
-    static const char *names[] = { "shell", "worker", "quick", "writer", "reader", "counter" };
+    static const char *names[] = { "shell", "worker", "quick", "writer", "reader", "counter", "fan" };
     return names[program];
 }
 
@@ -341,7 +352,7 @@ static const char *waiting_for(const Process *process) {
     if (process->wait_reason == WAIT_CHANNEL) {
         return "channel";
     }
-    return process->io_operation == IO_CONSOLE_READ ? "console" :
+    return (process->io_operation == IO_CONSOLE_READ || process->io_operation == IO_CONSOLE_RAW) ? "console" :
            process->io_operation == IO_PIPE_READ ? "pipe-read" : "pipe-write";
 }
 
