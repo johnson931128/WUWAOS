@@ -232,6 +232,8 @@ driver 協商 VERSION_1 feature，選 queue 0，建立一組 descriptor（描述
 
 WUFS 在 LBA 0 存 superblock，接著 inode bitmap、block bitmap、固定 inode 表，最後才是資料區。inode 80 bytes，含類型、檔案長度、8 個直接區塊和 8 個單層索引區塊；每檔上限 (8 + 8×128)×512 = 528384 bytes。inode 表固定 128 個項目；16 MiB 磁碟有 32768 個 sector。bitmap 逐位標記 inode 與已用磁碟 sector。
 
+`inode_read`／`inode_write` 依 inode 的 byte offset 逐磁區複製，每段長度取磁區剩餘空間與 inode 剩餘長度的較小值。例如 inode 6 從區內位移 480 開始，必須先處理 32 bytes，再處理下一磁區的 48 bytes。寫入各段前先讀取原磁區，避免覆蓋相鄰 inode；這不是跨磁區的原子交易，第二段失敗仍可能留下部分更新。
+
 目錄內容是順序 DirectoryEntry（24-byte 名稱 + 4-byte inode 編號），路徑查找從 root inode 逐層掃描目錄。C 層支援跨 sector 的目錄項目複製。`fs_list` 回傳目錄名稱，`fs_mkdir` 建立目錄及 `.`／`..`，`fs_touch` 建立空檔，`fs_read` 依位移讀資料，`fs_write` 釋放舊區塊後覆寫並更新 inode 長度。
 
 `tools/make_disk.py` 在首次使用時建立 WUFS 目錄與 `/boot/kernel.elf`；每次 make run 只替換這個 inode 的資料區，其他目錄項目和使用者檔案會保留。核心本身也能在空白磁碟格式化並建立目錄。`/boot/kernel.elf` 是一般核心 ELF 檔案副本；QEMU 目前仍以 `-kernel` 載入另一份 ELF，磁碟檔案沒有參與開機。

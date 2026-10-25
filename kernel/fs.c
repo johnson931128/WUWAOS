@@ -81,13 +81,20 @@ static int inode_read(uint32_t number, Inode *inode) {
     }
     uint8_t sector[FS_SECTOR_SIZE];
     const uint32_t byte = number * FS_INODE_SIZE;
-    const uint32_t lba = superblock.inode_table_sector + byte / FS_SECTOR_SIZE;
-    const uint32_t offset = byte % FS_SECTOR_SIZE;
-    if (read_sector(lba, sector) < 0) {
-        return -1;
+    size_t copied = 0;
+    /* Packed 80-byte inodes can span two 512-byte sectors. */
+    while (copied < sizeof(*inode)) {
+        const uint32_t position = byte + (uint32_t)copied;
+        const uint32_t lba = superblock.inode_table_sector + position / FS_SECTOR_SIZE;
+        const uint32_t offset = position % FS_SECTOR_SIZE;
+        if (read_sector(lba, sector) < 0) return -1;
+        size_t amount = FS_SECTOR_SIZE - offset;
+        if (amount > sizeof(*inode) - copied) amount = sizeof(*inode) - copied;
+        for (size_t i = 0; i < amount; ++i) {
+            ((uint8_t *)inode)[copied + i] = sector[offset + i];
+        }
+        copied += amount;
     }
-    const Inode *stored = (const Inode *)(sector + offset);
-    *inode = *stored;
     return 0;
 }
 
@@ -97,13 +104,22 @@ static int inode_write(uint32_t number, const Inode *inode) {
     }
     uint8_t sector[FS_SECTOR_SIZE];
     const uint32_t byte = number * FS_INODE_SIZE;
-    const uint32_t lba = superblock.inode_table_sector + byte / FS_SECTOR_SIZE;
-    const uint32_t offset = byte % FS_SECTOR_SIZE;
-    if (read_sector(lba, sector) < 0) {
-        return -1;
+    size_t copied = 0;
+    while (copied < sizeof(*inode)) {
+        const uint32_t position = byte + (uint32_t)copied;
+        const uint32_t lba = superblock.inode_table_sector + position / FS_SECTOR_SIZE;
+        const uint32_t offset = position % FS_SECTOR_SIZE;
+        /* Read-modify-write preserves adjacent inodes in each sector. */
+        if (read_sector(lba, sector) < 0) return -1;
+        size_t amount = FS_SECTOR_SIZE - offset;
+        if (amount > sizeof(*inode) - copied) amount = sizeof(*inode) - copied;
+        for (size_t i = 0; i < amount; ++i) {
+            sector[offset + i] = ((const uint8_t *)inode)[copied + i];
+        }
+        if (write_sector(lba, sector) < 0) return -1;
+        copied += amount;
     }
-    *(Inode *)(sector + offset) = *inode;
-    return write_sector(lba, sector);
+    return 0;
 }
 
 static long inode_allocate(uint32_t type) {
