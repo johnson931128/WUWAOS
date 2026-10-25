@@ -39,5 +39,5 @@ SECTIONS
     } > RAM
     . = ALIGN(4096);
     __kernel_end = .;
-    ASSERT(__kernel_end <= 0x80400000, "Kernel exceeds fixed 2 MiB mapping window")
+    ASSERT(__kernel_end <= 0x80400000, "Kernel exceeds reserved low-RAM boot budget")
 }

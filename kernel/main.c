@@ -17,7 +17,7 @@ void kernel_main(unsigned long hart_id, const void *fdt) {
     if (block_ready) {
         vm_map_mmio(block_base);
     }
-    vm_init();
+    vm_init(fdt);
     if (block_ready && fs_init() < 0) {
         console_puts("[fs] Disk present but WUFS could not be mounted\n");
     }

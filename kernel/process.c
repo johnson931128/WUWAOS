@@ -84,7 +84,11 @@ static long create_process(long program, long parent_pid, int publish) {
     process->input_pipe = -1;
     process->output_pipe = -1;
     transition(process, PROCESS_NEW, "create");
-    process->page_table = vm_create((unsigned int)slot, program);
+    process->page_table = vm_create(program);
+    if (process->page_table == 0) {
+        transition(process, PROCESS_UNUSED, "out of memory");
+        return ERR_NO_MEMORY;
+    }
     for (size_t i = 0; i < sizeof(kernel_stacks[slot]); ++i) {
         ((volatile unsigned char *)kernel_stacks[slot])[i] = 0;
     }
@@ -127,7 +131,12 @@ long process_fork(void) {
         return pid;
     }
     Process *child = find_pid(pid);
-    vm_clone((unsigned int)(child - processes), parent->page_table);
+    if (vm_clone(child->page_table, parent->page_table) < 0) {
+        vm_destroy(child->page_table);
+        child->page_table = 0;
+        transition(child, PROCESS_UNUSED, "fork copy failed");
+        return ERR_ADDRESS;
+    }
     volatile unsigned char *to = (volatile unsigned char *)child->frame;
     const unsigned char *from = (const unsigned char *)parent->frame;
     for (size_t i = 0; i < sizeof(TrapFrame); ++i) {
@@ -144,7 +153,9 @@ long process_exec(long program) {
         return ERR_INVALID; /* Preserve the current image on failure. */
     }
     Process *process = process_current();
-    const uintptr_t root = vm_exec((unsigned int)(process - processes), program);
+    const uintptr_t root = vm_create(program);
+    if (root == 0) return ERR_NO_MEMORY;
+    const uintptr_t old_root = process->page_table;
     const uint64_t status = process->frame->sstatus;
     volatile unsigned char *bytes = (volatile unsigned char *)process->frame;
     for (size_t i = 0; i < sizeof(TrapFrame); ++i) {
@@ -163,6 +174,7 @@ long process_exec(long program) {
     process->io_buffer = process->io_length = process->io_count = 0;
     process->io_overflow = 0;
     vm_enable(root);
+    vm_destroy(old_root);
     console_puts("[exec] PID=");
     console_number(process->pid);
     console_puts(" retained; loaded app image, program=");
@@ -206,7 +218,9 @@ long process_wakeup(long channel) {
 }
 
 static void reap(Process *process) {
-    /* Do not clear the stack or active page table while returning from exit. */
+    /* The caller must be on another root; kernel stacks remain static. */
+    vm_destroy(process->page_table);
+    process->page_table = 0;
     transition(process, PROCESS_UNUSED, "reaped");
 }
 
@@ -355,6 +369,7 @@ long process_list(void) {
     console_number(PROCESS_LIMIT - count);
     console_putc('\n');
     scheduler_print_ready();
+    page_print_stats();
     return count;
 }
 
@@ -439,7 +454,7 @@ long process_pipeline(uintptr_t result_address) {
             reap(find_pid(reader));
         }
         io_pipe_release(pipe);
-        return ERR_NO_SLOT;
+        return writer < 0 ? writer : reader;
     }
     find_pid(writer)->output_pipe = pipe;
     find_pid(reader)->input_pipe = pipe;
@@ -470,9 +485,12 @@ static void finish_wait(Process *parent) {
 }
 
 TrapFrame *process_resume(void) {
+    /* Reaping may release the process whose exit trap is still on this stack. */
+    vm_use_kernel();
     for (;;) {
         io_poll();
         if (current_index >= 0 && process_current()->state == PROCESS_RUNNING) {
+            vm_enable(process_current()->page_table);
             return process_current()->frame;
         }
         for (int i = 0; i < PROCESS_LIMIT; ++i) {

@@ -2,6 +2,8 @@
 
 可在 QEMU 上操作的小型 RISC-V 64-bit 作業系統。開機進入 U-mode（使用者模式）的 shell（命令列介面），透過 syscall（系統呼叫）控制行程。
 
+記憶體使用 Sv39（三級分頁）：L2 → L1 → L0，每張表 4 KiB、512 個表項。頁表與使用者實體頁由空閒頁面串列動態配置；fork 複製私有頁，exec 切換後回收舊空間，wait 回收 Zombie 的頁面。`ps` 會顯示 `Memory pages: free=... total=... page_size=4096`，可在建立前後觀察頁數，全部子行程回收後應回到原值。現階段限 QEMU virt／128 MiB，使用者 code/data/stack 大小仍固定，尚無 heap 或缺頁配置；設計見 [Spec 08](docs/SPEC-08-memory.md)。
+
 ## 啟動
 
 在專案根目錄的 PowerShell 執行：

@@ -32,6 +32,7 @@
 
 #define ERR_NO_CHILD (-10L)
 #define ERR_NO_SLOT (-11L)
+#define ERR_NO_MEMORY (-12L)
 #define ERR_INVALID (-22L)
 #define ERR_ADDRESS (-14L)
 #define ERR_NO_SYSCALL (-38L)
