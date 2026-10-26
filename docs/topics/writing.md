@@ -6,6 +6,8 @@
 
 主機需要 Node.js 與 npm。本次文件工具為 VitePress 1.6.4；請以 repository 的 lockfile 安裝相同依賴。
 
+網站來源在 repository 的 `codex/documentation` 分支。若要另外建立文件專用工作目錄，可使用 `git clone --branch codex/documentation --single-branch git@github.com:johnson931128/WUWAOS.git WUWAOS-docs`，之後進入該目錄再執行本章命令；main 的 OS 工作目錄不必為此切換分支。
+
 `package.json` 另固定 Vite 為 6.4.5，避開 VitePress 預設 Vite 5 依賴的已知開發伺服器問題；升級時也要重新確認建置、預覽與依賴檢查。
 
 在專案根目錄 PowerShell 執行：

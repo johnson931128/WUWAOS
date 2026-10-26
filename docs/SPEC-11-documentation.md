@@ -47,3 +47,16 @@
 - 預覽截圖保留於忽略的 build/docs-home.png；沒有新增測試程式碼，沒有修改 OS 原始碼，也沒有 commit／push 或公開部署。
 
 驗證限制：瀏覽器確認為桌面約 1265×712 視窗；未驗證真實手機、其他瀏覽器、公開部署及子路徑主機。保留 VitePress 內建行動版版面，沒有宣稱已完成行動裝置驗收。開發模式曾印出 localSearchIndex 熱更新解析警告，但中文搜尋及跳轉實際可用，正式建置亦成功；後續升級依賴時需留意。網站驗收不代表重新執行 OS 功能驗證。
+
+## 公開部署更新
+
+使用者後續授權公開網站，並確認文章不展示程式碼、只提供 GitHub 連結；以下紀錄補充第一階段的本機驗收，不覆寫當時結果。
+
+- 2026-10-26，透過 tools/publish-docs.ps1 成功保存文件來源到 codex/documentation，並發布靜態產物到 gh-pages。首次來源 commit a92e14c、靜態 commit 6075625；GitHub Pages 設定頁確認 gh-pages／root、HTTPS 強制啟用。
+- 公開首頁 https://johnson931128.github.io/WUWAOS/ 與 sitemap.xml 回 HTTP 200；網站地圖含 25 個內容網址，正式資源路徑為 /WUWAOS/，canonical 指向正式 HTTPS 網址。子路徑 robots.txt 可讀；網域根目錄 robots.txt 為 404，未更動個人網站。
+- Chrome 實際開啟公開首頁、開機章節及按需分頁章；中文搜尋「缺頁」有結果，點選能到正確段落；約 806px 窄視窗的章節選單可展開並導覽。
+- 移除所有 OS snippet 匯入，原始碼改為 GitHub 連結；靜態產物沒有 .c／.h／.S／.map／.ps1／.ts／.mts 檔。保留的是生成後 HTML／CSS／JavaScript、文字、流程與操作指令，不可能對瀏覽器隱藏前端產物。
+- 未加入後台、來源選擇、上傳、內容寫入 API 或部署憑證。來源與產物都在 GitHub，沒有外部 CMS 或其他程式碼託管服務。靜態分支寫入需 GitHub repository 權限；沒有不受信任 PR 自動發布流程。
+- main 仍為 22a1d21，既有暫存索引為空；來源分支相對 main 的變更只有文件、網站設定、套件設定與發布腳本，沒有 kernel／user／include／Makefile 變更。前階段 OS 工作仍留在目前工作樹，沒有順帶提交。
+- GitHub 的協作者清單要求帳號重新驗證；尚未完成確認前，不宣稱「只有擁有者具有任何寫入權限」。這是既有 repository 帳號權限的核對限制，與網站沒有公開編輯入口是不同層面。
+- 尚未驗證 Google 實際收錄、排名、Search Console 或真實手機；不保證公開後立刻能在 Google 搜尋到。
