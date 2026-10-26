@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /WUWAOS/
+
+Sitemap: https://johnson931128.github.io/WUWAOS/sitemap.xml
