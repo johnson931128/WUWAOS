@@ -1,0 +1,23 @@
+# 原始規格與驗收紀錄
+
+此處按開發順序保存規格。它們記錄「當時做了什麼」，不一定代表現在的架構；第一次閱讀建議先看左側主題章節。
+
+| 階段 | 規格與定位 |
+| --- | --- |
+| 01 | [使用者模式與系統呼叫](./SPEC-01-user-syscalls.md) |
+| 02 | [合作式行程生命週期](./SPEC-02-process-lifecycle.md) |
+| 03 | [Shell、PCB 與 Pipe](./SPEC-03-shell-pipe.md) |
+| 04 | [開機 ASCII 動畫](./SPEC-04-boot-splash.md) |
+| 05 | [Fork → Exec → 排程 → 回收](./SPEC.md)，靜態位址空間設計已更新 |
+| 06 | [VirtIO 與 WUFS](./SPEC-06-filesystem.md) |
+| 07 | [FIFO 排程器](./SPEC-07-fifo-scheduler.md) |
+| 08 | [動態實體頁與三級頁表](./SPEC-08-memory.md)，預先載入使用者頁的部分由 10 取代 |
+| 09 | [fan 全螢幕編輯器](./SPEC-09-fan.md) |
+| 10 | [Demand paging、頁面置換與 Swap](./SPEC-10-demand-paging.md)，現行 VM 設計 |
+| 11 | [文件網站](./SPEC-11-documentation.md) |
+
+## 如何判斷是否驗證過
+
+請讀各規格的「驗收紀錄」及「限制與未驗證」。設計方案、原始碼靜態檢查、實際 QEMU 操作是不同種類的證據；沒有記錄的邊界不能當成已通過。
+
+完整檔案職責與演算法見 [程式碼與架構紀錄](./CODE_GUIDE.md)。

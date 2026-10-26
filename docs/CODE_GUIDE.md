@@ -1,6 +1,6 @@
 # WUWAOS 程式碼與架構紀錄
 
-記錄目前所有手寫程式碼、標頭、連結及建置設定。當前規格由 SPEC.md、SPEC-06 與 SPEC-07 組成；SPEC-07 更新排程政策，SPEC-01／02／03／04 保留舊里程碑，不代表現在的限制。
+記錄目前所有手寫程式碼、標頭、連結及建置設定。現行設計由 SPEC.md 與後續 SPEC-06 至 SPEC-10 組成；記憶體以 SPEC-10 為準，SPEC-01／02／03／04 與後續各階段驗收保留當時紀錄，不代表現在的全部限制。依主題閱讀可從[文件首頁](./index.md)開始，開發階段見[歷史索引](./history.md)。
 術語第一次出現附中文用途。原始碼與實際 QEMU 執行是行為依據，尚未執行的路徑不稱為已驗證。
 
 ## 1. 架構與控制權
@@ -42,11 +42,13 @@ CPU 執行記憶體中的機器碼，不知道來源檔名。OpenSBI 負責早�
 | kernel/fs.c / fs.h | WUFS 區塊配置、inode、目錄與路徑操作 |
 | kernel/memory.c | freestanding（無標準執行環境）建置所需的 byte-wise memset／memcpy |
 | kernel/page.c / page.h | 4 KiB 實體頁面空閒串列、配置／回收、配置 bitmap 與頁數查詢 |
-| kernel/syscall.c / syscall.h | 22 個 syscall（系統呼叫）的編號分派 |
+| kernel/swap.c / swap.h | 獨立交換區標頭、slot bitmap、4 KiB 換入／換出讀寫 |
+| kernel/syscall.c / syscall.h | 24 個 syscall（系統呼叫）的編號分派 |
 | kernel/user_image.S | 把 user.bin、app.bin 與 fan.bin 三份獨立映像嵌入核心唯讀資料 |
 | kernel/linker.ld | 核心入口、記憶體區段與權限邊界 |
 | include/syscall_numbers.h | 共用系統呼叫編號、內建程式角色、錯誤碼 |
 | include/process_limits.h | 行程與位址空間共用的上限 4 |
+| include/vm_limits.h | heap 起點、頁面大小、heap 頁數與常駐頁預算 |
 | user/entry.S | 使用者入口，將核心給的角色與可選路徑交給 user_main，返回後 exit |
 | user/api.c / api.h | 使用者系統呼叫包裝函式 |
 | user/shell.c / shell.h | 互動 shell、命令解析、fork／run／管線操作 |
@@ -55,6 +57,7 @@ CPU 執行記憶體中的機器碼，不知道來源檔名。OpenSBI 負責早�
 | user/fan.c | 獨立文字編輯器映像、緩衝區編輯、按鍵解碼、TUI、儲存與退出確認 |
 | user/print.c / print.h | 三種映像共用的字串／數字輸出與短寫處理 |
 | tools/make_disk.py | 建立／更新 WUFS 磁碟映像中的 kernel.elf，保留其他檔案 |
+| tools/make_swap.py | 建立有格式標記的獨立交換磁碟，可調整 slot 數，拒絕重格式化既有檔案 |
 | user/linker.ld | 使用者映像固定布局與大小限制 |
 | Makefile | 交叉編譯、連結、映像嵌入、持久 QEMU 磁碟與啟動 |
 
@@ -117,45 +120,42 @@ trap.h 的數字位移供組合語言使用，C 結構用相同布局；_Static_
 
 trap_handler 保存目前行程的 frame，僅在 SPP=0、scause=8 時分派使用者 ecall（環境呼叫指令）。ecall 固定 4 bytes，因此先將 sepc 加 4；其他例外不套用此位移。
 使用者其他例外終止該行程，核心錯誤顯示資訊後停止。一般呼叫後透過 process_resume 選出返回的 frame。
+使用者 page fault（缺頁例外）12／13／15 則先呼叫 vm_handle_fault；合法按需配置／換入成功後保留原 sepc 重試，非法或無法補頁才結束行程。這不是把所有缺頁當成一般錯誤，也不對缺頁指令套用 ecall 的 +4。
 `mv sp, a0` 改用 C 回傳的 frame；trap_restore 寫回 CSR（控制與狀態暫存器）、還原一般暫存器，最後 sret（監督模式陷阱返回指令）。
 第一次 user_enter 也復用這份還原流程。每次保存／還原為固定 O(1)，目前不保存浮點／向量狀態，初始使用者狀態停用相關能力。
 
-## 6. vm.c / vm.h：每個行程的位址空間
+## 6. vm.c / vm.h：按需分頁、FIFO 與位址空間
 
-Sv39（三級分頁）把位址拆成三個 9-bit 索引與 12-bit 頁內 offset（偏移）。每表 512 個 PTE（頁表項目）、對齊 4 KiB。
-頁表與使用者實體頁由 page_alloc 動態取得，已移除固定的 storage／spaces／spare。常駐 kernel_root 映射核心、RAM 與裝置；每行程配置私有 L2 根表與低位址 L1，複製共用裝置分支，再為使用者 code/data 與 stack 各配置一張 L0。現行布局每行程共四張表、六個使用者頁，共 40 KiB。
+Sv39 將虛擬位址拆成 L2／L1／L0 三個 9-bit 索引與 12-bit 頁內位移；每張表有 512 個 8-byte PTE，對齊 4 KiB。kernel_root 共用 supervisor-only 的核心／RAM／UART／兩顆 VirtIO 裝置映射，使用者不能存取這些映射。
 
-| 使用者虛擬範圍 | 用途／權限 |
+| 使用者範圍 | 權限與 backing（重建來源） |
 | --- | --- |
-| 0x400000–0x404000 | code：16 KiB，RXU（可讀／可執行／使用者可存取） |
-| 0x404000–0x405000 | data：4 KiB，RWU（可讀寫／使用者可存取） |
-| 0x800000–0x801000 | stack：4 KiB，RWU |
-| 0x10000000 的一頁 | UART，僅核心 RW |
-| 0x80200000–0x88000000 | 核心及 RAM，核心 code RX、唯讀資料 R、其餘 RW，全部不設 U |
+| 0x400000–0x404000 | code，RXU，首次存取從 shell／app／fan 內嵌映像載入 |
+| 0x404000–0x405000 | data，RWU，首次從映像及零填充初始化 |
+| 0x800000–0x801000 | stack，RWU，首次配置零頁 |
+| 0x1000000 起，最多 1 MiB | sbrk 保留的 heap，RWU，首次配置零頁 |
 
-所有範圍左閉右開。相同虛擬位址在不同 PCB 的根表指向不同實體頁。核心另有 identity mapping（虛實位址相同映射）用於存取私有頁的實體儲存區。
+只有已保留的合法區域能補頁；heap 最後一個部分頁按頁對齊映射。新建立的行程只先配置私有根表與低位址 L1，不配置使用者頁；L0 表與使用者頁在需要時取得。kernel/root/page-table 頁面常駐、不參與使用者 FIFO 置換。
 
-- table_entry 建立下一級 PPN（實體頁編號）及 V（有效）bit；vm_map 的末級表項加入 R/W/X/U 權限與 A/D（已存取／已寫入）bit。
-- vm_init(fdt) 初始化頁面配置器、建立常駐核心／RAM／UART／VirtIO 映射，檢查嵌入映像大小，啟用核心根表。
-- vm_walk(root, address, allocate) 從 L2 開始，用 `(address >> (12 + 9 * level)) & 511` 取索引；L2／L1 缺少下層表且允許配置時向 page_alloc 取得零頁，最後回傳 L0 表項位置。查詢模式不配置頁面。
-- vm_map 安裝對齊的 4 KiB 實體頁映射，拒絕覆蓋有效表項；不支援中間層大頁面。
-- vm_create(program) 配置私有表與使用者頁，再複製 shell／app／fan 映像；新頁已清零。失敗時以 vm_destroy 清理完成及部分完成的表樹，回傳 0。
-- vm_clone(destination, source) 透過兩份表各自查出使用者頁的實體位置，複製 24 KiB 內容，絕不複製父頁表指標；因此不要求使用者實體頁連續。
-- vm_destroy／free_table 對照核心表範本，跳過共用分支，遞迴釋放私有使用者頁與私有表。拒絕銷毀常駐核心根表及 satp 正在使用的根表。
-- exec 的替換流程由 process_exec 管理：先 vm_create 完整新空間，成功後切換 satp 再 vm_destroy 舊空間；失敗不改原程式。
-- vm_enable 寫入 satp（位址轉換設定暫存器），執行 sfence.vma（轉換快取同步）與 fence.i（指令取得同步）。
-- user_physical 透過 vm_walk 從指定根表步行三級，要求有效、4 KiB leaf（末級映射）、U 及要求的讀寫權限。
-- user_readable／user_writable 驗證完整範圍、跨頁與整數溢位；user_read_byte／user_write_byte 經核心映射存取已驗證的 byte。
-- user_write_long 逐 byte 回寫 long，支援非對齊與跨頁；呼叫者必須先驗證完整範圍。
+- VmSpace 保存 root、program、heap_end、缺頁數，以及 262 個 VmPage 補充分頁記錄。spaces[5] 是 metadata，並非預先配置的使用者 RAM；第五欄供 exec 準備新空間。
+- VmPage 的 physical 非零表示常駐；slot 非零表示有獨立 swap backing；兩者皆零時由原始映像或零頁重建。dirty 與硬體 PTE_D 合併判斷修改狀態，pins 表示暫時不可換出，arrival 表示本次入駐次序。
+- vm_walk 用 `(address >> (12 + 9 * level)) & 511` 逐層取索引，需要時配置下層表。核心 vm_map 僅安裝 4 KiB 映射，拒絕覆蓋既有 PTE。
+- resident_page 取得頁框並完整讀取 swap 或填入映像／零頁，成功後才公布有效 PTE；kernel copyout 主動標 dirty，使用者直接寫入則由硬體 D bit 記錄。換入失敗保留原 slot，不公布部分讀取的頁面。
+- evict_one 掃描全域補充表，選 arrival 最小、未 pin 的常駐頁。命中不更新 arrival，因此是 FIFO，不是 LRU。dirty 頁寫入八個磁區成功後才撤銷 PTE；clean 頁直接保留既有 backing 或回到可重建狀態。sfence.vma 撤銷舊轉換後才釋放實體頁。
+- 使用者常駐預算預設 64 頁、最小可設 8 頁；超過預算或 page_alloc 無可用頁時嘗試置換。沒有可安全換出的頁面回 -12；磁碟失敗回 -5。QEMU RAM 總量仍是 128 MiB。
+- vm_handle_fault 依 scause 12／13／15 檢查執行／讀／寫權限，合法者補頁；處理時 pin 住目前指令可能占用的 code 頁，避免 swap full 時 code 與 operand 互相淘汰。trap_handler 成功後重試同一 sepc，不像 ecall 加 4；非法位址／權限回 -14 終止該行程。
+- vm_sbrk 只調整合法 heap 範圍；縮小時釋放不再涵蓋的整頁及 slot，空的分頁表暫留到位址空間銷毀。部分頁縮小再擴張不保證既有 bytes 清零。
+- vm_clone 複製常駐內容時 pin 來源頁；已換出的內容透過核心常駐暫存頁複製至獨立 slot。未曾使用的頁不需載入，子行程保留相同映像／零頁來源。任何失敗由 process_fork 銷毀不完整子空間，父內容保留。
+- vm_destroy 先釋放補充表中所有使用者實體頁與 swap slots，再遞迴回收私有分頁表，跳過共用核心分支。拒絕銷毀 satp 正在使用的根表。exec 成功切換後才銷毀舊空間；Zombie 保留資源直到 wait／孤兒回收。
+- user_readable／user_writable 驗證合法範圍與權限，不要求常駐。user_copy_from／user_copy_to 逐頁載入後立即複製，不保留可能被下一次配置淘汰的實體指標；失敗明確回傳。user_read_byte／user_write_byte／user_write_long 是短資料包裝。
 
-建立需清零配置到的頁面並複製映像；fork 另複製固定 24 KiB 使用者內容。銷毀會掃描私有表的表項並釋放頁面，不掃描共用 RAM 分支的子表。P 個頁面的權限檢查 O(P)，單 byte 轉譯固定三級 O(1)。exec 準備新空間時暫時同時占用新舊空間，完成後立刻回收舊空間，沒有永久備用空間。
-不直接解參考使用者虛擬指標，也不開啟 SUM（允許監督模式直接存取使用者頁面的狀態 bit）。阻塞期間頁表不會被使用者修改；取消／終止會先移除 pending I/O，避免向已回收行程複製。
+FIFO 選擇在最壞情況掃描 5×262 個 metadata；複製／換入換出 O(頁面 bytes)，單次轉譯固定三級。swap full 或失效候選者需繼續掃描其他頁，成本可能更高。沒有 COW、mmap、LRU、多 hart 或非同步磁碟 I/O。完整設計與實際限制見 SPEC-10。
 
-### page.c：實體頁面配置
+### page.c：底層實體頁面配置
 
-目前限 QEMU virt／128 MiB。從 `__kernel_end` 向上整頁對齊到 FDT 起點向下整頁對齊，初始化 FreePage 單向空閒串列；韌體、核心、核心堆疊與 FDT 到 RAM 頂端皆排除。每個空閒頁的開頭存 next 指標，配置時取串列頭並清零全頁；回收時檢查範圍、對齊與 allocated bitmap，再放回串列頭。配置／回收的串列操作 O(1)，清零固定 4096 bytes；初始化 O(可用頁數)。沒有多核心鎖，也不是任意 FDT 記憶體／保留區解析器。
+目前限 QEMU virt／128 MiB。以 `__kernel_end` 到 FDT 起點間整頁初始化 FreePage 空閒串列，排除韌體、核心、固定核心堆疊與 FDT／頂端保留 RAM。配置取串列頭並清零 4096 bytes，回收檢查對齊／範圍／allocated bitmap 後放回串列頭；串列操作 O(1)。它只配置空閒實體頁，缺頁與 victim 決策屬於 vm.c。
 
-`ps` 附加 `Memory pages: free=... total=... page_size=4096`；total 是此配置池的總頁數，free 扣除常駐核心頁表及所有尚未回收的行程頁面。Zombie 仍保留頁面，直到 wait／孤兒回收才歸還。使用者空間大小仍固定，尚無 heap／sbrk／mmap 或缺頁自動配置。
+ps 的 free／total 是底層配置池頁數；vmstat 的 resident／limit 是使用者常駐頁政策，兩者不同。pcb 顯示個別空間 resident／swapped／heap_bytes／faults。使用者頁可以已換出但仍保留 swap slot，常駐頁也可以保留 backing slot；slot 在 heap 縮小或行程回收時歸還。
 
 ## 7. process.c / process.h：PCB 與生命週期
 
@@ -197,7 +197,7 @@ reap 以 vm_destroy 釋放私有頁面與表、清除 PCB 的根表指標後將�
 process_list 列出有效 PCB、剩餘欄位與 scheduler_print_ready 的 FIFO 順序；process_inspect 顯示實際頁表、保存指令位置、stack、等待資訊、結束碼、端點、I/O 請求與 ready_queued。
 process_pipeline 先驗證兩個 PID 的回寫範圍與資源，分配 pipe，再建立 writer／reader，設定 writer 的 stdout 與 reader 的 stdin；失敗時回收未公布的資源。
 同一個核心系統呼叫內不會被其他行程插入，因此沒有建立到一半被排程的狀況。
-固定表大小為 P=4，尋找／喚醒為 O(P)；建立另加固定空間清理／映像複製。候選行程由 FIFO 隊首 O(1) 取出，但 process_resume 仍有 I/O 與 orphan 回收掃描，不宣稱整個呼叫都是 O(1)。
+固定 PCB 表大小為 P=4，尋找／喚醒為 O(P)；建立先配置私有表與補充 metadata，映像頁面延遲載入，fork 另複製已修改的使用者狀態。候選行程由 FIFO 隊首 O(1) 取出，但 process_resume 仍有 I/O 與 orphan 回收掃描，不宣稱整個呼叫都是 O(1)。
 
 ### scheduler.c / scheduler.h：保存 Ready 行程的 FIFO
 
@@ -239,6 +239,10 @@ pipes[2] 每條有 used、readers／writers（端點數）、16-byte 資料陣�
 
 kernel_main 從 OpenSBI 傳入 a1 的 FDT（硬體裝置樹），block_init_from_fdt 搜尋 `virtio,mmio` 節點與 reg（裝置暫存器位址），再檢查 magic、Version 2 與 Device ID 2（block）。virtio-mmio 有多個空插槽，所以逐一略過未接裝置與非 block 裝置，不假設磁碟固定在某個位址。`vm_map_mmio` 將找到的那一頁加入核心監督模式映射。
 
+現行驅動最多初始化兩顆 block 裝置，每顆 BlockDevice 各自保存 descriptor／available／used 佇列與完成計數；同步請求切換 active context，不共享佇列狀態。讀取 LBA 0 的 WUFS0001／WUSWAP01 標記區分檔案系統與交換區，交換磁碟先接或後接皆可。每顆找到的 MMIO 頁都加入核心映射；block_read/write 只走 WUFS 裝置，block_swap_read/write 只走交換裝置。
+
+swap.c 驗證 4 KiB slot 標頭與磁碟容量，以 bitmap 配置 1-based slot；0 表示不可用／已滿。每頁讀寫八個連續 512-byte 磁區。make_swap.py 預設建立 4095 slots／16 MiB，--slots 可調整，既有映像只驗證、不覆寫格式；slot bitmap 是本次開機的使用狀態，不保存重啟前行程。
+
 driver 協商 VERSION_1 feature，選 queue 0，建立一組 descriptor（描述項）鏈：request header → 512-byte data buffer → status byte。寫入 available ring，增加 index，敲 MMIO queue notify，輪詢 used index 等待完成。此版本一次只送一個請求，I/O 是同步輪詢；沒有中斷、佇列併發、DMA IOMMU 或 block cache。單筆正常操作 O(1)，檔案 N 個區塊則 O(N) 次同步讀寫。
 
 WUFS 在 LBA 0 存 superblock，接著 inode bitmap、block bitmap、固定 inode 表，最後才是資料區。inode 80 bytes，含類型、檔案長度、8 個直接區塊和 8 個單層索引區塊；每檔上限 (8 + 8×128)×512 = 528384 bytes。inode 表固定 128 個項目；16 MiB 磁碟有 32768 個 sector。bitmap 逐位標記 inode 與已用磁碟 sector。
@@ -249,7 +253,7 @@ WUFS 在 LBA 0 存 superblock，接著 inode bitmap、block bitmap、固定 inod
 
 `tools/make_disk.py` 在首次使用時建立 WUFS 目錄與 `/boot/kernel.elf`；每次 make run 只替換這個 inode 的資料區，其他目錄項目和使用者檔案會保留。核心本身也能在空白磁碟格式化並建立目錄。`/boot/kernel.elf` 是一般核心 ELF 檔案副本；QEMU 目前仍以 `-kernel` 載入另一份 ELF，磁碟檔案沒有參與開機。
 
-目前路徑型 syscall 是教學用介面，不是 POSIX VFS：沒有 `open/close`、檔案 descriptor table、cwd（目前目錄）、相對路徑或通用 `read/write` 檔案 FD。shell 的 `write` 目前只接一個文字 token，`cat` 顯示前 2048 bytes；使用者地址驗證限制一次檔案 syscall 位於單一 4 KiB 使用者資料頁。磁碟資料寫入同步完成，未實作掉電交易／journal（寫入日誌）與損毀復原。
+目前路徑型 syscall 是教學用介面，不是 POSIX VFS：沒有 `open/close`、檔案 descriptor table、cwd（目前目錄）、相對路徑或通用 `read/write` 檔案 FD。shell 的 `write` 只接一個文字 token，`cat` 顯示前 2048 bytes；核心複製可跨合法使用者頁面，包含按需載入與 swap。磁碟資料寫入同步完成，未實作掉電交易／journal（寫入日誌）與損毀復原。
 
 ## 10. syscall.c、共用編號與使用者 API
 
@@ -273,13 +277,17 @@ WUWAOS 自訂 ABI（呼叫約定）：a7（呼叫編號暫存器）、a0–a2（
 | 20 | fs_readfile(path, buffer, capacity) | 從檔案開頭讀取最多 capacity bytes |
 | 21 | fs_writefile(path, buffer, length) | 建立或覆寫檔案 |
 | 22 | console_mode(raw) | 取得／釋放逐字元、不回顯的終端輸入模式 |
+| 23 | sbrk(increment) | 增減 heap 合法範圍，回傳舊 break；按需配置實體頁 |
+| 24 | vmstat(frame_limit) | 0 查閱 VM／swap 統計，正數設定使用者常駐頁預算 |
 
 syscall_dispatch 用 switch 分派；正常立即結果填 frame->a0，阻塞時先存 placeholder（暫存結果），由排程中的 I/O 或 wait 完成處理替換後才真正返回。
 exec 成功時 dispatcher 立即返回，不能把正常返回值 0 再寫進 frame->a0，否則會破壞新程式所需的初始角色參數。失敗才按一般規則回傳錯誤。
-filesystem syscall 先從呼叫者頁表逐 byte 驗證並複製 NUL 結尾路徑；資料 buffer 驗證完整使用者範圍後才透過核心暫存區交給 fs.c。user/api.c 的 syscall3 使用固定暫存器與 memory clobber（記憶體可能改變宣告）執行 ecall，二十一個包裝函式供使用者程式呼叫。
-錯誤碼：-10 非直接子行程／沒有該子行程、-11 資源不足、-14 記憶體不可存取、-22 非法參數、-32 管道無讀者、-38 未知呼叫。
+filesystem syscall 先複製 NUL 結尾路徑，資料透過可回報錯誤的 user_copy_from／user_copy_to 逐頁處理；過程可能按需配置或從 swap 換入。寫檔前完整取得來源資料，讀取失敗不繼續用不完整 staging 覆寫磁碟。user/api.c 的 syscall3 使用固定暫存器與 memory clobber 執行 ecall，提供各系統呼叫的使用者包裝函式。
+錯誤碼包括 -5 磁碟 I/O、-10 沒有直接子行程、-11 PCB／pipe 資源不足、-12 記憶體／交換資源不足、-14 非法記憶體／權限、-16 終端忙碌、-22 非法參數、-32 管道無讀者、-38 未知呼叫。
 
 ## 11. user/shell.c、demo.c、app.c、fan.c、print.c
+
+shell 的 memory_command 提供 mem alloc／write／read／free：sbrk 保留頁數；以 volatile 指標填寫整頁及查看首／中／尾 bytes，讓一般互動能觸發真實硬體缺頁。vmstat 與 vmstat limit 呼叫核心診斷介面。這些是使用者可操作工具，不含自動斷言或測試程式。
 
 shell_main 顯示提示、read 一行、tokenize（切分命令）、command（分派），全程在 U-mode 執行。
 每次提示前 yield 兩輪，足以讓本版 worker（自身先 yield 一次）到達等待點，避免背景文字蓋過新提示；不是通用工作控制或時間片。
@@ -322,7 +330,7 @@ all 建置、run 啟動、clean 清理 build 產物。更改 flags（編譯選�
 
 ## 13. 驗證與閱讀練習
 
-早期行程驗收與 QEMU monitor 證據在 SPEC.md；VirtIO／WUFS 磁碟重啟持久性在 SPEC-06；FIFO 與 Ready 行程移除驗收在 SPEC-07；現行動態頁面／三級表與回收驗收在 SPEC-08。ps／pcb 是讀取真實 PCB 與就緒佇列；pipe 的 80 bytes 必須通過 16-byte 緩衝區與多次狀態切換。
+早期行程驗收與 QEMU monitor 證據在 SPEC.md；VirtIO／WUFS 磁碟重啟持久性在 SPEC-06；FIFO 與 Ready 行程移除驗收在 SPEC-07；動態頁面／三級表的初期驗收在 SPEC-08，fan 互動操作在 SPEC-09，現行按需分頁／Swap／回收及失敗路徑在 SPEC-10。ps／pcb 是讀取真實 PCB 與就緒佇列；pipe 的 80 bytes 必須通過 16-byte 緩衝區與多次狀態切換。
 未完成 runtime 驗證的邊界不可等同已測試；沒有新增未經同意的測試程式碼。
 可先照 README 操作 worker，對照 saved sepc（保存指令位置）說明恢復後從哪裡繼續；再追蹤 writer 滿管道時的 buffer 位址如何留在 PCB。
 
