@@ -2,6 +2,7 @@
 #include "console.h"
 #include "process.h"
 #include "syscall.h"
+#include "vm.h"
 
 #define SSTATUS_SPP (1UL << 8)
 #define USER_ECALL 8
@@ -21,6 +22,16 @@ TrapFrame *trap_handler(TrapFrame *frame) {
     if (from_user && frame->scause == USER_ECALL) {
         frame->sepc += 4; /* ECALL is a 32-bit instruction. */
         syscall_dispatch(frame);
+        return process_resume();
+    }
+    if (from_user && (frame->scause == 12 || frame->scause == 13 || frame->scause == 15)) {
+        const int error = vm_handle_fault(process_current()->page_table, frame->stval, frame->scause, frame->sepc);
+        if (error == 0) return process_resume(); /* Retry the same instruction, not sepc + 4. */
+        console_puts("[fault] PID="); console_number(process_current()->pid);
+        console_puts(" cause="); console_number((long)frame->scause);
+        console_puts(" address="); console_hex(frame->stval);
+        console_puts(" error="); console_number(error); console_putc('\n');
+        process_exit(error);
         return process_resume();
     }
 

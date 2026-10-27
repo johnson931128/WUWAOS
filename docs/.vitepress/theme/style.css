@@ -1,0 +1,16 @@
+:root {
+  --vp-c-brand-1: #28674e;
+  --vp-c-brand-2: #358660;
+  --vp-c-brand-3: #246348;
+  --vp-c-brand-soft: rgba(53, 134, 96, .12);
+  --vp-font-family-base: 'Segoe UI', 'Microsoft JhengHei', system-ui, sans-serif;
+  --vp-font-family-mono: Consolas, 'Cascadia Code', monospace;
+}
+.dark { --vp-c-brand-1: #8ed7ac; --vp-c-brand-2: #69bc90; --vp-c-brand-3: #408a64; }
+.vp-doc { line-height: 1.85; }
+.vp-doc h1 { line-height: 1.4; letter-spacing: -.025em; }
+.vp-doc h2 { margin-top: 44px; }
+.vp-doc p, .vp-doc li { overflow-wrap: anywhere; }
+.vp-doc pre code { overflow-wrap: normal; }
+.VPSidebarItem.level-1 .text { font-size: 13px; }
+.VPNavBarTitle .title { font-weight: 700; letter-spacing: .02em; }

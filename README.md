@@ -1,8 +1,25 @@
 # WUWAOS
 
+## 實作文件網站
+
+文件依開機、行程、排程、記憶體、I/O、檔案系統與使用者程式分類，原始規格另外保留為歷史紀錄。第一次閱讀從 [文件首頁](docs/index.md) 開始；網站設定與使用方式見 [維護文件網站](docs/topics/writing.md)。
+
+安裝 Node.js 後，在專案根目錄 PowerShell 執行：
+
+```powershell
+npm.cmd ci
+npm.cmd run docs:dev
+```
+
+公開網站：[WUWAOS 實作紀錄](https://johnson931128.github.io/WUWAOS/)。本機瀏覽器開啟終端印出的 Local 網址，預設 `http://127.0.0.1:5173/`。`npm.cmd run docs:build` 建置靜態網頁，`npm.cmd run docs:preview` 預覽產物。這些命令在 Windows 主機執行，與下方 WSL／QEMU 的 OS 建置流程各自獨立。
+
+網站只提供閱讀與搜尋，原始碼以 GitHub 連結提供，沒有公開編輯或來源切換。維護者以 `powershell -File tools/publish-docs.ps1` 發布到專用 gh-pages 分支，需有 repository 寫入權限；文件來源另存於 codex/documentation 分支，main 的未提交 OS 工作不會順帶發布。
+
+## 系統概況
+
 可在 QEMU 上操作的小型 RISC-V 64-bit 作業系統。開機進入 U-mode（使用者模式）的 shell（命令列介面），透過 syscall（系統呼叫）控制行程。
 
-記憶體使用 Sv39（三級分頁）：L2 → L1 → L0，每張表 4 KiB、512 個表項。頁表與使用者實體頁由空閒頁面串列動態配置；fork 複製私有頁，exec 切換後回收舊空間，wait 回收 Zombie 的頁面。`ps` 會顯示 `Memory pages: free=... total=... page_size=4096`，可在建立前後觀察頁數，全部子行程回收後應回到原值。現階段限 QEMU virt／128 MiB，使用者 code/data/stack 大小仍固定，尚無 heap 或缺頁配置；設計見 [Spec 08](docs/SPEC-08-memory.md)。
+記憶體使用 Sv39（三級分頁）：L2 → L1 → L0，每張表 4 KiB、512 個表項。使用者程式碼／資料／堆疊採按需載入，sbrk 可保留最多 1 MiB heap；常駐使用者頁以全域 FIFO 置換，dirty 頁換出到獨立 swap 磁碟。fork 複製私有內容，exec 切換後回收舊空間，wait 歸還頁面與 swap slots。`ps` 顯示底層 RAM 頁數，`vmstat` 顯示缺頁／換入換出與常駐預算。平台仍為 QEMU virt／128 MiB；現行設計見 [Spec 10](docs/SPEC-10-demand-paging.md)，[Spec 08](docs/SPEC-08-memory.md) 保留前階段歷史。
 
 ## 啟動
 
@@ -71,6 +88,36 @@ fan /home/user/note.txt
 直接輸入文字、空白及 Enter 換行。方向鍵移動，Home／End 到行首／行尾，Backspace／Delete 刪除，PageUp／PageDown 捲動，Tab 插入空白。`Ctrl+O` 儲存，`Ctrl+X` 離開；有未儲存內容時選 `y` 儲存後離開、`n` 捨棄、`c` 或 Escape 取消。`Ctrl+L` 完整重畫。離開後用 `cat /home/user/note.txt` 讀回，QEMU 重啟後檔案仍保留。
 
 fan 是在 WUWAOS 使用者模式執行的獨立 C 程式，畫面經 UART 與 ANSI 控制碼顯示在終端，需至少 80×24。第一版支援最多 2 KiB ASCII／LF 文字；超大檔案、UTF-8 或不支援的控制字元會拒絕開啟，避免截斷覆寫。既有 Tab 以 `>` 顯示並保留。新檔案直到儲存才建立，父目錄須先存在。沒有 Vim 命令模式、undo 或一般磁碟執行檔載入；fan 映像仍嵌入核心。詳見 [Spec 09](docs/SPEC-09-fan.md)。
+
+## 觀察 Demand paging／FIFO／Swap
+
+`make run` 自動建立獨立的 `build/wuwaos-swap.img`（預設 16 MiB），不占用 WUFS 檔案資料。依序輸入：
+
+```text
+vmstat
+vmstat limit 8
+mem alloc 16
+mem read 0
+mem write 0 65
+mem write 1 66
+mem write 2 67
+mem write 3 68
+mem write 4 69
+mem write 5 70
+mem write 6 71
+mem write 7 72
+mem write 8 73
+mem write 9 74
+mem write 10 75
+mem write 11 76
+vmstat
+mem read 0
+pcb 1
+mem free
+vmstat limit 64
+```
+
+mem alloc 只保留虛擬範圍；首次讀取得到零，mem write 將指定頁的所有 bytes 填成指定值（0–255）。常駐頁超過預算後會置換；vmstat 的 swap_out／swap_in 可觀察實際磁碟交換。mem read 顯示該頁第 0／2048／4095 byte。`limit 8` 是使用者頁預算，不是把 QEMU RAM 改為 8 頁；預設為 64 頁。swap slot 可在頁面已換回時繼續保留為 backing，heap 縮小與行程回收時才釋放。mem free 後空的 heap 分頁表仍保留到行程銷毀。
 
 ## 直接建立行程並觀察
 
@@ -167,13 +214,15 @@ cat /home/user/notes/today.txt
 | write <path> <text> | 建立或覆寫檔案，文字不含空白 |
 | cat <path> | 顯示檔案前 2048 bytes；若內容未以換行結尾，顯示後補換行 |
 | fan <path> | 前景文字編輯器，Ctrl+O 儲存、Ctrl+X 離開並自動回收行程 |
+| vmstat / vmstat limit <frames> | 查閱缺頁／交換統計，或設定全域使用者常駐頁預算（至少 8） |
+| mem alloc / write / read / free | 保留 heap、填寫與查看頁面、釋放 heap，詳見上方範例 |
 | exit | 結束 shell |
 
 輸入上限為 126 個內容字元加換行；超長行顯示錯誤，不執行截斷命令。只有固定命令與正整數參數，不支援引號、一般參數展開、背景 & 語法或主機命令。
 
 ## 架構與限制
 
-- 最多 4 個行程，每個獨立 Sv39（三級分頁）頁表、16 KiB 使用者 code（程式碼）、4 KiB data（資料）、4 KiB stack（堆疊）及 16 KiB 核心堆疊。
+- 最多 4 個行程，每個獨立 Sv39 頁表、16 KiB 使用者 code、4 KiB data、4 KiB stack、最多 1 MiB heap，以及固定 16 KiB 核心堆疊。使用者頁按需配置與置換，核心及分頁表常駐。
 - fork 採完整複製，不使用 COW（寫入時複製）。exec 動態準備新位址空間，切換頁表後釋放舊空間；只接受內建程式 ID，fan 可額外接收一個檔案路徑參數。
 - PCB 是原本 Process 的延伸，沒有第二份重複的狀態。包含父子關係、等待資訊、管道端點與待完成 I/O。
 - `processes[4]` 保存完整 PCB；`scheduler.c` 的單向鏈結 FIFO 只保存 Ready PCB 的指標，入列與取出隊首 O(1)，移除任意節點 O(P)。
@@ -193,6 +242,7 @@ cat /home/user/notes/today.txt
 - [SPEC-07](docs/SPEC-07-fifo-scheduler.md)：FIFO 就緒佇列、非搶占式排程與驗收紀錄。
 - [SPEC-08](docs/SPEC-08-memory.md)：動態實體頁配置、三級分頁與回收。
 - [SPEC-09](docs/SPEC-09-fan.md)：fan 編輯器、raw console 與路徑參數傳遞。
+- [SPEC-10](docs/SPEC-10-demand-paging.md)：按需分頁、FIFO 頁面置換、獨立 swap 與失敗處理。
 
 先讀 user/shell.c 的 shell_main／command，再追蹤 user/api.c → kernel/syscall.c → process.c 或 io.c，最後看 trap.S 如何交還使用者程式。
 手動練習：對照 pcb 2 顯示的等待通道與 sepc（保存的指令位址），說明 wakeup 後為什麼從 sleep 呼叫後面繼續。

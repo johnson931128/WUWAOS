@@ -18,6 +18,8 @@ long fork(void);
 long exec(long program);
 long exec_arg(long program, const char *argument);
 long console_mode(long raw);
+long sbrk(long increment);
+long vmstat(long frame_limit);
 long fs_list(const char *path, char *buffer, unsigned long capacity);
 long fs_mkdir(const char *path);
 long fs_touch(const char *path);

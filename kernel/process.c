@@ -131,11 +131,12 @@ long process_fork(void) {
         return pid;
     }
     Process *child = find_pid(pid);
-    if (vm_clone(child->page_table, parent->page_table) < 0) {
+    const int copy_error = vm_clone(child->page_table, parent->page_table);
+    if (copy_error < 0) {
         vm_destroy(child->page_table);
         child->page_table = 0;
         transition(child, PROCESS_UNUSED, "fork copy failed");
-        return ERR_ADDRESS;
+        return copy_error;
     }
     volatile unsigned char *to = (volatile unsigned char *)child->frame;
     const unsigned char *from = (const unsigned char *)parent->frame;
@@ -159,10 +160,10 @@ long process_exec(long program, const char *argument) {
     uintptr_t stack = USER_STACK_TOP;
     if (program == PROGRAM_FAN) {
         stack -= 128; /* Keep the path above the downward-growing call stack. */
-        for (size_t i = 0; i < 128; ++i) {
-            user_write_byte(root, stack + i, (unsigned char)argument[i]);
-            if (argument[i] == 0) break;
-        }
+        size_t length = 0;
+        while (argument[length]) ++length;
+        const int error = user_copy_to(root, stack, argument, length + 1);
+        if (error < 0) { vm_destroy(root); return error; }
     }
     (void)io_console_mode(0); /* Successful exec resets raw input ownership. */
     const uintptr_t old_root = process->page_table;
@@ -240,7 +241,8 @@ static long collect_child(Process *parent, Process *child, uintptr_t status) {
         if (!user_writable(parent->page_table, status, sizeof(long))) {
             return ERR_ADDRESS;
         }
-        user_write_long(parent->page_table, status, child->exit_status);
+        const int error = user_write_long(parent->page_table, status, child->exit_status);
+        if (error < 0) return error;
     }
     const long pid = child->pid;
     console_puts("[wait] collected PID=");
@@ -428,6 +430,7 @@ long process_inspect(long pid) {
     console_puts(" completed=");
     console_number((long)process->io_count);
     console_putc('\n');
+    vm_print_space(process->page_table);
     return 0;
 }
 
@@ -469,8 +472,15 @@ long process_pipeline(uintptr_t result_address) {
     }
     find_pid(writer)->output_pipe = pipe;
     find_pid(reader)->input_pipe = pipe;
-    user_write_long(parent->page_table, result_address, writer);
-    user_write_long(parent->page_table, result_address + sizeof(long), reader);
+    const long pids[2] = {writer, reader};
+    const int error = user_copy_to(parent->page_table, result_address, pids, sizeof(pids));
+    if (error < 0) {
+        io_close_process(find_pid(writer));
+        io_close_process(find_pid(reader));
+        reap(find_pid(writer));
+        reap(find_pid(reader));
+        return error;
+    }
     console_puts("[pipe] writer=");
     console_number(writer);
     console_puts(" reader=");

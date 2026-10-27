@@ -24,6 +24,8 @@
 #define SYS_FS_READ 20
 #define SYS_FS_WRITE 21
 #define SYS_CONSOLE_MODE 22
+#define SYS_SBRK 23
+#define SYS_VMSTAT 24
 
 #define PROGRAM_WORKER 1
 #define PROGRAM_QUICK 2
@@ -35,6 +37,7 @@
 #define ERR_NO_CHILD (-10L)
 #define ERR_NO_SLOT (-11L)
 #define ERR_NO_MEMORY (-12L)
+#define ERR_IO (-5L)
 #define ERR_BUSY (-16L)
 #define ERR_INVALID (-22L)
 #define ERR_ADDRESS (-14L)

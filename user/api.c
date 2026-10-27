@@ -53,6 +53,8 @@ long exec_arg(long program, const char *argument) {
     return syscall3(SYS_EXEC, program, (long)argument, 0);
 }
 long console_mode(long raw) { return syscall3(SYS_CONSOLE_MODE, raw, 0, 0); }
+long sbrk(long increment) { return syscall3(SYS_SBRK, increment, 0, 0); }
+long vmstat(long frame_limit) { return syscall3(SYS_VMSTAT, frame_limit, 0, 0); }
 long fs_list(const char *path, char *buffer, unsigned long capacity) {
     return syscall3(SYS_FS_LIST, (long)path, (long)buffer, (long)capacity);
 }

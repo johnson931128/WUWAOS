@@ -2,6 +2,7 @@
 #include "shell.h"
 #include "print.h"
 #include "syscall_numbers.h"
+#include "vm_limits.h"
 #include <limits.h>
 
 static int equal(const char *first, const char *second) {
@@ -155,6 +156,55 @@ static void run_fan(const char *path) {
     user_puts("\033[0m\033[?25h\033[?1049l");
 }
 
+static volatile unsigned char *memory;
+static long memory_pages;
+
+static int nonnegative(const char *text, long *value) {
+    if (equal(text, "0")) { *value = 0; return 1; }
+    return positive_number(text, value);
+}
+
+/* Interactive memory tool: allocation, filling and inspection, without assertions. */
+static void memory_command(int count, char *words[4]) {
+    long page, value;
+    if (count == 2 && equal(words[1], "free")) {
+        if (memory_pages == 0) { user_puts("No memory allocation.\n"); return; }
+        const long result = sbrk(-memory_pages * (long)VM_PAGE_BYTES);
+        if (result < 0) { result_line("sbrk error: ", result); return; }
+        memory = 0;
+        memory_pages = 0;
+        user_puts("Heap allocation released.\n");
+        return;
+    }
+    if (count == 3 && equal(words[1], "alloc") && positive_number(words[2], &page)) {
+        if (memory_pages != 0) { user_puts("Use mem free before allocating again.\n"); return; }
+        if ((unsigned long)page > USER_HEAP_PAGES) { user_puts("Maximum: 256 pages.\n"); return; }
+        const long address = sbrk(page * (long)VM_PAGE_BYTES);
+        if (address < 0) { result_line("sbrk error: ", address); return; }
+        memory = (volatile unsigned char *)(unsigned long)address;
+        memory_pages = page;
+        result_line("Reserved heap pages (allocated on first touch): ", page);
+        return;
+    }
+    if (count >= 3 && nonnegative(words[2], &page) && page < memory_pages) {
+        volatile unsigned char *bytes = memory + (unsigned long)page * VM_PAGE_BYTES;
+        if (count == 4 && equal(words[1], "write") && nonnegative(words[3], &value) && value <= 255) {
+            for (unsigned long i = 0; i < VM_PAGE_BYTES; ++i) bytes[i] = (unsigned char)value;
+            user_puts("Page "); user_number(page); result_line(" filled with byte ", value);
+            return;
+        }
+        if (count == 3 && equal(words[1], "read")) {
+            user_puts("Page "); user_number(page);
+            user_puts(" bytes[0,2048,4095] = ");
+            user_number(bytes[0]); user_puts(" ");
+            user_number(bytes[2048]); user_puts(" ");
+            result_line("", bytes[4095]);
+            return;
+        }
+    }
+    user_puts("Usage: mem alloc <1..256> | mem write <page> <0..255> | mem read <page> | mem free\n");
+}
+
 static void help(void) {
     user_puts("help | ps | pcb <pid> | spawn worker|quick | yield\n"
               "fork | run worker|quick|counter\n"
@@ -166,6 +216,8 @@ static void help(void) {
               "fork/run leave children for explicit wait <pid> collection.\n"
               "filesystem: ls/mkdir/touch/cat/write <absolute-path>\n"
               "fan /absolute/path: editor; Ctrl+O save, Ctrl+X exit\n"
+              "vmstat | vmstat limit <frames> (minimum 8; global FIFO)\n"
+              "mem alloc <pages> | mem write <page> <byte> | mem read <page> | mem free\n"
               "write saves one text token; files persist on the QEMU disk.\n"
               "Only cooperative scheduling; no host commands.\n");
 }
@@ -198,6 +250,19 @@ static void filesystem_command(const char *command, const char *path, const char
 
 static int command(int count, char *words[4]) {
     if (count == 0) {
+        return 1;
+    }
+    if (equal(words[0], "mem")) {
+        memory_command(count, words);
+        return 1;
+    }
+    if (equal(words[0], "vmstat")) {
+        long limit;
+        if (count == 1) vmstat(0);
+        else if (count == 3 && equal(words[1], "limit") && positive_number(words[2], &limit)) {
+            const long result = vmstat(limit);
+            if (result < 0) result_line("vmstat error: ", result);
+        } else user_puts("Usage: vmstat [limit <frames>]\n");
         return 1;
     }
     if (count == 3 && equal(words[0], "writer") && equal(words[1], "|") &&

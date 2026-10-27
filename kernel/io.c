@@ -84,7 +84,8 @@ static long pipe_read(Process *process, uintptr_t buffer, size_t length) {
     }
     size_t copied = 0;
     while (copied < length && pipe->count > 0) {
-        user_write_byte(process->page_table, buffer + copied, pipe->bytes[pipe->read_at]);
+        const int error = user_write_byte(process->page_table, buffer + copied, pipe->bytes[pipe->read_at]);
+        if (error < 0) return copied ? (long)copied : error;
         pipe->read_at = (pipe->read_at + 1) % PIPE_CAPACITY;
         --pipe->count;
         ++copied;
@@ -102,7 +103,8 @@ static long pipe_write(Process *process, uintptr_t buffer, size_t length) {
     }
     size_t copied = 0;
     while (copied < length && pipe->count < PIPE_CAPACITY) {
-        pipe->bytes[pipe->write_at] = user_read_byte(process->page_table, buffer + copied);
+        const int error = user_read_byte(process->page_table, buffer + copied, &pipe->bytes[pipe->write_at]);
+        if (error < 0) return copied ? (long)copied : error;
         pipe->write_at = (pipe->write_at + 1) % PIPE_CAPACITY;
         ++pipe->count;
         ++copied;
@@ -162,7 +164,10 @@ long io_write(long fd, uintptr_t buffer, size_t length) {
         return result;
     }
     for (size_t i = 0; i < length; ++i) {
-        console_putc((char)user_read_byte(process->page_table, buffer + i));
+        unsigned char byte;
+        const int error = user_read_byte(process->page_table, buffer + i, &byte);
+        if (error < 0) return i ? (long)i : error;
+        console_putc((char)byte);
     }
     return (long)length;
 }
@@ -180,7 +185,8 @@ static long console_read_line(Process *process) {
             if (process->io_overflow) {
                 return ERR_INVALID;
             }
-            user_write_byte(process->page_table, process->io_buffer + process->io_count, '\n');
+            const int error = user_write_byte(process->page_table, process->io_buffer + process->io_count, '\n');
+            if (error < 0) return error;
             return (long)++process->io_count;
         }
         if (character == 8 || character == 127) {
@@ -190,8 +196,10 @@ static long console_read_line(Process *process) {
             }
         } else if (character == '\t' || (character >= 32 && character <= 126)) {
             if (process->io_count < process->io_length - 1 && !process->io_overflow) {
-                user_write_byte(process->page_table, process->io_buffer + process->io_count++,
-                                (unsigned char)character);
+                const int error = user_write_byte(process->page_table, process->io_buffer + process->io_count,
+                                                 (unsigned char)character);
+                if (error < 0) return error;
+                ++process->io_count;
                 console_putc((char)character);
             } else {
                 process->io_overflow = 1;
@@ -210,8 +218,8 @@ static long console_read_raw(Process *process) {
             continue;
         }
         skip_lf = 0;
-        user_write_byte(process->page_table, process->io_buffer, (unsigned char)character);
-        return 1;
+        const int error = user_write_byte(process->page_table, process->io_buffer, (unsigned char)character);
+        return error < 0 ? error : 1;
     }
     return IO_PENDING;
 }

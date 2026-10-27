@@ -1,5 +1,7 @@
 # Spec 08：動態實體頁面與 Sv39 三級分頁
 
+此文件保留當時的立即配置與固定使用者大小設計；現行 Demand paging／FIFO／Swap／sbrk 已由 [Spec 10](SPEC-10-demand-paging.md) 取代相關限制，以下驗收數值為歷史紀錄。
+
 ## 目標與範圍
 
 將既有靜態 AddressSpace 陣列改為動態 4 KiB 實體頁面配置，保留 RV64 Sv39 的 L2 → L1 → L0 硬體格式：每表 4096 bytes、512 個 8-byte PTE。保留既有 inode 修復與磁碟資料，不新增測試程式碼，不自行 commit／push。
