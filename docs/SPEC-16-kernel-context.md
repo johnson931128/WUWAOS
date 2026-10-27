@@ -1,0 +1,55 @@
+# Spec 16：RV64 核心上下文切換
+
+## 目標與範圍
+
+使用者同意鎖與號誌計畫，指定先以組合語言實作 context switch，並更新 spec 與網站。本階段完成可暫停／恢復核心 C 呼叫堆疊的基礎；後續再加入鎖、通用等待佇列與號誌。保留單 hart、50 ms RR、使用者計時器搶占與核心內不搶占。不新增 syscall、示範程式或測試程式碼。
+
+## 設計與演算法
+
+- `context.h` 定義 112-byte KernelContext 與共用組合語言偏移；`swtch.S` 的 context_switch(old, next) 以 sd／ld 保存和恢復 ra、sp、s0～s11，最後 ret 到新上下文。這是普通 C 呼叫邊界：caller-saved（由呼叫端負責保存）的 a／t 暫存器由編譯器處理，不用複製整個 TrapFrame。編譯期結構配置契約沿用 trap.h 的做法，不是新增執行測試。
+- RV64 LP64、整數 ABI；堆疊保持 16-byte 對齊。gp／tp 為本階段共用且不由上下文修改，沒有浮點／向量或 TLS 狀態。此函式不是可在任意指令插入的完整硬體中斷保存程序。
+- 每個 PCB 保存 KernelContext，原本每行程 16 KiB 核心堆疊保留；新增獨立 16 KiB scheduler stack 與 scheduler context。boot context 只用於首次交接，不重新進入開機函式。
+- 新行程準備 context.ra=first_run、context.sp=初始 TrapFrame 下緣；首次恢復以 first_run→user_enter→sret 進使用者程式。fork 只複製使用者狀態，子仍從 first_run 開始，不複製父的核心 C 堆疊。exec 保留當前核心上下文，替換使用者 frame 與頁表。
+- suspend_current 要求 SIE=0 且行程已離開 Running，停用舊時間片，再保存行程上下文、切到 scheduler。核心控制暫存器不由 swtch 複製；sscratch 在核心為零，satp 由派發／返回路徑管理，SIE 在全部核心切換中保持零。
+- scheduler_loop 永遠在自己的堆疊執行；每輪先切核心根表、清除 current_index，再輪詢 I/O 與回收無父 Zombie。從既有 FIFO Ready queue 取隊首、改 Running、增加派發數、啟用其頁表並設定 50 ms，最後 context_switch 回該行程。切換後不是直接取代另一個行程的 TrapFrame 返回。
+- yield／計時器 preempt 改 Ready 後切走；sleep 改 Waiting 後切走。被派發回來後，沿原本 C 呼叫位置返回。process_resume 只處理本行程的返回前輪詢與根表恢復，不再負責在某個行程堆疊上執行排程迴圈。
+- wait 在自己的核心堆疊睡眠；子退出只喚醒父，父恢復後自行檢查並 collect_child，再正常回傳結果。移除舊 finish_wait 代填父 a0 的流程；status 回寫失敗仍保留 Zombie。
+- process_block_io 現在直接睡眠並回傳完成結果；io_poll 將結果存到 PCB io_result、改 Ready。恢復的 io_read／io_write 正常返回 syscall_dispatch，再由共同路徑填 a0；避免完成結果被後續的 return 0 覆寫。
+- exit 為不返回函式：成為 Zombie 後切走，永遠不再派發。kill 目前可丟棄已暫停、沒有持鎖資源的舊核心呼叫堆疊；回收後重用欄位時清零。未來加入 Mutex 等資源後必須另外處理安全取消，不能直接沿用強制丟棄策略。
+- pcb 顯示 kernel_context_sp／ra：是上次切走時的保存值，Running 時可能過時，不宣稱是即時硬體暫存器。
+- 單次 swtch 固定 14 次保存與 14 次恢復，O(1)；整個派發仍包含 I/O／行程表掃描，不宣稱總成本 O(1)。
+
+## 建置副本調整
+
+完整 kernel.elf 隨除錯符號增加達 531832 bytes，超過 WUFS 單檔 528384-byte 上限，獨立驗收映像建立因此失敗，尚未寫出映像。新增 build/kernel-disk.elf，以 llvm-objcopy --strip-debug 移除除錯段，磁碟副本為 299136 bytes；QEMU -kernel／GDB 仍使用完整 kernel.elf。make run 的 disk-image 使用副本，WUFS 格式與使用者檔案不變；make clean 清除兩個 ELF。之後檔案大小可能隨建置變動，以上是本次觀察。
+
+## 執行步驟與驗收條件
+
+1. 新增 C／組合語言上下文契約，接上獨立排程器與 first_run。
+2. 將 yield、sleep、wait、阻塞 I/O、退出與計時器搶占接到核心切換；保持 syscall 結果、fork／exec 與回收行為。
+3. 建置並在獨立 QEMU 磁碟操作 fork、counter、worker、pipe、fan、檔案、Swap；觀察等待時保存的核心 sp／ra 與排程器實際 sp 位於不同堆疊。
+4. 以 QEMU 偵錯介面讓既有 worker 恢復到映像原有的自跳迴圈，確認無 yield 下仍可搶占、shell 可操作、kill／wait 可回收。沒有新增或注入測試程式。
+5. 更新 CODE_GUIDE、README、主題文件與 Mermaid 流程圖；確認網站建置與瀏覽器呈現後 commit／push、發布 GitHub Pages。
+
+## 來源與階段限制
+
+- [1000 行教學的 Process 章節](https://1000os.seiya.me/en/10-process)：參考以組合語言切換堆疊及 callee-saved 暫存器的概念。原教學使用 RV32 與 stack-based 保存；本專案是 RV64、獨立 KernelContext、scheduler stack 與既有 U-mode／RR 整合，沒有照抄其示範程式。
+- [RISC-V psABI](https://riscv-non-isa.github.io/riscv-elf-psabi-doc/)：整數暫存器保存約定與 16-byte 堆疊對齊。
+- `notes/ch3 Process.md` 的上下文切換；`notes/ch6 Synchronization Tools.md` 的阻塞／喚醒是後續同步工具設計來源，本階段尚未實作 Mutex／Semaphore。
+- 未加入核心內強制搶占、Spinlock、Mutex、Semaphore、優先權／繼承、通用等待佇列、SMP、動態核心堆疊、guard page 或 stack overflow 偵測。現有 channel 等待並非原子釋放鎖的 sleep API，不能直接拿來當通用 Mutex 等待原語。
+
+## 驗收紀錄
+
+2026-10-27，WSL Ubuntu／Clang 18／QEMU 8.2.2／OpenSBI 1.3，RV64、單 hart、128 MiB。使用獨立 build/context-check.img 與 context-swap.img，未動原使用者磁碟，未新增測試程式碼。
+
+- 最終 make clean／make／make build/kernel-disk.elf 通過 -Wall/-Wextra/-Werror；四個完整 ELF 均無未解析符號。磁碟副本成功建立 WUFS 映像。
+- fork 子 PID 2 的 data／stack=101／101，父=1／100，wait=0。counter 3／4 同時等待通道 9，喚醒後交替倒數，父在 wait 3 內阻塞後恢復，兩者回收=0。writer／reader 5／6 透過 16-byte 管道傳完 80 bytes、EOF，前景父 wait 恢復並回收成功。
+- worker 7／8 在 sleep 裡保存不同核心上下文：sp=0x80230180／0x80234180、ra=0x80202f70。QEMU GDB remote protocol 的 live sp=0x80228450，位於獨立 scheduler stack 0x80224540..0x80228540，未使用等待者堆疊執行輪詢。
+- 將兩個既有 worker 的保存使用者 sepc 改成 app.elf 原有 0x400010 自跳迴圈，沒有注入指令；wakeup 後無 syscall／yield 仍有 preemptions（觀察 6／9 次），shell 可 ps／pcb，兩者保存 sepc 保持 0x400010。此時核心 context.ra 改為計時器陷阱內的恢復點 0x80200516，顯示不同核心路徑會保存自己的返回位置。kill／wait 兩者為 -9；另 kill Waiting worker 9、回收後重用欄位 run quick 10，wait 得 40。
+- mkdir／touch／write／cat 讀回 kernel_resume。常駐預算 8 下寫 12 頁、讀回頁 0 首／中／尾均 65；swap_in=7、swap_out=14，invalid_faults=0、io_errors=0。mem free 並恢復預算。
+- fan PID 11 儲存 Context resumes 與換行共 16 bytes、Ctrl+X 後父 wait=0、cat 讀回正確。最後只剩 shell、3 個空 PCB、累計 timer_interrupts=276。
+- shell exit 後 monitor 確認全員回收：free_count=0x7aff（31487，與本次核心開機基準相同）、resident=0、swap used=0、timer armed=0；sp=0x802284d0 仍在 scheduler stack，satp 為核心根表。monitor quit 結束 QEMU。互動記錄在忽略的 build/context-console.log，以上位址僅對應本次建置。
+
+- npm docs:build 通過；保留既有 Mermaid 大型 chunk 提醒。瀏覽器確認行程章節的流程圖、章節錨點、深淺色切換與 Spec 16 連結，沒有 console error。網站仍只提供 OS 原始碼的 GitHub 連結，未加入程式碼展示或公開編輯入口。
+
+未注入 ABI 任意暫存器破壞、wait status 回寫失敗或非法指令；不宣稱這些負面路徑本次已實際驗證。

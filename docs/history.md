@@ -19,6 +19,7 @@
 | 13 | [螢光色塊開機字樣](./SPEC-13-block-splash.md) |
 | 14 | [逐行命令說明](./SPEC-14-shell-help.md) |
 | 15 | [計時器中斷與 RR 排程](./SPEC-15-timer-rr.md)，現行 CPU 排程政策 |
+| 16 | [RV64 核心上下文切換](./SPEC-16-kernel-context.md)，獨立排程器堆疊、阻塞後恢復 C 呼叫 |
 
 ## 如何判斷是否驗證過
 
