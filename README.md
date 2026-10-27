@@ -36,8 +36,8 @@ wsl -d Ubuntu -- bash -lc 'cd /mnt/c/programing/WUWAOS && make run'
 
 開機後看到：
 
-先出現由中央向左右展開的 `WUWAOS` ASCII ART（文字字元圖案），約 1.4 秒後保留完整字樣並顯示核心資訊，再進入下方 shell。
-動畫使用 ANSI 終端控制碼，建議至少 80 欄；會清除先前 OpenSBI 的可見輸出。速度由 kernel/splash.c 的每格 45 ms 與最後停留 200 ms 控制。
+先出現由中央向左右展開的 `WUWAOS` 螢光色塊粗體字，從黃綠漸變到薄荷綠，約 1.3 秒後保留完整字樣並顯示核心資訊，再進入下方 shell。
+字形用 ANSI 256 色背景與空格填成實心筆畫，不使用星號／井字號或特殊 Unicode 字型。圖案 70 欄、左側留白 5 欄，建議至少 80 欄；會清除先前 OpenSBI 的可見輸出。速度由 kernel/splash.c 的每格 32 ms 與最後停留 200 ms 控制，結束重設顏色並恢復游標。詳見 [Spec 13](docs/SPEC-13-block-splash.md)。
 
 ```text
 WUWAOS user shell. Type help. State tracing is on.

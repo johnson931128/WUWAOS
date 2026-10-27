@@ -1,5 +1,7 @@
 # Spec 04：WUWAOS 開機 ASCII 展開動畫
 
+本文件保留初版井字號圖案與驗收；目前螢光色塊粗體字、70 欄與 35 格展開見 [Spec 13](./SPEC-13-block-splash.md)。
+
 ## 目標與範圍
 
 使用者希望開機以 ASCII ART（文字字元圖案）顯示 WUWAOS，從中央逐漸向兩側展開。
