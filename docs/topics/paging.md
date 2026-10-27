@@ -43,7 +43,7 @@ FIFO 掃描補充表，選入駐序號最小且未固定的常駐頁。讀寫命
 
 `kernel/swap.c` 用 bitmap（位元圖）管理槽位。槽位從 1 編號，0 代表沒有槽位。槽位 n 從磁區 `8*n` 開始，一頁逐次讀寫八個 512-byte 磁區。
 
-原始碼位置為 `kernel/swap.c`／`kernel/swap.h`；目前仍屬本機未提交的 Spec 10 工作，不會為了發布網站而混入 OS 提交。已公開的核心版本可在 [GitHub kernel 目錄](https://github.com/johnson931128/WUWAOS/tree/main/kernel) 閱讀，待 OS 另行提交後才會出現新檔。
+原始碼：[kernel/swap.c](https://github.com/johnson931128/WUWAOS/blob/main/kernel/swap.c)／[kernel/swap.h](https://github.com/johnson931128/WUWAOS/blob/main/kernel/swap.h)，由 GitHub main 管理，本站不內嵌來源檔。
 
 換出失敗時，VM 保留原本 RAM 副本；換入失敗時，不公布只讀到一部分的頁面。沒有 Swap 仍可按需配置與丟棄可重建頁，但不能無條件換出修改過的資料。
 
@@ -51,7 +51,7 @@ FIFO 掃描補充表，選入駐序號最小且未固定的常駐頁。讀寫命
 
 `sbrk` 只保留 heap 合法範圍，第一次存取才分配頁框。fork 複製私有內容，包含已換出資料；exec 成功後才回收舊空間；wait 與孤兒回收歸還頁框、槽位和私有分頁表。
 
-目前共用限制由 `include/vm_limits.h` 定義：每頁 4096 bytes、heap 起點 0x1000000、最多 256 個 heap 頁、預設 64 個常駐頁框、最小預算 8 頁。這份新標頭同樣待 OS 提交；已公開標頭見 [GitHub include 目錄](https://github.com/johnson931128/WUWAOS/tree/main/include)。
+目前共用限制由 [include/vm_limits.h（GitHub）](https://github.com/johnson931128/WUWAOS/blob/main/include/vm_limits.h) 定義：每頁 4096 bytes、heap 起點 0x1000000、最多 256 個 heap 頁、預設 64 個常駐頁框、最小預算 8 頁。
 
 ## 在 QEMU 觀察
 
@@ -83,7 +83,7 @@ vmstat limit 64
 
 ## 錯誤與限制
 
-非法缺頁回 -14，沒有資源回 -12，磁碟錯誤回 -5；無法補頁就結束該行程。磁碟讀寫是同步輪詢，期間不切換其他行程，沒有裝置逾時處理。
+非法缺頁回 -14，沒有資源回 -12，已完成請求的磁碟錯誤回 -5；無法補頁就結束該行程。磁碟讀寫是同步輪詢，期間不切換其他行程。單筆磁區請求超過 5 秒仍未完成，則印出診斷並停止整個核心，不當成普通錯誤返回，避免重用仍可能被裝置寫入的緩衝區；詳見 [Spec 12](../SPEC-12-block-timeout.md)。
 
 沒有 COW、mmap、共享頁與動態核心 heap。縮小 heap 只釋放不再涵蓋的整頁；部分頁縮小再擴張不保證清零。常駐頁保留交換區副本、空 heap L0 表保留至空間銷毀，都是仍有所有權的資源。
 

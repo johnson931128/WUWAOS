@@ -25,15 +25,15 @@ OpenSBI（RISC-V 韌體）完成早期準備，將控制權交給 S-mode（監�
 
 ## main.c：把子系統串起來
 
-原始碼：[kernel/main.c（GitHub）](https://github.com/johnson931128/WUWAOS/blob/main/kernel/main.c)。連結為已提交版本，最新未提交裝置初始化調整不會隨文件發布。
+原始碼：[kernel/main.c（GitHub）](https://github.com/johnson931128/WUWAOS/blob/main/kernel/main.c)。
 
-先安裝 trap（陷阱／例外入口），再顯示動畫、探索區塊裝置、建立核心分頁映射與掛載檔案系統。最後建立第一個行程並交給行程恢復流程。
+先安裝 trap（陷阱／例外入口），再顯示動畫、探索區塊裝置、建立核心分頁映射與掛載檔案系統。之後初始化 SBI 計時器、建立第一個行程並交給行程恢復流程；派發時設定時間片，返回使用者模式後才允許搶占。
 
 `fdt` 指向 FDT（硬體裝置樹），是韌體交給核心的硬體描述資料。核心用它尋找 VirtIO 裝置，實體頁配置器也會保留它占用的記憶體。
 
 ## 開機動畫與觀察
 
-`kernel/splash.c` 透過 UART 輸出 ANSI 終端控制碼，以圖案中點為中心逐欄揭露 WUWAOS。這時尚未進入使用者模式；動畫中的忙等不是排程器，也不代表已啟用計時器中斷。
+`kernel/splash.c` 透過 UART 輸出 ANSI 終端控制碼，以圖案中點為中心逐欄揭露 WUWAOS。字形以 5×7 位元資料表示，再用背景色與空格組成 70 欄實心筆畫，從螢光黃綠漸變到薄荷綠；不依賴特殊字型。這時尚未進入使用者模式；動畫中的忙等不是排程器，也不代表已啟用計時器中斷。色塊版本見 [Spec 13](../SPEC-13-block-splash.md)。
 
 執行 `make run`，應依序看到字樣、核心與裝置資訊、最後的 `wuwaos>`。`/boot/kernel.elf` 是 WUFS 中的副本；目前真正啟動核心仍由 QEMU 的 `-kernel` 載入。
 

@@ -12,7 +12,7 @@ WUWAOS 是以 C 與 RISC-V 組合語言撰寫、真正運行於 QEMU 虛擬電�
 | --- | --- |
 | entry.S 怎麼進入 C，最後顯示提示字元？ | [開機流程](./topics/boot.md) |
 | 使用者程式怎麼請核心幫忙？ | [例外與系統呼叫](./topics/traps.md) |
-| 行程如何建立、排程、結束與回收？ | [行程管理](./topics/processes.md) → [FIFO 排程](./topics/scheduling.md) |
+| 行程如何建立、排程、結束與回收？ | [行程管理](./topics/processes.md) → [計時器與 RR 排程](./topics/scheduling.md) |
 | CPU 如何找到資料，缺頁時發生什麼？ | [Sv39](./topics/memory.md) → [按需分頁與交換](./topics/paging.md) |
 | 輸入的文字如何存到磁碟？ | [輸入輸出](./topics/io.md) → [WUFS](./topics/filesystem.md) |
 | 如何寫自己的互動程式？ | [Shell 與 fan](./topics/applications.md) |
@@ -24,7 +24,7 @@ WUWAOS 是以 C 與 RISC-V 組合語言撰寫、真正運行於 QEMU 虛擬電�
 | 平台 | QEMU virt、RV64、單核心、128 MiB RAM |
 | 執行模式 | S-mode 核心、U-mode 使用者程式 |
 | 行程 | 最多 4 個 PCB；fork／exec／exit／wait 與事件等待 |
-| 排程 | FIFO 就緒佇列、合作式切換，沒有計時器搶占 |
+| 排程 | 單核心 RR、50 ms 時間片；使用者程式可搶占，核心內不搶占 |
 | 記憶體 | Sv39 三級頁表、4 KiB 頁、按需分頁、FIFO 置換、獨立 Swap |
 | 磁碟 | VirtIO 區塊 I/O、自訂 WUFS、重新啟動後保留檔案 |
 | 操作 | Shell、固定 writer \| reader 管道、fan 全螢幕文字編輯器 |
@@ -35,7 +35,7 @@ WUWAOS 是以 C 與 RISC-V 組合語言撰寫、真正運行於 QEMU 虛擬電�
 
 主題章節描述目前設計；[原始規格與驗收紀錄](./history.md) 保留開發過程。舊規格中的架構可能已被後續版本取代，閱讀時應留意每份文件的階段說明。
 
-本站只展示架構說明與操作指令，OS 原始碼以 GitHub 連結提供，不內嵌程式碼。GitHub main 尚未提交的 Spec 10 改動，會在相關章節明確標示；本網站發布不會順帶提交 OS 修改。驗收結果是各規格所記錄的當時操作，網站建置不代表重新執行過 OS 驗證。
+本站只展示架構說明與操作指令，OS 原始碼以 GitHub 連結提供，不內嵌程式碼。OS 與文件變更經使用者授權提交到 main；網站發布另由專用工具處理。驗收結果是各規格所記錄的當時操作，網站建置不代表重新執行過 OS 驗證。
 
 ## 參考與致意
 

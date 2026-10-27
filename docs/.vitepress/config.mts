@@ -5,7 +5,7 @@ const publicUrl = 'https://johnson931128.github.io/WUWAOS/'
 const chapters = [
   ['開始使用', 'getting-started'], ['開機流程', 'boot'],
   ['例外與系統呼叫', 'traps'], ['行程管理', 'processes'],
-  ['FIFO 排程', 'scheduling'], ['實體頁與 Sv39', 'memory'],
+  ['計時器與 RR 排程', 'scheduling'], ['實體頁與 Sv39', 'memory'],
   ['按需分頁、置換與 Swap', 'paging'], ['輸入輸出與 Pipe', 'io'],
   ['WUFS 檔案系統', 'filesystem'], ['Shell 與 fan 編輯器', 'applications'],
   ['維護文件網站', 'writing'],
@@ -30,7 +30,18 @@ export default defineConfig({
     ]
   },
   lastUpdated: true,
-  markdown: { lineNumbers: true, html: false, languageAlias: { h: 'c', S: 'asm' } },
+  markdown: {
+    lineNumbers: true, html: false, languageAlias: { h: 'c', S: 'asm' },
+    config(md) {
+      const fence = md.renderer.rules.fence!
+      md.renderer.rules.fence = (tokens, index, options, env, self) => {
+        if (tokens[index].info.trim() === 'mermaid') {
+          return `<MermaidDiagram source="${md.utils.escapeHtml(tokens[index].content)}" />\n`
+        }
+        return fence(tokens, index, options, env, self)
+      }
+    },
+  },
   themeConfig: {
     siteTitle: 'WUWAOS 實作紀錄',
     nav: [{ text: '閱讀章節', link: '/topics/getting-started' }, { text: '規格紀錄', link: '/history' }],

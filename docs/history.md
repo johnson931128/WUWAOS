@@ -15,6 +15,10 @@
 | 09 | [fan 全螢幕編輯器](./SPEC-09-fan.md) |
 | 10 | [Demand paging、頁面置換與 Swap](./SPEC-10-demand-paging.md)，現行 VM 設計 |
 | 11 | [文件網站](./SPEC-11-documentation.md) |
+| 12 | [磁碟請求逾時與停止核心](./SPEC-12-block-timeout.md) |
+| 13 | [螢光色塊開機字樣](./SPEC-13-block-splash.md) |
+| 14 | [逐行命令說明](./SPEC-14-shell-help.md) |
+| 15 | [計時器中斷與 RR 排程](./SPEC-15-timer-rr.md)，現行 CPU 排程政策 |
 
 ## 如何判斷是否驗證過
 

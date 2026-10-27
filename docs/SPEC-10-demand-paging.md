@@ -1,5 +1,7 @@
 # Spec 10：Demand paging、FIFO 頁面置換與 Swap
 
+本文件保留當時的實作與驗收紀錄；後續共用磁碟請求已加入 5 秒逾時診斷並停止核心，見 [Spec 12](./SPEC-12-block-timeout.md)。下方「沒有裝置超時」是本階段歷史限制。
+
 ## 目標與範圍
 
 完成基本教科書缺頁路徑：判斷合法位址與權限、取得頁框、載入映像／零頁或 swap、更新 PTE／TLB、重新執行原指令；頁框不足時以全域 FIFO 換出使用者頁面。保留單 hart、128 MiB、Sv39 4 KiB 頁面及既有 shell／fan／WUFS。未經同意不新增測試程式碼；以正常互動命令與 QEMU 檢查驗收，不自行 commit／push。

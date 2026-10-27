@@ -18,7 +18,7 @@ User Mode（使用者模式）程式不能直接控制所有硬體。它以 sysc
 
 `kernel/trap.S` 先切換堆疊，將一般暫存器和 CSR（控制與狀態暫存器）存入 288-byte TrapFrame（暫存器保存結構），再呼叫 C 的 `trap_handler`。
 
-原始碼：[kernel/trap.c（GitHub）](https://github.com/johnson931128/WUWAOS/blob/main/kernel/trap.c)。連結為已提交版本；下述按需分頁分支屬 Spec 10 的目前工作版本，待 OS 提交後才會在 main 顯示。
+原始碼：[kernel/trap.c（GitHub）](https://github.com/johnson931128/WUWAOS/blob/main/kernel/trap.c)。
 
 CPU 不會自動幫核心保存全部一般暫存器。若不先保存，C 處理函式就可能破壞使用者原有資料。C 最後回傳要恢復的 TrapFrame，組合語言還原後用 `sret` 返回使用者模式。
 
@@ -38,6 +38,8 @@ ecall（環境呼叫指令）長度固定 4 bytes；核心將 sepc 加 4，讓�
 
 在 `wuwaos>` 執行 `ps`，命令經 API 進核心，讀取真實 PCB，再輸出結果。執行 `mem alloc 1`、`mem read 0`，則可配合 `vmstat` 觀察合法首次存取的[缺頁處理](./paging.md)。
 
-核心自身出錯目前會印出陷阱資訊並停止；使用者非法存取則結束該行程。這不是完整訊號機制，也沒有 UART／計時器中斷排程。
+計時器中斷也走同一入口：scause 最高位表示中斷、低位原因 5 表示監督模式計時器。先清除 pending，再讓原行程排到隊尾，依 [RR 排程](./scheduling.md) 選擇下一個；保留 sepc 與 a0，不當作 syscall 返回值改寫。
+
+核心自身出錯目前會印出陷阱資訊並停止；使用者非法存取則結束該行程。目前已有計時器驅動的 50 ms RR，但 UART 仍輪詢，也沒有完整訊號機制或核心內搶占。
 
 觀念參考：`notes/ch2 Operating-System Structures.md` 的系統呼叫與雙模式。早期基礎驗收見 [Spec 01](../SPEC-01-user-syscalls.md)，目前缺頁路徑見 [Spec 10](../SPEC-10-demand-paging.md)。
