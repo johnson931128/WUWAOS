@@ -1,5 +1,6 @@
 #include "scheduler.h"
 #include "console.h"
+#include "timer.h"
 
 typedef struct {
     Process *head;
@@ -71,7 +72,11 @@ void scheduler_remove(Process *process) {
 }
 
 void scheduler_print_ready(void) {
-    console_puts("Ready queue (FIFO), count=");
+    console_puts("Scheduler: RR, quantum_ms=");
+    console_number(SCHEDULER_QUANTUM_MS);
+    console_puts(" timer_interrupts=");
+    console_number((long)timer_interrupt_count());
+    console_puts("\nReady queue (RR), count=");
     console_number((long)ready_queue.count);
     console_puts(": ");
     if (ready_queue.head == 0) {

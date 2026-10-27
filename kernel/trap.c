@@ -3,9 +3,11 @@
 #include "process.h"
 #include "syscall.h"
 #include "vm.h"
+#include "timer.h"
 
 #define SSTATUS_SPP (1UL << 8)
 #define USER_ECALL 8
+#define SUPERVISOR_TIMER ((1UL << 63) | 5UL)
 
 extern void trap_entry(void);
 
@@ -18,6 +20,11 @@ TrapFrame *trap_handler(TrapFrame *frame) {
     const int from_user = (frame->sstatus & SSTATUS_SPP) == 0;
     if (from_user) {
         process_current()->frame = frame;
+    }
+    if (from_user && frame->scause == SUPERVISOR_TIMER) {
+        timer_interrupt();
+        process_preempt();
+        return process_resume(); /* Interrupt sepc is already the resume address. */
     }
     if (from_user && frame->scause == USER_ECALL) {
         frame->sepc += 4; /* ECALL is a 32-bit instruction. */

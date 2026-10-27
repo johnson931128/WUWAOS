@@ -207,7 +207,7 @@ static void memory_command(int count, char *words[4]) {
 
 static void help(void) {
     user_puts("help                            Show this command list.\n"
-              "ps                              List processes and the FIFO ready queue.\n"
+              "ps                              List processes and the RR ready queue.\n"
               "pcb <pid>                       Show one process control block.\n"
               "spawn worker                    Create a worker; wake it with wakeup 7.\n"
               "spawn quick                     Create a process that exits with code 40.\n"
@@ -239,7 +239,7 @@ static void help(void) {
               "exit                            End the shell; Ctrl+A then X quits QEMU.\n"
               "\n"
               "<path> is an absolute path; <page> is a zero-based page index.\n"
-              "Files persist on the QEMU disk. Scheduling is cooperative.\n"
+              "Files persist on the QEMU disk. Scheduling uses timer-driven RR.\n"
               "Host commands are not available here.\n");
 }
 

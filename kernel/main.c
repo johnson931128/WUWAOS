@@ -5,6 +5,7 @@
 #include "splash.h"
 #include "block.h"
 #include "fs.h"
+#include "timer.h"
 
 void kernel_main(unsigned long hart_id, const void *fdt) {
     (void)hart_id;
@@ -18,6 +19,7 @@ void kernel_main(unsigned long hart_id, const void *fdt) {
     if (block_ready && fs_init() < 0) {
         console_puts("[fs] Disk present but WUFS could not be mounted\n");
     }
+    timer_init();
     process_init();
     process_start();
 }

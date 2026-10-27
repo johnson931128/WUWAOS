@@ -71,9 +71,9 @@ ps
 
 `wakeup 9` 後兩者各自從 3 倒數至 1，每次 yield（主動讓出 CPU）使另一個 Ready（就緒）行程取得執行機會；`wait` 回收結果 0。最後 ps 應只剩 shell、Free PCB slots: 3。
 
-目前使用 FIFO（先進先出）就緒佇列進行非搶占式排程：新建立或被喚醒的行程排到隊尾，從隊首取出下一個行程；Running 行程執行普通 syscall 時繼續執行，直到阻塞、結束或主動 yield。保留合作式 yield，讓出後重新排到隊尾，沒有計時器時間片。印出的提示字元與背景輸出可能交錯；`run` 不自動回收，請依輸出的 PID 執行 wait。若不是全新啟動，PID 不一定是上述數字。
+目前使用 RR（輪詢排程），就緒佇列以 FIFO 保存順序，每次派發預設 50 ms。時間到由監督模式計時器中斷將 Running 行程放回隊尾，不需主動 yield；普通 syscall 或合法缺頁恢復不重置時間片。仍支援 yield、阻塞與喚醒。核心內不搶占，長 syscall／同步磁碟 I/O 會延後切換，因此不是嚴格即時保證。輸出可能交錯；run 不自動回收，請依實際 PID 執行 wait。
 
-`ps` 會附上 `Ready queue (FIFO), count=N: ...`，只列出等待 CPU 的 Ready 行程，不含正在執行的 shell。`pcb <pid>` 的 `ready_queued=1` 表示該 PCB 已在佇列中；0 表示不在佇列。背景行程可能在輸入下一條命令前已經完成，因此 ps 看到空佇列也是正常情況。
+`ps` 顯示 `Scheduler: RR, quantum_ms=50 timer_interrupts=N` 與 `Ready queue (RR), count=N: ...`，只列出等待 CPU 的 Ready 行程。`pcb <pid>` 的 ready_queued 表示是否在佇列，dispatches／preemptions 分別是派發／時間片到期次數。短程式可能在第一個時間片前結束，因此中斷數為 0 也正常。
 
 也可用 `run quick` 觀察結束碼 40，或 `run worker` 搭配 `wakeup 7`／`wait <pid>`。下方保留直接 spawn（建立指定程式）的操作。
 
@@ -228,13 +228,13 @@ cat /home/user/notes/today.txt
 - `processes[4]` 保存完整 PCB；`scheduler.c` 的單向鏈結 FIFO 只保存 Ready PCB 的指標，入列與取出隊首 O(1)，移除任意節點 O(P)。
 - read/write、行程管理與查詢都透過使用者模式系統呼叫。核心與 UART（序列埠）頁面仍不可由使用者模式直接存取。
 - 檔案系統經由 VirtIO-MMIO block driver（虛擬區塊裝置驅動）讀寫 QEMU 磁碟。UART、pipe 與磁碟檔案走不同 I/O 路徑；目前檔案呼叫以路徑為參數，尚未有通用檔案描述號或 POSIX `open/close`。
-- 仍是合作式排程；shell 提示前讓出兩輪，讓本版內建 worker 到達穩定的等待點。不是時間片或 timer（計時器）搶占。
-- 等待終端輸入與磁碟操作目前以輪詢進行；沒有多核心、計時器中斷、外部 ELF loader（執行檔載入器）、Linux 相容檔案系統或浮點／向量執行環境。
+- CPU 排程為單核心、50 ms RR，保留主動 yield。shell 提示前兩輪 yield 只協助內建 worker 到達等待點，不是時間片的來源；counter 也有 yield，不能只憑倒數交替證明搶占。
+- timer 經 OpenSBI TIME 設定，clock.h 統一 QEMU virt 的 10 MHz 計時。終端與磁碟仍輪詢、核心內不搶占；沒有多核心、優先權、外部 ELF loader、Linux 相容檔案系統或浮點／向量環境。
 - 未加入測試框架或負面測試程式。實際互動驗證及未執行的邊界路徑詳見 spec。
 
 ## 文件與閱讀順序
 
-- [SPEC.md](docs/SPEC.md)：fork／exec／回收里程碑規格與驗收紀錄；目前排程以 SPEC-07 為準。
+- [SPEC.md](docs/SPEC.md)：fork／exec／回收里程碑規格與驗收紀錄；目前 CPU 排程以 SPEC-15 為準。
 - [CODE_GUIDE.md](docs/CODE_GUIDE.md)：所有程式碼功能、演算法與硬體關係。
 - [SPEC-01](docs/SPEC-01-user-syscalls.md)、[SPEC-02](docs/SPEC-02-process-lifecycle.md)、[SPEC-03](docs/SPEC-03-shell-pipe.md)：使用者呼叫、行程生命週期與互動 shell／pipe 規格。
 - [SPEC-04](docs/SPEC-04-boot-splash.md)：開機動畫規格與驗收紀錄。
@@ -243,7 +243,8 @@ cat /home/user/notes/today.txt
 - [SPEC-08](docs/SPEC-08-memory.md)：動態實體頁配置、三級分頁與回收。
 - [SPEC-09](docs/SPEC-09-fan.md)：fan 編輯器、raw console 與路徑參數傳遞。
 - [SPEC-10](docs/SPEC-10-demand-paging.md)：按需分頁、FIFO 頁面置換、獨立 swap 與失敗處理。
+- [SPEC-15](docs/SPEC-15-timer-rr.md)：計時器中斷、50 ms RR、模組分類與無 yield 的搶占驗證；[主題章節](docs/topics/scheduling.md) 包含 Mermaid 流程圖。
 
 先讀 user/shell.c 的 shell_main／command，再追蹤 user/api.c → kernel/syscall.c → process.c 或 io.c，最後看 trap.S 如何交還使用者程式。
 手動練習：對照 pcb 2 顯示的等待通道與 sepc（保存的指令位址），說明 wakeup 後為什麼從 sleep 呼叫後面繼續。
-下一個小步驟可另訂 timer 中斷與前景工作取消的規格。
+前景 Ctrl+C 取消、優先權與核心內搶占可另訂後續規格。

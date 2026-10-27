@@ -1,5 +1,6 @@
 #include "splash.h"
 #include "console.h"
+#include "clock.h"
 #include <stdint.h>
 
 #define LOGO_HEIGHT 7
@@ -10,7 +11,6 @@
 #define LETTER_STRIDE (GLYPH_WIDTH * PIXEL_WIDTH + LETTER_GAP)
 #define LOGO_WIDTH (LETTER_COUNT * LETTER_STRIDE - LETTER_GAP)
 #define LEFT_MARGIN ((80 - LOGO_WIDTH) / 2)
-#define TIMEBASE_HZ 10000000UL /* QEMU virt, without a DTB parser yet. */
 
 /* Five-bit rows for W, U, A, O, S. Color two spaces per pixel: no UTF-8 font dependency. */
 static const uint8_t glyphs[5][LOGO_HEIGHT] = {
@@ -33,16 +33,10 @@ static int logo_pixel(int row, int column) {
     return (bits >> (GLYPH_WIDTH - 1 - within / PIXEL_WIDTH)) & 1;
 }
 
-static uint64_t hardware_time(void) {
-    uint64_t value;
-    __asm__ volatile("rdtime %0" : "=r"(value));
-    return value;
-}
-
 static void pause_ms(unsigned long milliseconds) {
-    const uint64_t start = hardware_time();
-    const uint64_t duration = (TIMEBASE_HZ / 1000) * milliseconds;
-    while (hardware_time() - start < duration) {
+    const uint64_t start = clock_ticks();
+    const uint64_t duration = clock_ms_ticks(milliseconds);
+    while (clock_ticks() - start < duration) {
     }
 }
 

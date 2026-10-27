@@ -19,6 +19,8 @@ typedef struct ProcessControlBlock {
     /* Intrusive FIFO links; only Ready processes belong to the queue. */
     struct ProcessControlBlock *ready_next;
     int ready_queued;
+    uint64_t dispatches;
+    uint64_t preemptions;
     long exit_status;
     uintptr_t page_table;
     uintptr_t kernel_stack_top;
@@ -47,6 +49,7 @@ long process_spawn(long program);
 long process_fork(void);
 long process_exec(long program, const char *argument);
 long process_yield(void);
+void process_preempt(void);
 long process_sleep(long channel);
 long process_wakeup(long channel);
 long process_wait(long pid, uintptr_t status_address);

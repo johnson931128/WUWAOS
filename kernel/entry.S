@@ -1,7 +1,7 @@
     .section .text.entry
     .globl _start
 _start:
-    # OpenSBI enters here in S-mode. Interrupt handling comes later.
+    # OpenSBI enters in S-mode; timer interrupts stay masked until initialization.
     csrw sie, zero
     csrci sstatus, 2
 

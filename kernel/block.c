@@ -1,5 +1,6 @@
 #include "block.h"
 #include "console.h"
+#include "clock.h"
 #include <stddef.h>
 
 #define FDT_MAGIC 0xd00dfeedU
@@ -36,7 +37,6 @@
 #define DEVICE_FEATURES_OK 8U
 #define FEATURE_VERSION_1 0U
 #define QUEUE_SIZE 8U
-#define BLOCK_TIMEBASE_HZ 10000000UL /* Supported QEMU virt timebase, as in splash.c. */
 
 typedef struct {
     uint64_t address;
@@ -288,12 +288,6 @@ static int init_device(uintptr_t base) {
     return sectors == 0 ? -1 : 0;
 }
 
-static uint64_t block_time(void) {
-    uint64_t value;
-    __asm__ volatile("rdtime %0" : "=r"(value));
-    return value;
-}
-
 static _Noreturn void transfer_timeout(uint32_t sector, int write, uint64_t elapsed) {
     console_puts("[block] I/O TIMEOUT device=");
     console_hex((uintptr_t)device);
@@ -301,7 +295,7 @@ static _Noreturn void transfer_timeout(uint32_t sector, int write, uint64_t elap
     console_puts(active == filesystem ? "WUFS" : active == swap_disk ? "swap" : "probe");
     console_puts(write ? " op=write" : " op=read");
     console_puts(" sector="); console_number((long)sector);
-    console_puts(" elapsed_ms="); console_number((long)(elapsed / (BLOCK_TIMEBASE_HZ / 1000UL)));
+    console_puts(" elapsed_ms="); console_number((long)(elapsed / (CLOCK_TIMEBASE_HZ / 1000UL)));
     console_puts(" limit_ms="); console_number((long)BLOCK_IO_TIMEOUT_MS);
     console_puts(" consumed="); console_number(consumed_used);
     console_puts(" used="); console_number(used.index);
@@ -325,14 +319,14 @@ static int transfer(uint32_t sector, void *buffer, int write) {
     descriptors[2] = (VirtqDescriptor){ (uintptr_t)&request_status, 1U, 2U, 0U };
     const uint16_t index = available.index;
     available.ring[index % queue_size] = 0;
-    const uint64_t start = block_time();
+    const uint64_t start = clock_ticks();
     __asm__ volatile("fence rw, w" : : : "memory");
     available.index = (uint16_t)(index + 1U);
     __asm__ volatile("fence w, o" : : : "memory");
     device[VIRTIO_QUEUE_NOTIFY / 4] = 0;
     while (used.index == consumed_used) {
-        const uint64_t elapsed = block_time() - start;
-        if (elapsed >= (BLOCK_TIMEBASE_HZ / 1000UL) * BLOCK_IO_TIMEOUT_MS &&
+        const uint64_t elapsed = clock_ticks() - start;
+        if (elapsed >= clock_ms_ticks(BLOCK_IO_TIMEOUT_MS) &&
             used.index == consumed_used) {
             transfer_timeout(sector, write, elapsed);
         }

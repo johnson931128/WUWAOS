@@ -1,6 +1,6 @@
 # WUWAOS 程式碼與架構紀錄
 
-記錄目前所有手寫程式碼、標頭、連結及建置設定。現行設計由 SPEC.md 與後續 SPEC-06 至 SPEC-10 組成；記憶體以 SPEC-10 為準，SPEC-01／02／03／04 與後續各階段驗收保留當時紀錄，不代表現在的全部限制。依主題閱讀可從[文件首頁](./index.md)開始，開發階段見[歷史索引](./history.md)。
+記錄目前所有手寫程式碼、標頭、連結及建置設定。現行設計由 SPEC.md 與後續規格組成；記憶體以 SPEC-10、計時器與 RR 排程以 SPEC-15 為準。各階段驗收保留當時紀錄，不代表現在的全部限制。依主題閱讀可從[文件首頁](./index.md)開始，開發階段見[歷史索引](./history.md)。
 術語第一次出現附中文用途。原始碼與實際 QEMU 執行是行為依據，尚未執行的路徑不稱為已驗證。
 
 ## 1. 架構與控制權
@@ -35,7 +35,10 @@ CPU 執行記憶體中的機器碼，不知道來源檔名。OpenSBI 負責早�
 | kernel/trap.S | 切換堆疊、保存／還原暫存器、返回使用者模式 |
 | kernel/trap.c / trap.h | 共同例外入口設定、TrapFrame（保存狀態結構）、原因分派 |
 | kernel/vm.c / vm.h | 各行程頁表、使用者映像、記憶體權限與安全複製 |
-| kernel/process.c / process.h | PCB（行程控制區塊）、生命週期、合作式排程、查詢與終止 |
+| kernel/process.c / process.h | PCB（行程控制區塊）、生命週期、RR 派發／搶占、查詢與終止 |
+| kernel/clock.h | 共用 rdtime、QEMU 10 MHz 時基與毫秒換算 |
+| kernel/sbi.c / sbi.h | SBI BASE／TIME 呼叫，隔離韌體 ABI |
+| kernel/timer.c / timer.h | 中斷初始化、時間片到期事件、清除 pending 與計數 |
 | kernel/scheduler.c / scheduler.h | 單向鏈結 FIFO 就緒佇列、入列／取隊首／移除與順序查閱 |
 | kernel/io.c / io.h | 行輸入／raw console、固定管道、pending I/O（尚未完成的輸入輸出） |
 | kernel/block.c / block.h | FDT 裝置探索、VirtIO-MMIO 區塊讀寫佇列 |
@@ -80,7 +83,7 @@ la 是載入位址的偽指令；__ 開頭符號由 linker（連結器）決定�
 
 ## 4. main.c 與 console.c
 
-kernel_main 依序 trap_init、boot_splash、輸出啟動文字、block_init_from_fdt、vm_init(fdt)、fs_init（有磁碟時）、process_init、process_start。先安裝例外入口，讓啟動畫面期間的錯誤也能診斷。vm_init 會初始化實體頁面配置器並啟用常駐核心分頁表。
+kernel_main 依序 trap_init、boot_splash、輸出啟動文字、block_init_from_fdt、vm_init(fdt)、fs_init（有磁碟時）、timer_init、process_init、process_start。先安裝例外入口，動畫期間仍關閉計時器中斷。timer_init 查詢 OpenSBI TIME、清除舊事件並開啟 STIE；首次派發設定 50 ms deadline，sret 返回使用者模式後允許搶占。
 UART 位址固定 0x10000000，LSR（線路狀態暫存器）offset 5：bit 5 可寫入字元，bit 0 有收到的字元。
 
 - console_putc 輪詢可寫狀態，再寫 offset 0；換行前補 CR（回車）。
@@ -96,7 +99,7 @@ boot_splash 在進入使用者模式前，用 W／U／A／O／S 的 5×7 bitmaps
 以中點 35 為中心，radius（揭露半徑）由 1 增至 35，只填入 [35-radius, 35+radius) 內的有效字形像素，其餘輸出預設背景空格；每格增加左右各一欄。填色狀態改變時才輸出顏色控制碼，行尾與動畫結束重設，避免 shell 被染色。
 每格固定 O(H×W)，共 35 格，沒有配置動態記憶體。這是逐欄揭露圖案，不是變更終端字型或縮放。
 ANSI（終端控制碼）ESC[2J 清屏、ESC[H 回到起點重繪，ESC[?25l/h 隱藏／還原游標；最終字樣保留在 shell 上方。
-hardware_time 使用 rdtime（讀取硬體時間計數器指令），pause_ms 依 QEMU virt 的 10 MHz 時基輪詢每格 32 ms、最後 200 ms，預定延遲合計約 1.32 秒，另加序列輸出時間。現行設計與驗收見 [Spec 13](./SPEC-13-block-splash.md)，Spec 04 保留最初 ASCII 圖案歷史。
+clock.h 的 clock_ticks 共用 rdtime（讀取硬體時間計數器指令），pause_ms 以 clock_ms_ticks 換算每格 32 ms、最後 200 ms，預定延遲合計約 1.32 秒，另加序列輸出時間。動畫發生在 timer_init 前，沒有在動畫中開啟計時器中斷。現行字形驗收見 [Spec 13](./SPEC-13-block-splash.md)，共用時鐘重構見 Spec 15。
 此處沒有啟用 timer interrupt（計時器中斷），也不新增延遲 syscall；忙等只發生於開機期間。尚未從 DTB（硬體描述資料）解析時基，限目前 QEMU virt 平台。
 不支援 ANSI 的輸出環境可能顯示控制碼；小於 80 欄可能換行影響動畫，非本次驗收範圍。
 
@@ -173,12 +176,12 @@ Running／Waiting／Ready → exit／kill → Zombie（待回收） → wait →
 ```
 
 - create_process 掃描空欄位、分配遞增 PID、清除 PCB／stack、建立私有頁表、設定初始 frame，最後公布為 Ready。頁面不足回 -12 並恢復 Unused；失敗可能消耗 PID，但不占用 PCB 或頁面。
-- 初始 a0（參數暫存器）存內建角色，sp 是使用者 stack 頂端，sepc 是 0x400000；sstatus 選 U-mode，停用中斷及浮點／向量能力。
+- 初始 a0 存內建角色，sp 是使用者 stack 頂端，sepc 是 0x400000；sstatus 選 U-mode、SPIE=1、SIE=0，讓 sret 後可接收計時器中斷，核心內維持不搶占；停用浮點／向量能力。
 - process_init 建立 PID 1 的 shell；process_spawn 只接受 worker／quick，父 PID 為目前行程。
 - process_fork 建立尚未公布 Ready 的子 PCB，複製使用者頁及父 TrapFrame，設定子 a0=0、繼承端點後才改成 Ready；回傳新 PID 給父。trap_handler 已將 sepc 越過 ecall，父子都從 fork 呼叫後繼續。核心 stack 不複製，子使用新的保存框架。
 - process_exec 先拒絕未知 ID，再準備／交換位址空間。清除舊使用者暫存器、設定 sp／入口／a0 角色，保留原本合法的 sstatus、PID／父子關係／核心 stack／端點，清除等待及 I/O 欄位。切換 satp 後，trap.S 直接恢復新入口，不會返回舊 shell。所有空間共用核心映射，所以切換時目前核心 stack 仍有效。
 - transition 統一記錄與更新狀態，進入 Ready 時排到 FIFO 隊尾，離開 Ready 時移除；scheduler_next 已出列的節點不重複移除。trace_enabled 可關閉子行程的追蹤，但不會停用佇列維護。PID 1 與 fan 不輸出逐次狀態紀錄，以免打斷提示字元或編輯畫面，仍有真實狀態供 ps／pcb 查閱。fork 出來但還沒 exec 的 shell 子行程照常記錄。
-- process_resume 先切換常駐核心根表，再輪詢 I/O；原行程仍 Running 時切回其根表繼續它，否則回收無父行程 Zombie，再呼叫 scheduler_next 取出最早入列的 Ready PCB。finish_wait 可在此時安全釋放剛退出行程的表。這是 FIFO 非搶占式排程；普通 syscall 不讓出 CPU，主動 yield 才重新排到隊尾。
+- process_resume 先切換核心根表並輪詢 I/O；原行程仍 Running 時切回其根表繼續，不重設 deadline。否則停用原事件、回收孤兒 Zombie，scheduler_next 取隊首，finish_wait 完成回收、增加 dispatches、切頁表並設定新 50 ms 時間片。計時器中斷先清除 pending，process_preempt 增加 preemptions，將原行程改為 Ready 排隊尾，再走同一派發流程；不修改中斷 sepc 或 a0。
 - 返回使用者前更新 satp，將所選 frame 返回 trap.S；不保存暫停中的 C 呼叫堆疊，原 kernel stack 在返回時被放棄。
 - 沒有 Ready 但有人等待 console 時持續輪詢 UART；沒有事件來源的全部阻塞顯示診斷；全部回收後進 kernel_idle。
 
@@ -204,8 +207,8 @@ process_pipeline 先驗證兩個 PID 的回寫範圍與資源，分配 pipe，�
 `ReadyQueue` 保存 `Process *head`、`Process *tail` 與 count。節點鏈結直接放在 PCB，無需 malloc 或額外複製行程資料。
 `scheduler_enqueue` 先檢查 ready_queued 防止重複入列，再接到 tail；`scheduler_next` 取出 head、清除該 PCB 的鏈結與入列標記，取走最後一個節點時也清空 tail。兩者 O(1)。
 `scheduler_remove` 尋找指定 PCB 的前一個節點，再重接鏈結；同時處理隊首、中間、隊尾與唯一節點，耗時 O(P)。kill Ready 行程與管線建立失敗回收時，透過 transition 移除節點，避免欄位重用後仍被舊鏈結排程。
-排程順序依實際入列時間，同一輪 wakeup／I/O 完成仍按既有 PCB 掃描順序入列，不按 PID 排序。單核心且核心中斷關閉，無佇列並行修改；未實作多核心鎖或時間片。
-參考筆記：`notes/ch5 CPU schedueling.md`「FCFS 理論觀念與數學剖析」。原始 FCFS 的非搶占特性保留，專案額外保留主動 yield 後排到隊尾的介面；counter 交替是主動讓出造成的，不是 timer 搶占。
+排程順序依實際入列時間，同一輪 wakeup／I/O 完成按 PCB 掃描順序入列，不按 PID 排序。佇列仍採 FIFO，政策改為 50 ms RR；核心全域中斷關閉，因此無核心資料修改到一半被搶占，尚無多核心鎖。長核心操作可延後到期中斷，不是精確 CPU 時間統計。
+參考筆記：`notes/ch5 CPU schedueling.md`「Round-Robin 理論觀念」與非搶占式核心。counter 仍主動 yield，其交替本身不是計時器證據；Spec 15 以既有無 yield 指令迴圈驗證真正搶占。ps 顯示時間片／中斷數，pcb 顯示派發／搶占數。
 
 ## 8. io.c / io.h：行輸入與真實管道
 
@@ -310,7 +313,7 @@ print.c 的 user_write_all 迴圈處理短寫；user_puts 掃描字串；user_nu
 命令解析 O(L)，L 最多 126；不支援引號、一般參數、多段管線或通用檔案描述號。
 
 demo.c 的 user_main 只進入 shell；app.c 是另一份獨立映像，依初始 a0 角色分派：1 worker（yield 後 sleep(7)，醒後 exit 0）、2 quick（exit 40）、3 writer、4 reader、5 counter。
-counter 先等待通道 9，再讀寫自己初始化為 3 的 volatile 全域 remaining，每次輸出後減一並 yield，至 0 結束。兩份 counter 各自從 3 開始，展示初始化資料與交替執行；沒有硬體時間片。
+counter 先等待通道 9，再讀寫自己初始化為 3 的 volatile 全域 remaining，每次輸出後減一並 yield，至 0 結束。兩份 counter 各自從 3 開始，展示初始化資料與主動輪轉；現行另有硬體時間片，短程式不一定等到到期。
 writer 正常輸出 80 bytes，以 user_write_all 處理管道短寫；reader 每次最多讀 12 bytes，等 EOF 後將完整訊息輸出到 console。接收緩衝區有界，不能無限制累積資料。
 user/entry.S 保留初始 a0／a1 呼叫 user_main，返回值再交給 exit；exit 如果意外返回就在使用者模式迴圈。
 
@@ -336,7 +339,7 @@ all 建置、run 啟動、clean 清理 build 產物。更改 flags（編譯選�
 未完成 runtime 驗證的邊界不可等同已測試；沒有新增未經同意的測試程式碼。
 可先照 README 操作 worker，對照 saved sepc（保存指令位置）說明恢復後從哪裡繼續；再追蹤 writer 滿管道時的 buffer 位址如何留在 PCB。
 
-仍無計時器搶占、多核心、通用檔案描述號、任意執行檔與前景 Ctrl+C 取消。若 shell wait 一個永遠不會收到事件的子行程，也無其他行程能通知，會阻塞；先 wakeup 再 wait。
+計時器與 RR 已在 Spec 15 實作；仍無核心內搶占、多核心、優先權、通用檔案描述號、任意執行檔與前景 Ctrl+C 取消。若 shell wait 一個永遠不會收到事件的子行程，也無其他行程能通知，會阻塞；先 wakeup 再 wait。
 
 ## 官方參考
 

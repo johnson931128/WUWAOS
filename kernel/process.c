@@ -4,6 +4,7 @@
 #include "vm.h"
 #include "io.h"
 #include "scheduler.h"
+#include "timer.h"
 #include <limits.h>
 
 static Process processes[PROCESS_LIMIT];
@@ -100,9 +101,9 @@ static long create_process(long program, long parent_pid, int publish) {
     process->frame->sepc = USER_ENTRY;
     uintptr_t status;
     __asm__ volatile("csrr %0, sstatus" : "=r"(status));
-    process->frame->sstatus = status &
+    process->frame->sstatus = (status &
         ~((1UL << 8) | (1UL << 5) | (1UL << 1) | (1UL << 18) | (1UL << 19) |
-          (3UL << 13) | (3UL << 9));
+          (3UL << 13) | (3UL << 9))) | (1UL << 5); /* SPIE: sret enables S interrupts. */
     if (publish) {
         transition(process, PROCESS_READY, "initialized");
     }
@@ -198,6 +199,12 @@ long process_exec(long program, const char *argument) {
 long process_yield(void) {
     transition(process_current(), PROCESS_READY, "yield");
     return 0;
+}
+
+void process_preempt(void) {
+    Process *process = process_current();
+    ++process->preemptions;
+    transition(process, PROCESS_READY, "time slice expired");
 }
 
 long process_sleep(long channel) {
@@ -401,6 +408,10 @@ long process_inspect(long pid) {
     console_puts(state_name(process->state));
     console_puts(" ready_queued=");
     console_number(process->ready_queued);
+    console_puts("\ndispatches=");
+    console_number((long)process->dispatches);
+    console_puts(" preemptions=");
+    console_number((long)process->preemptions);
     console_puts("\npage_table=");
     console_hex(process->page_table);
     console_puts(" kernel_stack_top=");
@@ -514,6 +525,7 @@ TrapFrame *process_resume(void) {
             vm_enable(process_current()->page_table);
             return process_current()->frame;
         }
+        timer_stop();
         for (int i = 0; i < PROCESS_LIMIT; ++i) {
             if (processes[i].state == PROCESS_ZOMBIE && processes[i].parent_pid == 0) {
                 reap(&processes[i]);
@@ -524,7 +536,9 @@ TrapFrame *process_resume(void) {
             finish_wait(next);
             current_index = (int)(next - processes);
             transition(next, PROCESS_RUNNING, "schedule");
+            ++next->dispatches;
             vm_enable(next->page_table);
+            timer_start_slice(SCHEDULER_QUANTUM_MS);
             return next->frame;
         }
 
