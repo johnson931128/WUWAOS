@@ -14,7 +14,7 @@ raw console 同時只能有一個持有者；行程退出、被終止或成功 e
 
 `kernel/io.c` 不能在核心函式裡一直等到某個行程有資料，否則其他 Ready 行程沒有機會前進。尚未完成的操作會記在 PCB 的 `io_operation`、`io_buffer`、`io_length`、`io_count`，行程改成 Waiting。
 
-`process_resume` 輪詢可完成的 I/O，完成後填入返回值並喚醒行程。使用者資料不一定常駐 RAM，搬移時由安全複製介面逐頁載入，錯誤明確回報。
+行程在 process_block_io 內保存核心上下文，切到獨立排程器堆疊。排程迴圈與返回前的 process_resume 輪詢可完成的 I/O，將結果存入 PCB 的 io_result 並喚醒行程。再次派發後從原核心函式恢復，io_read／io_write 正常回傳結果，再由 syscall_dispatch 填使用者 a0；不再由輪詢端直接代填 a0。使用者資料不一定常駐 RAM，搬移時由安全複製介面逐頁載入，錯誤明確回報。見[核心上下文切換](./processes.md#核心函式如何暫停與恢復)。
 
 這裡的「阻塞行程」不等於「裝置中斷」：目前 UART 仍以輪詢觀察，不是中斷驅動。
 

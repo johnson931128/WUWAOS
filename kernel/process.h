@@ -2,6 +2,7 @@
 #define WUWAOS_PROCESS_H
 
 #include "trap.h"
+#include "context.h"
 #include "process_limits.h"
 
 typedef enum {
@@ -26,6 +27,7 @@ typedef struct ProcessControlBlock {
     uintptr_t kernel_stack_top;
     uintptr_t user_stack_top;
     TrapFrame *frame;
+    KernelContext context;
     WaitReason wait_reason;
     long channel;
     long wait_pid;
@@ -38,6 +40,7 @@ typedef struct ProcessControlBlock {
     size_t io_length;
     size_t io_count;
     int io_overflow;
+    long io_result;
 } Process;
 
 Process *process_current(void);
@@ -53,13 +56,13 @@ void process_preempt(void);
 long process_sleep(long channel);
 long process_wakeup(long channel);
 long process_wait(long pid, uintptr_t status_address);
-void process_exit(long status);
+_Noreturn void process_exit(long status);
 long process_kill(long pid);
 long process_list(void);
 long process_inspect(long pid);
 long process_trace(long enabled);
 long process_pipeline(uintptr_t result_address);
-void process_block_io(IoOperation operation, uintptr_t buffer, size_t length);
+long process_block_io(IoOperation operation, uintptr_t buffer, size_t length);
 void process_complete_io(Process *process, long result);
 
 #endif

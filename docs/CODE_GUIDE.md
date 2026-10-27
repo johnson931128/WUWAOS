@@ -1,6 +1,6 @@
 # WUWAOS 程式碼與架構紀錄
 
-記錄目前所有手寫程式碼、標頭、連結及建置設定。現行設計由 SPEC.md 與後續規格組成；記憶體以 SPEC-10、計時器與 RR 排程以 SPEC-15 為準。各階段驗收保留當時紀錄，不代表現在的全部限制。依主題閱讀可從[文件首頁](./index.md)開始，開發階段見[歷史索引](./history.md)。
+記錄目前所有手寫程式碼、標頭、連結及建置設定。現行設計由 SPEC.md 與後續規格組成；記憶體以 SPEC-10、計時器與 RR 政策以 SPEC-15、核心上下文切換以 SPEC-16 為準。各階段驗收保留當時紀錄，不代表現在的全部限制。依主題閱讀可從[文件首頁](./index.md)開始，開發階段見[歷史索引](./history.md)。
 術語第一次出現附中文用途。原始碼與實際 QEMU 執行是行為依據，尚未執行的路徑不稱為已驗證。
 
 ## 1. 架構與控制權
@@ -9,7 +9,7 @@
 QEMU → OpenSBI（機器模式韌體）
   → kernel/entry.S：準備監督模式核心的執行環境
   → kernel/main.c：安裝例外入口、展開開機字樣、核心映射、PID 1
-  → process_start → user_enter → sret
+  → process_start → swtch → scheduler_loop → swtch → first_run → user_enter → sret
   → user/entry.S → user_main(0) → shell_main
       → 顯示 wuwaos>，以 read 等待輸入
       → kernel/io.c 輪詢 UART，完成一行並喚醒 shell
@@ -18,8 +18,9 @@ QEMU → OpenSBI（機器模式韌體）
           ├─ process.c → scheduler.c：PCB 狀態／生命週期 → FIFO 就緒佇列
           └─ io.c：console／pipe 的輸入輸出與阻塞
           └─ fs.c → block.c：檔案路徑／WUFS inode → VirtIO → QEMU 磁碟
-      → process_resume 選擇行程，切換頁表
-      → trap.S 還原被選中行程 → sret 返回使用者模式
+      → 阻塞／讓出／到期：swtch 保存核心 C 呼叫，交給獨立 scheduler stack
+      → 再次派發：swtch 恢復該行程原核心呼叫，process_resume 完成返回準備
+      → trap.S 還原同一行程的使用者 frame → sret
 ```
 
 CPU 執行記憶體中的機器碼，不知道來源檔名。OpenSBI 負責早期平台準備，核心負責頁表、行程、例外與裝置操作，shell 在 U-mode（使用者模式）透過系統呼叫要求服務。
@@ -34,6 +35,8 @@ CPU 執行記憶體中的機器碼，不知道來源檔名。OpenSBI 負責早�
 | kernel/console.c / console.h | UART（序列埠）輪詢、字元／數字輸出、非阻塞字元輸入、核心等待 |
 | kernel/trap.S | 切換堆疊、保存／還原暫存器、返回使用者模式 |
 | kernel/trap.c / trap.h | 共同例外入口設定、TrapFrame（保存狀態結構）、原因分派 |
+| kernel/context.h | KernelContext：112-byte RV64 核心上下文與 C／組合語言配置契約 |
+| kernel/swtch.S | context_switch：sd／ld 保存與恢復 ra、sp、s0～s11，ret 至新上下文 |
 | kernel/vm.c / vm.h | 各行程頁表、使用者映像、記憶體權限與安全複製 |
 | kernel/process.c / process.h | PCB（行程控制區塊）、生命週期、RR 派發／搶占、查詢與終止 |
 | kernel/clock.h | 共用 rdtime、QEMU 10 MHz 時基與毫秒換算 |
@@ -122,7 +125,7 @@ trap_entry 用 `csrrw sp, sscratch, sp` 交換堆疊。來自使用者時取得�
 trap.h 的數字位移供組合語言使用，C 結構用相同布局；_Static_assert（編譯期布局契約）避免兩邊不一致，並非 runtime 測試。
 
 trap_handler 保存目前行程的 frame，僅在 SPP=0、scause=8 時分派使用者 ecall（環境呼叫指令）。ecall 固定 4 bytes，因此先將 sepc 加 4；其他例外不套用此位移。
-使用者其他例外終止該行程，核心錯誤顯示資訊後停止。一般呼叫後透過 process_resume 選出返回的 frame。
+使用者其他例外終止該行程，核心錯誤顯示資訊後停止。一般呼叫後透過 process_resume 返回本行程的 frame；阻塞或換下時以 swtch 保存核心呼叫，恢復後才沿原陷阱路徑返回。
 使用者 page fault（缺頁例外）12／13／15 則先呼叫 vm_handle_fault；合法按需配置／換入成功後保留原 sepc 重試，非法或無法補頁才結束行程。這不是把所有缺頁當成一般錯誤，也不對缺頁指令套用 ecall 的 +4。
 `mv sp, a0` 改用 C 回傳的 frame；trap_restore 寫回 CSR（控制與狀態暫存器）、還原一般暫存器，最後 sret（監督模式陷阱返回指令）。
 第一次 user_enter 也復用這份還原流程。每次保存／還原為固定 O(1)，目前不保存浮點／向量狀態，初始使用者狀態停用相關能力。
@@ -181,26 +184,32 @@ Running／Waiting／Ready → exit／kill → Zombie（待回收） → wait →
 - process_fork 建立尚未公布 Ready 的子 PCB，複製使用者頁及父 TrapFrame，設定子 a0=0、繼承端點後才改成 Ready；回傳新 PID 給父。trap_handler 已將 sepc 越過 ecall，父子都從 fork 呼叫後繼續。核心 stack 不複製，子使用新的保存框架。
 - process_exec 先拒絕未知 ID，再準備／交換位址空間。清除舊使用者暫存器、設定 sp／入口／a0 角色，保留原本合法的 sstatus、PID／父子關係／核心 stack／端點，清除等待及 I/O 欄位。切換 satp 後，trap.S 直接恢復新入口，不會返回舊 shell。所有空間共用核心映射，所以切換時目前核心 stack 仍有效。
 - transition 統一記錄與更新狀態，進入 Ready 時排到 FIFO 隊尾，離開 Ready 時移除；scheduler_next 已出列的節點不重複移除。trace_enabled 可關閉子行程的追蹤，但不會停用佇列維護。PID 1 與 fan 不輸出逐次狀態紀錄，以免打斷提示字元或編輯畫面，仍有真實狀態供 ps／pcb 查閱。fork 出來但還沒 exec 的 shell 子行程照常記錄。
-- process_resume 先切換核心根表並輪詢 I/O；原行程仍 Running 時切回其根表繼續，不重設 deadline。否則停用原事件、回收孤兒 Zombie，scheduler_next 取隊首，finish_wait 完成回收、增加 dispatches、切頁表並設定新 50 ms 時間片。計時器中斷先清除 pending，process_preempt 增加 preemptions，將原行程改為 Ready 排隊尾，再走同一派發流程；不修改中斷 sepc 或 a0。
-- 返回使用者前更新 satp，將所選 frame 返回 trap.S；不保存暫停中的 C 呼叫堆疊，原 kernel stack 在返回時被放棄。
+- PCB 的 context 保存 ra／sp／s0～s11；create_process 設定 first_run 與 frame 下緣作為初始核心入口／堆疊。fork 使用新的核心上下文，exec 保留目前核心 C 呼叫。
+- suspend_current 要求 SIE=0 且已離開 Running，停用原事件後以 context_switch 切到獨立 16 KiB scheduler stack。scheduler_loop 在自己的堆疊切核心根表、清除 current_index、輪詢 I/O、回收孤兒 Zombie，再取隊首、增加 dispatches、切頁表並設定新 50 ms 時間片，最後 context_switch 恢復行程核心呼叫。
+- process_resume 只切核心根表並輪詢 I/O，必要時暫停當前行程，最後恢復本行程根表並返回自己的 frame。普通 syscall／缺頁恢復不重設 deadline；計時器仍清 pending、增加 preemptions、Running→Ready，再切到排程器；不修改中斷 sepc 或 a0。
+- 核心 C 呼叫堆疊會保留，恢復後從原函式繼續，再由 trap.S 還原同一行程的使用者 frame。新行程首次派發走 first_run→user_enter；Zombie 不再返回。
 - 沒有 Ready 但有人等待 console 時持續輪詢 UART；沒有事件來源的全部阻塞顯示診斷；全部回收後進 kernel_idle。
 
 process_sleep 等正整數 channel（事件通道），不是睡幾秒；process_wakeup 喚醒同通道所有事件等待者，回傳數量。通知不累積，先通知、後等待不會收到舊事件。
 process_wait 僅等待直接子行程；已是 Zombie 就 collect_child，否則記錄目標與結果位址並進 WAIT_CHILD。
-子行程結束會使父行程回 Ready；finish_wait 在父行程再被選中時填入原 frame 的 a0 與使用者 status，再回收子行程。
+子行程結束會使父行程回 Ready；父恢復到 process_wait 的原呼叫堆疊，自行檢查子行程、寫 status、回收並正常回傳 PID。舊 finish_wait 已移除，不再由排程器代填父的 a0。
 wait 的 status 可為空指標，否則阻塞前及回寫時檢查完整可寫範圍。驗證失敗時保留 Zombie 供重試。
 
 terminate 由 exit／kill 共用：關閉端點、取消 pending I/O、清理等待資訊、保存結果、成為 Zombie，並通知等待自己的父行程。
 process_kill 只接受目前行程的直接子行程，不接受自己、PID 1 或已是 Zombie，結果為 -9；不是完整訊號系統。
 父行程退出時子行程交給仍活著的 PID 1，否則無父行程；無父行程的 Zombie 由核心回收。
-reap 以 vm_destroy 釋放私有頁面與表、清除 PCB 的根表指標後將欄位改成 Unused；呼叫時必須已切離該根表。固定核心 stack 保留到下次建立時清零，避免清除仍在返回路徑上的 C 堆疊。
+reap 以 vm_destroy 釋放私有頁面與表、清除 PCB 的根表指標後將欄位改成 Unused；呼叫時必須已切離該根表及堆疊。孤兒回收在 scheduler stack，父 wait 在父堆疊；固定核心 stack 到下次建立才清零。kill 可丟棄沒有持鎖資源的暫停呼叫，未來加入鎖必須重新設計安全取消。
 
 ### 查詢與固定管線建立
 
 process_list 列出有效 PCB、剩餘欄位與 scheduler_print_ready 的 FIFO 順序；process_inspect 顯示實際頁表、保存指令位置、stack、等待資訊、結束碼、端點、I/O 請求與 ready_queued。
 process_pipeline 先驗證兩個 PID 的回寫範圍與資源，分配 pipe，再建立 writer／reader，設定 writer 的 stdout 與 reader 的 stdin；失敗時回收未公布的資源。
 同一個核心系統呼叫內不會被其他行程插入，因此沒有建立到一半被排程的狀況。
-固定 PCB 表大小為 P=4，尋找／喚醒為 O(P)；建立先配置私有表與補充 metadata，映像頁面延遲載入，fork 另複製已修改的使用者狀態。候選行程由 FIFO 隊首 O(1) 取出，但 process_resume 仍有 I/O 與 orphan 回收掃描，不宣稱整個呼叫都是 O(1)。
+固定 PCB 表大小為 P=4，尋找／喚醒為 O(P)；建立先配置私有表與補充 metadata，映像頁面延遲載入，fork 另複製已修改的使用者狀態。候選行程由 FIFO 隊首 O(1) 取出，但 scheduler_loop 仍有 I/O 與 orphan 回收掃描，不宣稱整個派發都是 O(1)。
+
+### context.h / swtch.S：核心上下文
+
+KernelContext 共 14 個 64-bit 欄位，大小 112 bytes；共享偏移與編譯期布局契約避免 C／組合語言不一致。context_switch 在 C 呼叫邊界用 a0 指向舊上下文、a1 指向新上下文，保存 ra、sp、s0～s11，再恢復新值，以 ret 跳到新 ra。單次 O(1)。a／t 等 caller-saved 暫存器由呼叫端依 ABI 保護，使用者完整暫存器仍在 TrapFrame；swtch 不取代 trap.S，也不自行改 satp、sscratch 或 sstatus。堆疊需 16-byte 對齊，核心 SIE 始終為零。pcb 顯示的 context.sp／ra 在 Running 時可能過時。完整設計見 SPEC-16。
 
 ### scheduler.c / scheduler.h：保存 Ready 行程的 FIFO
 
@@ -217,7 +226,7 @@ process_pipeline 先驗證兩個 PID 的回寫範圍與資源，分配 pipe，�
 io_read 先驗證 fd（描述號）、長度與完整可寫範圍。fd0 未接管道時接受 2–128-byte 行輸入請求。
 process_block_io 將緩衝區／長度存入 PCB、設定 IO_CONSOLE_READ，狀態改為 Waiting。不是在使用者程式持續讀硬體。
 console_read_line 非阻塞輪詢字元、回顯、處理 CR／LF 與 Backspace。CR 後的 LF 會忽略；超長行丟棄到換行後回傳錯誤，不執行截斷命令。
-完成時回寫換行與長度，process_complete_io 把結果填入保存 a0，再將行程改成 Ready。
+process_block_io 在核心函式內切走；完成時回寫換行與長度，process_complete_io 把結果存入 PCB io_result，再改 Ready。恢復後 process_block_io 正常回傳結果，經 io_read／io_write→syscall_dispatch 填 a0。
 
 `console_mode(1)` 取得 raw console 的單一持有權。持有者 read(0, buffer, 1) 設定 IO_CONSOLE_RAW，console_read_raw 取得一個 byte 後直接寫回、不回顯，不要求 Enter。其他 console 讀取者（包括已掛起的請求）回 -16，避免讀走編輯器按鍵；fork 不繼承持有權，exit／kill／成功 exec 釋放它。切換時略過 shell 命令 CR 後尚未消耗的 LF。這是自訂的簡化介面，沒有完整 termios、信號與前景 process group。
 
@@ -285,7 +294,7 @@ WUWAOS 自訂 ABI（呼叫約定）：a7（呼叫編號暫存器）、a0–a2（
 | 23 | sbrk(increment) | 增減 heap 合法範圍，回傳舊 break；按需配置實體頁 |
 | 24 | vmstat(frame_limit) | 0 查閱 VM／swap 統計，正數設定使用者常駐頁預算 |
 
-syscall_dispatch 用 switch 分派；正常立即結果填 frame->a0，阻塞時先存 placeholder（暫存結果），由排程中的 I/O 或 wait 完成處理替換後才真正返回。
+syscall_dispatch 用 switch 分派；結果填 frame->a0。阻塞服務保留核心呼叫堆疊、切到排程器，恢復後正常回傳真正結果，再走相同的 a0 回寫路徑，不先存 placeholder。
 exec 成功時 dispatcher 立即返回，不能把正常返回值 0 再寫進 frame->a0，否則會破壞新程式所需的初始角色參數。失敗才按一般規則回傳錯誤。
 filesystem syscall 先複製 NUL 結尾路徑，資料透過可回報錯誤的 user_copy_from／user_copy_to 逐頁處理；過程可能按需配置或從 swap 換入。寫檔前完整取得來源資料，讀取失敗不繼續用不完整 staging 覆寫磁碟。user/api.c 的 syscall3 使用固定暫存器與 memory clobber 執行 ecall，提供各系統呼叫的使用者包裝函式。
 錯誤碼包括 -5 磁碟 I/O、-10 沒有直接子行程、-11 PCB／pipe 資源不足、-12 記憶體／交換資源不足、-14 非法記憶體／權限、-16 終端忙碌、-22 非法參數、-32 管道無讀者、-38 未知呼叫。
@@ -326,6 +335,8 @@ NOLOAD 不攜帶初始化內容但保留記憶體，KEEP 保護入口，ALIGN �
 user/linker.ld 的入口固定 0x400000，code／唯讀資料最多 16 KiB，data／BSS 從 0x404000 開始最多 4 KiB；ASSERT（連結期限制）防止超出。stack 由核心映射，不在 user.bin 中。
 Makefile 將 user/entry.S、api.c、print.c、demo.c、shell.c 連結為 user.elf；entry.S、api.c、print.c、app.c 連結為 app.elf；entry.S、api.c、print.c、fan.c 連結為 fan.elf。三者各有自己的 user_main，但不互相連結。llvm-objcopy 轉成 user.bin／app.bin／fan.bin，kernel/user_image.S 的 incbin 嵌入核心唯讀資料，vm 依程式 ID 複製映像。不是 ELF parser（執行檔解析器）。
 `make run` 先呼叫 tools/make_disk.py 建立或更新 `build/wuwaos.img`，再以 `-drive` 與 `virtio-blk-device` 接上 QEMU。Python 工具用相同 WUFS metadata layout 建立空卷、Linux 風格目錄與 `/boot/kernel.elf`；辨識已格式化映像後只更新 kernel inode，保留其他檔案。`make clean` 特意保留磁碟映像。
+
+磁碟副本使用 llvm-objcopy --strip-debug 產生的 build/kernel-disk.elf，移除除錯段以避免超過 WUFS 單檔容量；完整 build/kernel.elf 保留給 QEMU／GDB。clean 刪除兩份 ELF，映像與使用者檔案保留。
 binary 以 0x400000 為起點，若有初始化 .data，會保留到 0x404000 的位址間距；vm 將前 16 KiB 放 code，其後放 data。BSS 不攜帶映像內容，page_alloc 配置零頁保證其初值。
 
 Clang 交叉編譯為 rv64imac_zicsr_zifencei，ABI 為 lp64，LLD 連結；不依賴標準函式庫、浮點呼叫慣例或動態載入器。

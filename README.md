@@ -179,6 +179,8 @@ trace on 時可看到 Waiting(pipe write／pipe read) 與 I/O ready（輸入輸�
 
 `make run` 會連接 `build/wuwaos.img` 這個 16 MiB QEMU 虛擬磁碟。首次使用會建立 WUFS（WUWAOS 自有檔案系統），並將當前核心 ELF 放在 `/boot/kernel.elf`。後續建置會更新這個檔案，同時保留其他使用者檔案。
 
+磁碟副本來自 `build/kernel-disk.elf`，以 `llvm-objcopy --strip-debug` 移除除錯資料，避免超過 WUFS 單檔容量；QEMU 與 GDB 仍使用完整的 `build/kernel.elf`。
+
 ```text
 ls /
 ls /boot
@@ -225,6 +227,7 @@ cat /home/user/notes/today.txt
 - 最多 4 個行程，每個獨立 Sv39 頁表、16 KiB 使用者 code、4 KiB data、4 KiB stack、最多 1 MiB heap，以及固定 16 KiB 核心堆疊。使用者頁按需配置與置換，核心及分頁表常駐。
 - fork 採完整複製，不使用 COW（寫入時複製）。exec 動態準備新位址空間，切換頁表後釋放舊空間；只接受內建程式 ID，fan 可額外接收一個檔案路徑參數。
 - PCB 是原本 Process 的延伸，沒有第二份重複的狀態。包含父子關係、等待資訊、管道端點與待完成 I/O。
+- `kernel/swtch.S` 以 RV64 組合語言保存／還原核心 ra、sp、s0～s11。每個 PCB 的 KernelContext 保留暫停中的 C 呼叫，排程器使用獨立 16 KiB 堆疊；sleep／wait／阻塞 I/O 恢復後從原函式繼續。pcb 顯示上次保存的核心 sp／ra。核心仍只在明確位置主動切換，尚無 Mutex／Semaphore。
 - `processes[4]` 保存完整 PCB；`scheduler.c` 的單向鏈結 FIFO 只保存 Ready PCB 的指標，入列與取出隊首 O(1)，移除任意節點 O(P)。
 - read/write、行程管理與查詢都透過使用者模式系統呼叫。核心與 UART（序列埠）頁面仍不可由使用者模式直接存取。
 - 檔案系統經由 VirtIO-MMIO block driver（虛擬區塊裝置驅動）讀寫 QEMU 磁碟。UART、pipe 與磁碟檔案走不同 I/O 路徑；目前檔案呼叫以路徑為參數，尚未有通用檔案描述號或 POSIX `open/close`。
@@ -244,6 +247,7 @@ cat /home/user/notes/today.txt
 - [SPEC-09](docs/SPEC-09-fan.md)：fan 編輯器、raw console 與路徑參數傳遞。
 - [SPEC-10](docs/SPEC-10-demand-paging.md)：按需分頁、FIFO 頁面置換、獨立 swap 與失敗處理。
 - [SPEC-15](docs/SPEC-15-timer-rr.md)：計時器中斷、50 ms RR、模組分類與無 yield 的搶占驗證；[主題章節](docs/topics/scheduling.md) 包含 Mermaid 流程圖。
+- [SPEC-16](docs/SPEC-16-kernel-context.md)：核心組合語言上下文、獨立排程器堆疊與核心函式阻塞／恢復；[行程章節](docs/topics/processes.md) 包含流程圖。
 
 先讀 user/shell.c 的 shell_main／command，再追蹤 user/api.c → kernel/syscall.c → process.c 或 io.c，最後看 trap.S 如何交還使用者程式。
 手動練習：對照 pcb 2 顯示的等待通道與 sepc（保存的指令位址），說明 wakeup 後為什麼從 sleep 呼叫後面繼續。

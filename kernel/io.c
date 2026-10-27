@@ -127,19 +127,16 @@ long io_read(long fd, uintptr_t buffer, size_t length) {
         if (raw_owner != 0) {
             if (raw_owner != process->pid) return ERR_BUSY;
             if (length > 128) return ERR_INVALID;
-            process_block_io(IO_CONSOLE_RAW, buffer, length);
-            return 0;
+            return process_block_io(IO_CONSOLE_RAW, buffer, length);
         }
         if (length < 2 || length > 128) {
             return ERR_INVALID;
         }
-        process_block_io(IO_CONSOLE_READ, buffer, length);
-        return 0; /* The saved return value is completed by io_poll. */
+        return process_block_io(IO_CONSOLE_READ, buffer, length);
     }
     const long result = pipe_read(process, buffer, length);
     if (result == IO_PENDING) {
-        process_block_io(IO_PIPE_READ, buffer, length);
-        return 0;
+        return process_block_io(IO_PIPE_READ, buffer, length);
     }
     return result;
 }
@@ -158,8 +155,7 @@ long io_write(long fd, uintptr_t buffer, size_t length) {
     if (process->output_pipe >= 0) {
         const long result = pipe_write(process, buffer, length);
         if (result == IO_PENDING) {
-            process_block_io(IO_PIPE_WRITE, buffer, length);
-            return 0;
+            return process_block_io(IO_PIPE_WRITE, buffer, length);
         }
         return result;
     }

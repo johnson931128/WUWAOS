@@ -54,6 +54,8 @@ cat 會在非空內容末端缺少換行時補一個「顯示用換行」，防�
 
 `tools/make_disk.py` 在主機維護 16 MiB 原始磁碟映像，已有 WUFS 時保留使用者檔案並更新 `/boot/kernel.elf` 副本。不要用刪除映像檔的方式重新建置。
 
+make disk-image 先產生 kernel-disk.elf，移除除錯資料後才存入 WUFS，以免除錯段超過單檔容量；QEMU 與 GDB 仍使用保留除錯資料的 kernel.elf。這不是從磁碟開機，也沒有改變 WUFS 格式。
+
 沒有刪除、重新命名、權限、連結、掛載其他格式、journal（日誌）或掉電交易保護；資料持久保存不等於每一次寫入都具備原子性。
 
 觀念參考：`notes/Chapter 13 file system Interface.md`、`notes/chapter 14 File-System Implementation.md`、`notes/chapter 15  File System  Internals.md`。WUFS 格式與既有持久性驗收見 [Spec 06](../SPEC-06-filesystem.md)。

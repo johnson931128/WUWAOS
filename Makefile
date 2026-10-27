@@ -3,7 +3,7 @@ QEMU := qemu-system-riscv64
 OBJCOPY := llvm-objcopy
 TARGET := build/kernel.elf
 KERNEL_SOURCES := main console trap sbi timer page swap vm process scheduler syscall io splash block fs memory
-OBJECTS := build/entry.o build/trap_entry.o build/user_image.o $(addprefix build/kernel_,$(addsuffix .o,$(KERNEL_SOURCES)))
+OBJECTS := build/entry.o build/trap_entry.o build/swtch.o build/user_image.o $(addprefix build/kernel_,$(addsuffix .o,$(KERNEL_SOURCES)))
 USER_OBJECTS := build/user_entry.o build/user_api.o build/user_print.o build/user_demo.o build/user_shell.o
 APP_OBJECTS := build/user_entry.o build/user_api.o build/user_print.o build/user_app.o
 FAN_OBJECTS := build/user_entry.o build/user_api.o build/user_print.o build/user_fan.o
@@ -24,6 +24,9 @@ build/kernel_%.o: kernel/%.c | build
 	$(CC) $(CFLAGS) -c $< -o $@
 
 build/trap_entry.o: kernel/trap.S kernel/trap.h | build
+	$(CC) $(ARCH_FLAGS) -g -c $< -o $@
+
+build/swtch.o: kernel/swtch.S kernel/context.h | build
 	$(CC) $(ARCH_FLAGS) -g -c $< -o $@
 
 build/user_entry.o: user/entry.S | build
@@ -56,14 +59,17 @@ build/user_image.o: kernel/user_image.S build/user.bin build/app.bin build/fan.b
 $(TARGET): $(OBJECTS) kernel/linker.ld
 	$(CC) $(LDFLAGS) -Wl,-T,kernel/linker.ld -Wl,-Map,build/kernel.map $(OBJECTS) -o $@
 
-disk-image: $(TARGET) tools/make_disk.py tools/make_swap.py | build
-	python3 tools/make_disk.py --image build/wuwaos.img --kernel $(TARGET)
+build/kernel-disk.elf: $(TARGET)
+	$(OBJCOPY) --strip-debug $< $@
+
+disk-image: build/kernel-disk.elf tools/make_disk.py tools/make_swap.py | build
+	python3 tools/make_disk.py --image build/wuwaos.img --kernel build/kernel-disk.elf
 	python3 tools/make_swap.py --image build/wuwaos-swap.img
 
 run: $(TARGET) disk-image
 	$(QEMU) -machine virt -smp 1 -m 128M -nographic -bios default -kernel $(TARGET) -global virtio-mmio.force-legacy=false -drive file=build/wuwaos.img,if=none,format=raw,id=wuwaos,cache=writeback -device virtio-blk-device,drive=wuwaos -drive file=build/wuwaos-swap.img,if=none,format=raw,id=swap,cache=writeback -device virtio-blk-device,drive=swap
 
 clean:
-	rm -f build/*.o build/*.d build/kernel.elf build/kernel.map build/user.elf build/user.bin build/app.elf build/app.bin build/fan.elf build/fan.bin
+	rm -f build/*.o build/*.d build/kernel.elf build/kernel-disk.elf build/kernel.map build/user.elf build/user.bin build/app.elf build/app.bin build/fan.elf build/fan.bin
 
 -include $(wildcard build/*.d)

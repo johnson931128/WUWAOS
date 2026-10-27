@@ -13,6 +13,25 @@ static unsigned char kernel_stacks[PROCESS_LIMIT][16 * 1024]
 static int current_index = -1;
 static long next_pid = 1;
 static int trace_enabled = 1;
+static unsigned char scheduler_stack[16 * 1024] __attribute__((aligned(16)));
+static KernelContext scheduler_context, boot_context;
+
+static _Noreturn void first_run(void) {
+    user_enter(process_current()->frame);
+}
+
+static void suspend_current(void) {
+    Process *process = process_current();
+    uintptr_t status;
+    __asm__ volatile("csrr %0, sstatus" : "=r"(status));
+    if ((status & (1UL << 1)) || process->state == PROCESS_RUNNING) {
+        console_puts("[context] Switch requires SIE=0 and a non-Running process\n");
+        kernel_idle();
+    }
+    timer_stop();
+    context_switch(&process->context, &scheduler_context);
+    /* A later dispatch restores this very C call stack and its local variables. */
+}
 
 static const char *state_name(ProcessState state) {
     static const char *names[] = {
@@ -96,6 +115,8 @@ static long create_process(long program, long parent_pid, int publish) {
     process->kernel_stack_top = (uintptr_t)(kernel_stacks[slot] + sizeof(kernel_stacks[slot]));
     process->user_stack_top = USER_STACK_TOP;
     process->frame = (TrapFrame *)(process->kernel_stack_top - TF_SIZE);
+    process->context.ra = (uintptr_t)first_run;
+    process->context.sp = (uintptr_t)process->frame; /* 16-byte aligned, below frame. */
     process->frame->registers[2] = USER_STACK_TOP;
     process->frame->registers[10] = (uint64_t)program;
     process->frame->sepc = USER_ENTRY;
@@ -198,6 +219,7 @@ long process_exec(long program, const char *argument) {
 
 long process_yield(void) {
     transition(process_current(), PROCESS_READY, "yield");
+    suspend_current();
     return 0;
 }
 
@@ -205,6 +227,7 @@ void process_preempt(void) {
     Process *process = process_current();
     ++process->preemptions;
     transition(process, PROCESS_READY, "time slice expired");
+    suspend_current();
 }
 
 long process_sleep(long channel) {
@@ -215,6 +238,7 @@ long process_sleep(long channel) {
     process->wait_reason = WAIT_CHANNEL;
     process->channel = channel;
     transition(process, PROCESS_WAITING, "sleep channel");
+    suspend_current();
     return 0;
 }
 
@@ -278,8 +302,14 @@ long process_wait(long pid, uintptr_t status_address) {
     parent->wait_pid = pid;
     parent->wait_status = status_address;
     transition(parent, PROCESS_WAITING, "wait child");
-    /* Replaced with the child PID when this parent is scheduled again. */
-    return 0;
+    suspend_current();
+    /* Resume inside wait, on this parent's original kernel stack. */
+    parent->wait_reason = WAIT_NONE;
+    parent->wait_pid = 0;
+    parent->wait_status = 0;
+    child = find_pid(pid);
+    return child != 0 && child->parent_pid == parent->pid && child->state == PROCESS_ZOMBIE
+        ? collect_child(parent, child, status_address) : ERR_NO_CHILD;
 }
 
 static void terminate(Process *process, long status) {
@@ -313,8 +343,11 @@ static void terminate(Process *process, long status) {
     }
 }
 
-void process_exit(long status) {
+_Noreturn void process_exit(long status) {
     terminate(process_current(), status);
+    suspend_current();
+    console_puts("[context] Zombie was dispatched\n");
+    kernel_idle();
 }
 
 long process_kill(long pid) {
@@ -327,20 +360,23 @@ long process_kill(long pid) {
     return 0;
 }
 
-void process_block_io(IoOperation operation, uintptr_t buffer, size_t length) {
+long process_block_io(IoOperation operation, uintptr_t buffer, size_t length) {
     Process *process = process_current();
     process->io_operation = operation;
     process->io_buffer = buffer;
     process->io_length = length;
     process->io_count = 0;
     process->io_overflow = 0;
+    process->io_result = 0;
     process->wait_reason = WAIT_IO;
     transition(process, PROCESS_WAITING, (operation == IO_CONSOLE_READ || operation == IO_CONSOLE_RAW) ? "console read" :
                operation == IO_PIPE_READ ? "pipe read" : "pipe write");
+    suspend_current();
+    return process->io_result;
 }
 
 void process_complete_io(Process *process, long result) {
-    process->frame->registers[10] = (uint64_t)result;
+    process->io_result = result;
     process->io_operation = IO_NONE;
     process->wait_reason = WAIT_NONE;
     transition(process, PROCESS_READY, "I/O ready");
@@ -416,6 +452,11 @@ long process_inspect(long pid) {
     console_hex(process->page_table);
     console_puts(" kernel_stack_top=");
     console_hex(process->kernel_stack_top);
+    console_puts("\nkernel_context_sp=");
+    console_hex(process->context.sp);
+    console_puts(" kernel_context_ra=");
+    console_hex(process->context.ra);
+    console_puts(" (saved at last switch; stale while Running)");
     console_puts(" user_stack_top=");
     console_hex(process->user_stack_top);
     console_puts("\nsepc=");
@@ -500,32 +541,20 @@ long process_pipeline(uintptr_t result_address) {
     return 0;
 }
 
-static void finish_wait(Process *parent) {
-    if (parent->wait_reason != WAIT_CHILD) {
-        return;
-    }
-    Process *child = find_pid(parent->wait_pid);
-    long result = ERR_NO_CHILD;
-    if (child != 0 && child->parent_pid == parent->pid &&
-        child->state == PROCESS_ZOMBIE) {
-        result = collect_child(parent, child, parent->wait_status);
-    }
-    parent->frame->registers[10] = (uint64_t)result;
-    parent->wait_reason = WAIT_NONE;
-    parent->wait_pid = 0;
-    parent->wait_status = 0;
+TrapFrame *process_resume(void) {
+    vm_use_kernel();
+    io_poll();
+    if (process_current()->state != PROCESS_RUNNING) suspend_current();
+    vm_enable(process_current()->page_table);
+    return process_current()->frame;
 }
 
-TrapFrame *process_resume(void) {
-    /* Reaping may release the process whose exit trap is still on this stack. */
-    vm_use_kernel();
+static _Noreturn void scheduler_loop(void) {
     for (;;) {
+        /* Never reap a process while executing on its stack or its root. */
+        vm_use_kernel();
+        current_index = -1;
         io_poll();
-        if (current_index >= 0 && process_current()->state == PROCESS_RUNNING) {
-            vm_enable(process_current()->page_table);
-            return process_current()->frame;
-        }
-        timer_stop();
         for (int i = 0; i < PROCESS_LIMIT; ++i) {
             if (processes[i].state == PROCESS_ZOMBIE && processes[i].parent_pid == 0) {
                 reap(&processes[i]);
@@ -533,13 +562,13 @@ TrapFrame *process_resume(void) {
         }
         Process *next = scheduler_next();
         if (next != 0) {
-            finish_wait(next);
             current_index = (int)(next - processes);
             transition(next, PROCESS_RUNNING, "schedule");
             ++next->dispatches;
             vm_enable(next->page_table);
             timer_start_slice(SCHEDULER_QUANTUM_MS);
-            return next->frame;
+            context_switch(&scheduler_context, &next->context);
+            continue;
         }
 
         if (io_console_waiting()) {
@@ -563,5 +592,9 @@ TrapFrame *process_resume(void) {
 }
 
 _Noreturn void process_start(void) {
-    user_enter(process_resume());
+    scheduler_context.ra = (uintptr_t)scheduler_loop;
+    scheduler_context.sp = (uintptr_t)(scheduler_stack + sizeof(scheduler_stack));
+    console_puts("[context] RV64 swtch ready; dedicated scheduler stack\n");
+    context_switch(&boot_context, &scheduler_context);
+    kernel_idle();
 }
