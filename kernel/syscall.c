@@ -5,6 +5,7 @@
 #include "vm.h"
 #include "io.h"
 #include "fs.h"
+#include "workstate.h"
 
 #define FS_PATH_MAX 128
 #define FS_IO_CHUNK 512
@@ -95,6 +96,15 @@ void syscall_dispatch(TrapFrame *frame) {
         break;
     case SYS_VMSTAT:
         result = vm_control((long)frame->registers[10]);
+        break;
+    case SYS_WORKSTATE:
+        result = workstate_snapshot(frame->registers[10], frame->registers[11]);
+        break;
+    case SYS_SLEEP_MS:
+        result = process_sleep_ms((long)frame->registers[10]);
+        break;
+    case SYS_CONSOLE_POLL:
+        result = io_console_poll();
         break;
     case SYS_FS_LIST: {
         Process *process = process_current();

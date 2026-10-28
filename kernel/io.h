@@ -5,6 +5,7 @@
 long io_read(long fd, uintptr_t buffer, size_t length);
 long io_write(long fd, uintptr_t buffer, size_t length);
 long io_console_mode(long raw);
+long io_console_poll(void);
 void io_poll(void);
 int io_console_waiting(void);
 void io_close_process(Process *process);

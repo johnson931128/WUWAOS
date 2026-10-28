@@ -30,5 +30,9 @@ int vm_handle_fault(uintptr_t root, uintptr_t address, unsigned long cause, uint
 long vm_sbrk(uintptr_t root, long increment);
 long vm_control(long limit);
 void vm_print_space(uintptr_t root);
+typedef struct {
+    size_t resident_pages, swapped_pages, heap_bytes;
+} VmUsage;
+void vm_get_usage(uintptr_t root, VmUsage *usage);
 
 #endif

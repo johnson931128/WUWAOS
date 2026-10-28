@@ -486,3 +486,14 @@ void vm_print_space(uintptr_t root) {
     console_puts(" heap_bytes="); console_number((long)(space->heap_end - USER_HEAP_BASE));
     console_puts(" faults="); console_number((long)space->faults); console_putc('\n');
 }
+
+void vm_get_usage(uintptr_t root, VmUsage *usage) {
+    *usage = (VmUsage){0};
+    const VmSpace *space = find_space(root);
+    if (space == 0) return;
+    for (size_t i = 0; i < SPACE_PAGES; ++i) {
+        usage->resident_pages += space->pages[i].physical != 0;
+        usage->swapped_pages += !space->pages[i].physical && space->pages[i].slot != 0;
+    }
+    usage->heap_bytes = space->heap_end - USER_HEAP_BASE;
+}

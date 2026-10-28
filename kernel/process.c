@@ -5,6 +5,8 @@
 #include "io.h"
 #include "scheduler.h"
 #include "timer.h"
+#include "clock.h"
+#include "workstate.h"
 #include <limits.h>
 
 static Process processes[PROCESS_LIMIT];
@@ -29,11 +31,12 @@ static void suspend_current(void) {
         kernel_idle();
     }
     timer_stop();
+    workstate_pause(process);
     context_switch(&process->context, &scheduler_context);
     /* A later dispatch restores this very C call stack and its local variables. */
 }
 
-static const char *state_name(ProcessState state) {
+const char *process_state_name(ProcessState state) {
     static const char *names[] = {
         "Unused", "New", "Ready", "Running", "Waiting", "Zombie"
     };
@@ -56,9 +59,9 @@ static void transition(Process *process, ProcessState next, const char *reason) 
     console_puts("[process] PID=");
     console_number(process->pid);
     console_putc(' ');
-    console_puts(state_name(previous));
+    console_puts(process_state_name(previous));
     console_puts(" -> ");
-    console_puts(state_name(next));
+    console_puts(process_state_name(next));
     console_puts(" (");
     console_puts(reason);
     console_puts(")\n");
@@ -133,6 +136,7 @@ static long create_process(long program, long parent_pid, int publish) {
 
 void process_init(void) {
     scheduler_init();
+    workstate_init();
     if (create_process(0, 0, 1) != 1) {
         console_puts("[process] Cannot create init\n");
         kernel_idle();
@@ -240,6 +244,31 @@ long process_sleep(long channel) {
     transition(process, PROCESS_WAITING, "sleep channel");
     suspend_current();
     return 0;
+}
+
+long process_sleep_ms(long milliseconds) {
+    if (milliseconds < 1 || milliseconds > 60000) return ERR_INVALID;
+    Process *process = process_current();
+    process->wake_at = clock_ticks() + clock_ms_ticks((unsigned long)milliseconds);
+    process->wait_reason = WAIT_TIMER;
+    transition(process, PROCESS_WAITING, "timed sleep");
+    suspend_current();
+    return 0;
+}
+
+static int wake_timed(void) {
+    const uint64_t now = clock_ticks();
+    int pending = 0;
+    for (int i = 0; i < PROCESS_LIMIT; ++i) {
+        Process *process = &processes[i];
+        if (process->state != PROCESS_WAITING || process->wait_reason != WAIT_TIMER) continue;
+        if ((int64_t)(now - process->wake_at) >= 0) {
+            process->wait_reason = WAIT_NONE;
+            process->wake_at = 0;
+            transition(process, PROCESS_READY, "timer wakeup");
+        } else pending = 1;
+    }
+    return pending;
 }
 
 long process_wakeup(long channel) {
@@ -387,6 +416,8 @@ static const char *program_name(long program) {
     return names[program];
 }
 
+const char *process_name(const Process *process) { return program_name(process->program); }
+
 static const char *waiting_for(const Process *process) {
     if (process->state != PROCESS_WAITING) {
         return "-";
@@ -397,6 +428,7 @@ static const char *waiting_for(const Process *process) {
     if (process->wait_reason == WAIT_CHANNEL) {
         return "channel";
     }
+    if (process->wait_reason == WAIT_TIMER) return "timer";
     return (process->io_operation == IO_CONSOLE_READ || process->io_operation == IO_CONSOLE_RAW) ? "console" :
            process->io_operation == IO_PIPE_READ ? "pipe-read" : "pipe-write";
 }
@@ -416,7 +448,7 @@ long process_list(void) {
         console_putc(' ');
         console_puts(program_name(process->program));
         console_putc(' ');
-        console_puts(state_name(process->state));
+        console_puts(process_state_name(process->state));
         console_putc(' ');
         console_puts(waiting_for(process));
         console_putc('\n');
@@ -441,7 +473,7 @@ long process_inspect(long pid) {
     console_puts(" name=");
     console_puts(program_name(process->program));
     console_puts(" state=");
-    console_puts(state_name(process->state));
+    console_puts(process_state_name(process->state));
     console_puts(" ready_queued=");
     console_number(process->ready_queued);
     console_puts("\ndispatches=");
@@ -554,6 +586,7 @@ static _Noreturn void scheduler_loop(void) {
         /* Never reap a process while executing on its stack or its root. */
         vm_use_kernel();
         current_index = -1;
+        const int timed_waiting = wake_timed();
         io_poll();
         for (int i = 0; i < PROCESS_LIMIT; ++i) {
             if (processes[i].state == PROCESS_ZOMBIE && processes[i].parent_pid == 0) {
@@ -567,12 +600,13 @@ static _Noreturn void scheduler_loop(void) {
             ++next->dispatches;
             vm_enable(next->page_table);
             timer_start_slice(SCHEDULER_QUANTUM_MS);
+            workstate_dispatch(next);
             context_switch(&scheduler_context, &next->context);
             continue;
         }
 
-        if (io_console_waiting()) {
-            continue; /* Poll UART while every process is blocked. */
+        if (io_console_waiting() || timed_waiting) {
+            continue; /* Poll UART/deadlines while every process is blocked. */
         }
         int waiting = 0;
         for (int i = 0; i < PROCESS_LIMIT; ++i) {

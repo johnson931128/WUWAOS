@@ -10,7 +10,7 @@ typedef enum {
     PROCESS_WAITING, PROCESS_ZOMBIE
 } ProcessState;
 
-typedef enum { WAIT_NONE, WAIT_CHANNEL, WAIT_CHILD, WAIT_IO } WaitReason;
+typedef enum { WAIT_NONE, WAIT_CHANNEL, WAIT_CHILD, WAIT_IO, WAIT_TIMER } WaitReason;
 typedef enum { IO_NONE, IO_CONSOLE_READ, IO_CONSOLE_RAW, IO_PIPE_READ, IO_PIPE_WRITE } IoOperation;
 
 typedef struct ProcessControlBlock {
@@ -22,6 +22,7 @@ typedef struct ProcessControlBlock {
     int ready_queued;
     uint64_t dispatches;
     uint64_t preemptions;
+    uint64_t cpu_ticks, run_started, wake_at;
     long exit_status;
     uintptr_t page_table;
     uintptr_t kernel_stack_top;
@@ -54,6 +55,7 @@ long process_exec(long program, const char *argument);
 long process_yield(void);
 void process_preempt(void);
 long process_sleep(long channel);
+long process_sleep_ms(long milliseconds);
 long process_wakeup(long channel);
 long process_wait(long pid, uintptr_t status_address);
 _Noreturn void process_exit(long status);
@@ -64,5 +66,7 @@ long process_trace(long enabled);
 long process_pipeline(uintptr_t result_address);
 long process_block_io(IoOperation operation, uintptr_t buffer, size_t length);
 void process_complete_io(Process *process, long result);
+const char *process_name(const Process *process);
+const char *process_state_name(ProcessState state);
 
 #endif

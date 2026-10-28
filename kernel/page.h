@@ -13,5 +13,6 @@ void page_init(const void *fdt);
 uintptr_t page_alloc(void);
 void page_free(uintptr_t address);
 void page_print_stats(void);
+void page_get_stats(size_t *free_pages, size_t *pool_pages);
 
 #endif

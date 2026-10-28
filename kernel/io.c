@@ -22,6 +22,17 @@ static Pipe pipes[PIPE_LIMIT];
 static int skip_lf;
 static long raw_owner;
 
+long io_console_poll(void) {
+    if (raw_owner != process_current()->pid) return ERR_BUSY;
+    int character;
+    while ((character = console_getc()) >= 0) {
+        if (character == '\n' && skip_lf) { skip_lf = 0; continue; }
+        skip_lf = 0;
+        return character + 1; /* 0 = no input; 1..256 = byte plus one. */
+    }
+    return 0;
+}
+
 long io_console_mode(long raw) {
     Process *process = process_current();
     if (raw != 0 && raw != 1) return ERR_INVALID;

@@ -85,3 +85,8 @@ void page_print_stats(void) {
     console_number((long)total_count);
     console_puts(" page_size=4096\n");
 }
+
+void page_get_stats(size_t *free_pages, size_t *pool_pages) {
+    *free_pages = free_count;
+    *pool_pages = total_count;
+}

@@ -1,5 +1,6 @@
 #ifndef WUWAOS_USER_API_H
 #define WUWAOS_USER_API_H
+#include "workstate_info.h"
 
 long write(long fd, const char *buffer, unsigned long length);
 long getpid(void);
@@ -20,6 +21,9 @@ long exec_arg(long program, const char *argument);
 long console_mode(long raw);
 long sbrk(long increment);
 long vmstat(long frame_limit);
+long workstate_snapshot(WorkstateSnapshot *snapshot);
+long sleep_ms(long milliseconds);
+long console_poll(void);
 long fs_list(const char *path, char *buffer, unsigned long capacity);
 long fs_mkdir(const char *path);
 long fs_touch(const char *path);

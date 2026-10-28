@@ -26,6 +26,9 @@
 #define SYS_CONSOLE_MODE 22
 #define SYS_SBRK 23
 #define SYS_VMSTAT 24
+#define SYS_WORKSTATE 25
+#define SYS_SLEEP_MS 26
+#define SYS_CONSOLE_POLL 27
 
 #define PROGRAM_WORKER 1
 #define PROGRAM_QUICK 2

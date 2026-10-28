@@ -8,6 +8,7 @@ const chapters = [
   ['計時器與 RR 排程', 'scheduling'], ['實體頁與 Sv39', 'memory'],
   ['按需分頁、置換與 Swap', 'paging'], ['輸入輸出與 Pipe', 'io'],
   ['WUFS 檔案系統', 'filesystem'], ['Shell 與 fan 編輯器', 'applications'],
+  ['workstate 即時監測', 'monitoring'],
   ['維護文件網站', 'writing'],
 ]
 

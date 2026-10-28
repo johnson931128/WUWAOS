@@ -3,6 +3,7 @@
 #include "print.h"
 #include "syscall_numbers.h"
 #include "vm_limits.h"
+#include "workstate.h"
 #include <limits.h>
 
 static int equal(const char *first, const char *second) {
@@ -208,6 +209,7 @@ static void memory_command(int count, char *words[4]) {
 static void help(void) {
     user_puts("help                            Show this command list.\n"
               "ps                              List processes and the RR ready queue.\n"
+              "workstate                       Live CPU/memory monitor; q returns.\n"
               "pcb <pid>                       Show one process control block.\n"
               "spawn worker                    Create a worker; wake it with wakeup 7.\n"
               "spawn quick                     Create a process that exits with code 40.\n"
@@ -296,6 +298,8 @@ static int command(int count, char *words[4]) {
             help();
         } else if (equal(words[0], "ps")) {
             ps();
+        } else if (equal(words[0], "workstate")) {
+            workstate_main();
         } else if (equal(words[0], "fork")) {
             fork_shell();
         } else if (equal(words[0], "yield")) {
