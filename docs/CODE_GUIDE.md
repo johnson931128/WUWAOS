@@ -38,6 +38,7 @@ CPU 執行記憶體中的機器碼，不知道來源檔名。OpenSBI 負責早�
 | kernel/context.h | KernelContext：112-byte RV64 核心上下文與 C／組合語言配置契約 |
 | kernel/swtch.S | context_switch：sd／ld 保存與恢復 ra、sp、s0～s11，ret 至新上下文 |
 | kernel/vm.c / vm.h | 各行程頁表、使用者映像、記憶體權限與安全複製 |
+| kernel/path.c / path.h、include/path_limits.h | 相對路徑合併與已驗證目錄的正規化；路徑長度上限 |
 | kernel/process.c / process.h | PCB（行程控制區塊）、生命週期、RR 派發／搶占、查詢與終止 |
 | kernel/clock.h | 共用 rdtime、QEMU 10 MHz 時基與毫秒換算 |
 | kernel/sbi.c / sbi.h | SBI BASE／TIME 呼叫，隔離韌體 ABI |
@@ -326,7 +327,7 @@ filesystem syscall 先複製 NUL 結尾路徑，資料透過可回報錯誤的 u
 shell 的 memory_command 提供 mem alloc／write／read／free：sbrk 保留頁數；以 volatile 指標填寫整頁及查看首／中／尾 bytes，讓一般互動能觸發真實硬體缺頁。vmstat 與 vmstat limit 呼叫核心診斷介面。這些是使用者可操作工具，不含自動斷言或測試程式。
 
 shell_main 顯示提示、read 一行、tokenize（切分命令）、command（分派），全程在 U-mode 執行。
-`ls` 無參數列根目錄；rm、cp 使用絕對檔案路徑。`cls` 經 write 輸出 ANSI 清畫面、清捲動歷史與游標回原點序列，不操作磁碟；實際歷史清除由終端決定。
+`pwd` 查詢各行程目前目錄，`cd` 切換且檢查目錄；`ls` 無參數列目前目錄，檔案命令支援相對與絕對路徑。詳見 [Spec 19](./SPEC-19-cwd-shell.md)。`cls` 經 write 輸出 ANSI 清畫面、清捲動歷史與游標回原點序列，不操作磁碟；實際歷史清除由終端決定。
 每次提示前 yield 兩輪，足以讓本版 worker（自身先 yield 一次）到達等待點，避免背景文字蓋過新提示；不是通用工作控制或時間片。
 tokenize 原地將空白／tab／換行及 | 分開，最多 4 個 token（詞元）。只有 writer、|、reader 的三詞組合啟動固定管線，其他組合不會被當作主機命令。
 positive_number 檢查每個十進位數字與 LONG_MAX 溢位；wait_child 顯示結果，run_pipeline 前景等待兩個端點行程。

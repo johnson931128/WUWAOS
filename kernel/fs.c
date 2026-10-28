@@ -262,6 +262,15 @@ static int path_lookup(const char *path, uint32_t *number) {
     return 0;
 }
 
+long fs_is_directory(const char *path) {
+    uint32_t number;
+    int result = path_lookup(path, &number);
+    if (result < 0) return result;
+    Inode inode;
+    if (inode_read(number, &inode) < 0) return -5;
+    return inode.type == FS_TYPE_DIRECTORY ? 0 : -20;
+}
+
 static int parent_lookup(const char *path, uint32_t *parent, char *name) {
     if (path == 0 || path[0] != '/') return -22;
     size_t length = 0;

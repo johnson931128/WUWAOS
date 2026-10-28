@@ -6,8 +6,9 @@
 #include "io.h"
 #include "fs.h"
 #include "workstate.h"
+#include "path.h"
 
-#define FS_PATH_MAX 128
+#define FS_PATH_MAX WUWA_PATH_MAX
 #define FS_IO_CHUNK 512
 #define FS_OUTPUT_MAX 512
 #define FS_FILE_MAX ((8U + 8U * 128U) * 512U)
@@ -22,6 +23,12 @@ static int copy_path(uintptr_t root, uintptr_t address, char path[FS_PATH_MAX]) 
         if (path[i] == 0) return i > 0 ? 0 : ERR_ADDRESS;
     }
     return ERR_ADDRESS;
+}
+
+static int copy_fs_path(uintptr_t root, uintptr_t address, char output[FS_PATH_MAX]) {
+    char input[FS_PATH_MAX];
+    int result = copy_path(root, address, input);
+    return result < 0 ? result : path_absolute(process_current()->cwd, input, output);
 }
 
 void syscall_dispatch(TrapFrame *frame) {
@@ -79,7 +86,7 @@ void syscall_dispatch(TrapFrame *frame) {
         char argument[FS_PATH_MAX];
         const long program = (long)frame->registers[10];
         if (program == PROGRAM_FAN) {
-            result = copy_path(process_current()->page_table, frame->registers[11], argument);
+            result = copy_fs_path(process_current()->page_table, frame->registers[11], argument);
             if (result < 0) break;
         }
         result = process_exec(program, program == PROGRAM_FAN ? argument : 0);
@@ -106,13 +113,28 @@ void syscall_dispatch(TrapFrame *frame) {
     case SYS_CONSOLE_POLL:
         result = io_console_poll();
         break;
+    case SYS_CHDIR: {
+        char path[FS_PATH_MAX];
+        result = copy_path(process_current()->page_table, frame->registers[10], path);
+        if (result == 0) result = process_chdir(path);
+        break;
+    }
+    case SYS_GETCWD: {
+        Process *process = process_current();
+        size_t length = 0;
+        while (process->cwd[length]) ++length;
+        ++length;
+        if (frame->registers[11] < length) result = -34;
+        else result = user_copy_to(process->page_table, frame->registers[10], process->cwd, length);
+        break;
+    }
     case SYS_FS_LIST: {
         Process *process = process_current();
         char path[FS_PATH_MAX];
         char output[FS_OUTPUT_MAX];
         const uintptr_t user_buffer = frame->registers[11];
         const size_t capacity = (size_t)frame->registers[12];
-        const int path_error = copy_path(process->page_table, frame->registers[10], path);
+        const int path_error = copy_fs_path(process->page_table, frame->registers[10], path);
         if (path_error < 0) {
             result = path_error;
         } else if (capacity > sizeof(output) || !user_writable(process->page_table, user_buffer, capacity)) {
@@ -130,7 +152,7 @@ void syscall_dispatch(TrapFrame *frame) {
     case SYS_FS_TOUCH:
     case SYS_FS_REMOVE: {
         char path[FS_PATH_MAX];
-        result = copy_path(process_current()->page_table, frame->registers[10], path);
+        result = copy_fs_path(process_current()->page_table, frame->registers[10], path);
         if (result == 0) {
             if (number == SYS_FS_MKDIR) result = fs_mkdir(path);
             else if (number == SYS_FS_TOUCH) result = fs_touch(path);
@@ -140,8 +162,8 @@ void syscall_dispatch(TrapFrame *frame) {
     }
     case SYS_FS_COPY: {
         char source[FS_PATH_MAX], destination[FS_PATH_MAX];
-        result = copy_path(process_current()->page_table, frame->registers[10], source);
-        if (result == 0) result = copy_path(process_current()->page_table, frame->registers[11], destination);
+        result = copy_fs_path(process_current()->page_table, frame->registers[10], source);
+        if (result == 0) result = copy_fs_path(process_current()->page_table, frame->registers[11], destination);
         if (result == 0) result = fs_copy(source, destination);
         break;
     }
@@ -150,7 +172,7 @@ void syscall_dispatch(TrapFrame *frame) {
         char path[FS_PATH_MAX];
         uintptr_t user_buffer = frame->registers[11];
         size_t length = (size_t)frame->registers[12];
-        const int path_error = copy_path(process->page_table, frame->registers[10], path);
+        const int path_error = copy_fs_path(process->page_table, frame->registers[10], path);
         if (path_error < 0 || !user_writable(process->page_table, user_buffer, length)) {
             result = path_error < 0 ? path_error : ERR_ADDRESS;
             break;
@@ -174,7 +196,7 @@ void syscall_dispatch(TrapFrame *frame) {
         char path[FS_PATH_MAX];
         uintptr_t user_buffer = frame->registers[11];
         size_t length = (size_t)frame->registers[12];
-        const int path_error = copy_path(process->page_table, frame->registers[10], path);
+        const int path_error = copy_fs_path(process->page_table, frame->registers[10], path);
         if (path_error < 0 ||
             length > sizeof(fs_staging) || !user_readable(process->page_table, user_buffer, length)) {
             result = path_error < 0 ? path_error : ERR_ADDRESS;

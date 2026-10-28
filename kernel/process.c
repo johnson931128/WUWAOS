@@ -7,6 +7,8 @@
 #include "timer.h"
 #include "clock.h"
 #include "workstate.h"
+#include "fs.h"
+#include "path.h"
 #include <limits.h>
 
 static Process processes[PROCESS_LIMIT];
@@ -84,6 +86,25 @@ static Process *find_pid(long pid) {
     return 0;
 }
 
+long process_chdir(const char *path) {
+    Process *process = process_current();
+    char absolute[WUWA_PATH_MAX], canonical[WUWA_PATH_MAX];
+    if (path[0] == '-' && path[1] == 0) {
+        if (!process->previous_cwd[0]) return -2;
+        path = process->previous_cwd;
+    }
+    int result = path_absolute(process->cwd, path, absolute);
+    if (result < 0) return result;
+    result = (int)fs_is_directory(absolute);
+    if (result < 0) return result;
+    path_canonical(absolute, canonical);
+    size_t i = 0;
+    do { process->previous_cwd[i] = process->cwd[i]; } while (process->cwd[i++]);
+    i = 0;
+    do { process->cwd[i] = canonical[i]; } while (canonical[i++]);
+    return 0;
+}
+
 static long create_process(long program, long parent_pid, int publish) {
     int slot = -1;
     for (int i = 0; i < PROCESS_LIMIT; ++i) {
@@ -103,6 +124,13 @@ static long create_process(long program, long parent_pid, int publish) {
     }
     process->pid = next_pid++;
     process->parent_pid = parent_pid;
+    Process *parent = find_pid(parent_pid);
+    if (parent) {
+        for (size_t i = 0; i < WUWA_PATH_MAX; ++i) {
+            process->cwd[i] = parent->cwd[i];
+            process->previous_cwd[i] = parent->previous_cwd[i];
+        }
+    } else { process->cwd[0] = '/'; process->cwd[1] = 0; }
     process->program = program;
     process->input_pipe = -1;
     process->output_pipe = -1;
@@ -476,6 +504,8 @@ long process_inspect(long pid) {
     console_puts(process_state_name(process->state));
     console_puts(" ready_queued=");
     console_number(process->ready_queued);
+    console_puts("\ncwd=");
+    console_puts(process->cwd);
     console_puts("\ndispatches=");
     console_number((long)process->dispatches);
     console_puts(" preemptions=");

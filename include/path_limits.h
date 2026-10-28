@@ -1,0 +1,4 @@
+#ifndef WUWAOS_PATH_LIMITS_H
+#define WUWAOS_PATH_LIMITS_H
+#define WUWA_PATH_MAX 128
+#endif

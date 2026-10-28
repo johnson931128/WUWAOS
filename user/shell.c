@@ -139,10 +139,6 @@ static void run_program(const char *name) {
 }
 
 static void run_fan(const char *path) {
-    if (path[0] != '/') {
-        user_puts("Usage: fan /absolute/path\n");
-        return;
-    }
     const long child = fork();
     if (child == 0) {
         result_line("fan exec error: ", exec_arg(PROGRAM_FAN, path));
@@ -206,6 +202,33 @@ static void memory_command(int count, char *words[4]) {
     user_puts("Usage: mem alloc <1..256> | mem write <page> <0..255> | mem read <page> | mem free\n");
 }
 
+static void show_cwd(void) {
+    char cwd[128];
+    long result = getcwd(cwd, sizeof(cwd));
+    if (result < 0) result_line("pwd error: ", result);
+    else { user_puts(cwd); user_puts("\n"); }
+}
+
+static void change_directory(const char *path) {
+    char expanded[128];
+    int print = equal(path, "-");
+    if (path[0] == '~' && (path[1] == 0 || path[1] == '/')) {
+        const char *home = "/home/user";
+        unsigned long n = 0;
+        while (*home) expanded[n++] = *home++;
+        ++path;
+        while (*path) {
+            if (n + 1 >= sizeof(expanded)) { user_puts("cd error: path too long\n"); return; }
+            expanded[n++] = *path++;
+        }
+        expanded[n] = 0;
+        path = expanded;
+    }
+    long result = chdir(path);
+    if (result < 0) result_line("cd error: ", result);
+    else if (print) show_cwd();
+}
+
 static void help(void) {
     user_puts("help                            Show this command list.\n"
               "ps                              List processes and the RR ready queue.\n"
@@ -225,8 +248,10 @@ static void help(void) {
               "trace off                       Disable child process state messages.\n"
               "writer | reader                 Run the built-in foreground byte pipe.\n"
               "\n"
+              "pwd                             Show current directory.\n"
+              "cd [path]                       Change directory; - returns to previous.\n"
               "ls <path>                       List directory entries.\n"
-              "ls                              List the root directory.\n"
+              "ls                              List the current directory.\n"
               "mkdir <path>                    Create a directory.\n"
               "touch <path>                    Create a file; keep existing contents.\n"
               "cat <path>                      Display up to 2048 bytes of a file.\n"
@@ -244,7 +269,7 @@ static void help(void) {
               "mem free                        Release the heap allocation.\n"
               "exit                            End the shell; Ctrl+A then X quits QEMU.\n"
               "\n"
-              "<path> is an absolute path; <page> is a zero-based page index.\n"
+              "<path> may be absolute or relative; <page> is a zero-based page index.\n"
               "Files persist on the QEMU disk. Scheduling uses timer-driven RR.\n"
               "Host commands are not available here.\n");
 }
@@ -304,8 +329,12 @@ static int command(int count, char *words[4]) {
             help();
         } else if (equal(words[0], "ps")) {
             ps();
+        } else if (equal(words[0], "pwd")) {
+            show_cwd();
+        } else if (equal(words[0], "cd")) {
+            change_directory("~");
         } else if (equal(words[0], "ls")) {
-            filesystem_command("ls", "/", "");
+            filesystem_command("ls", ".", "");
         } else if (equal(words[0], "cls")) {
             user_puts("\033[2J\033[3J\033[H");
         } else if (equal(words[0], "workstate")) {
@@ -322,6 +351,10 @@ static int command(int count, char *words[4]) {
         return 1;
     }
     if (count == 2) {
+        if (equal(words[0], "cd")) {
+            change_directory(words[1]);
+            return 1;
+        }
         if (equal(words[0], "fan")) {
             run_fan(words[1]);
             return 1;

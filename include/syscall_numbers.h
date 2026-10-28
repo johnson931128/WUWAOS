@@ -31,6 +31,8 @@
 #define SYS_CONSOLE_POLL 27
 #define SYS_FS_REMOVE 28
 #define SYS_FS_COPY 29
+#define SYS_CHDIR 30
+#define SYS_GETCWD 31
 
 #define PROGRAM_WORKER 1
 #define PROGRAM_QUICK 2

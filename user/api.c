@@ -60,6 +60,8 @@ long workstate_snapshot(WorkstateSnapshot *snapshot) {
 }
 long sleep_ms(long milliseconds) { return syscall3(SYS_SLEEP_MS, milliseconds, 0, 0); }
 long console_poll(void) { return syscall3(SYS_CONSOLE_POLL, 0, 0, 0); }
+long chdir(const char *path) { return syscall3(SYS_CHDIR, (long)path, 0, 0); }
+long getcwd(char *buffer, unsigned long capacity) { return syscall3(SYS_GETCWD, (long)buffer, (long)capacity, 0); }
 long fs_list(const char *path, char *buffer, unsigned long capacity) {
     return syscall3(SYS_FS_LIST, (long)path, (long)buffer, (long)capacity);
 }

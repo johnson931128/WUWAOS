@@ -4,6 +4,7 @@
 #include <stddef.h>
 
 int fs_init(void);
+long fs_is_directory(const char *path);
 long fs_list(const char *path, char *output, size_t capacity);
 long fs_mkdir(const char *path);
 long fs_touch(const char *path);

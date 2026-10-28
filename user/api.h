@@ -24,6 +24,8 @@ long vmstat(long frame_limit);
 long workstate_snapshot(WorkstateSnapshot *snapshot);
 long sleep_ms(long milliseconds);
 long console_poll(void);
+long chdir(const char *path);
+long getcwd(char *buffer, unsigned long capacity);
 long fs_list(const char *path, char *buffer, unsigned long capacity);
 long fs_mkdir(const char *path);
 long fs_touch(const char *path);

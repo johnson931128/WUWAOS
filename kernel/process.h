@@ -4,6 +4,7 @@
 #include "trap.h"
 #include "context.h"
 #include "process_limits.h"
+#include "path_limits.h"
 
 typedef enum {
     PROCESS_UNUSED, PROCESS_NEW, PROCESS_READY, PROCESS_RUNNING,
@@ -16,6 +17,8 @@ typedef enum { IO_NONE, IO_CONSOLE_READ, IO_CONSOLE_RAW, IO_PIPE_READ, IO_PIPE_W
 typedef struct ProcessControlBlock {
     long pid;
     long parent_pid;
+    char cwd[WUWA_PATH_MAX];
+    char previous_cwd[WUWA_PATH_MAX];
     ProcessState state;
     /* Intrusive FIFO links; only Ready processes belong to the queue. */
     struct ProcessControlBlock *ready_next;
@@ -49,6 +52,7 @@ Process *process_slot(int slot);
 void process_init(void);
 _Noreturn void process_start(void);
 TrapFrame *process_resume(void);
+long process_chdir(const char *path);
 long process_spawn(long program);
 long process_fork(void);
 long process_exec(long program, const char *argument);

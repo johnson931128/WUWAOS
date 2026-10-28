@@ -22,6 +22,7 @@
 | 16 | [RV64 核心上下文切換](./SPEC-16-kernel-context.md)，獨立排程器堆疊、阻塞後恢復 C 呼叫 |
 | 17 | [workstate 即時監測](./SPEC-17-workstate.md)，CPU／RAM 快照、毫秒休眠與全螢幕操作 |
 | 18 | [檔案命令與 cls](./SPEC-18-file-commands.md)，刪除、複製、畫面與捲動歷史 |
+| 19 | [工作目錄與 shell 命令處理](./SPEC-19-cwd-shell.md)，每行程目錄、相對路徑 |
 
 ## 如何判斷是否驗證過
 
