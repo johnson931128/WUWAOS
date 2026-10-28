@@ -30,7 +30,7 @@ flowchart TD
 
 新行程沒有舊核心呼叫位置，第一次切入走 first_run，再由 user_enter／sret 進使用者程式。fork 子行程使用新的核心上下文，沒有複製父的核心呼叫堆疊。pcb 的 kernel_context_sp／ra 是上次保存的值，Running 時可能不是目前硬體值。
 
-完整設計與驗收見 [Spec 16](../SPEC-16-kernel-context.md)。這是後續 Mutex（互斥鎖）與 Semaphore（號誌）阻塞功能的基礎，本階段尚未加入鎖或開啟核心內強制搶占。
+完整設計與驗收見 [Spec 16](../SPEC-16-kernel-context.md)。這提供後續 Mutex（互斥鎖）與 Semaphore（號誌）的阻塞基礎；核心內仍未開啟強制搶占。
 
 ## 狀態怎麼走
 
@@ -77,3 +77,11 @@ exit 關閉端點並留下 Zombie；wait 取得結果後釋放使用者頁、Swa
 最多 4 個行程，exec 仍只選擇核心內嵌的程式 ID，不是載入任意磁碟執行檔。沒有執行緒與完整作業控制。
 
 觀念參考：`notes/ch3 Process.md`。實作脈絡見 [Spec 02](../SPEC-02-process-lifecycle.md)、[Spec 05](../SPEC.md)，目前私有記憶體複製見 [Spec 10](../SPEC-10-demand-paging.md)。
+
+## 同步物件
+
+WUWAOS 以自訂核心物件與 syscall 實作 Mutex（互斥鎖）及 Semaphore（計數號誌），不依賴 POSIX。Mutex 確保單一持有者；Semaphore 用計數管理資源。資源不足時行程阻塞，核心在條件改變時喚醒 FIFO 等待者。
+
+目前單核心、核心內不搶占，這是等待佇列操作不被同時改動的前提。持鎖行程終止或 exec 時，鎖標記為 poisoned（資料可能不一致）；後續取得會回報錯誤。Semaphore 名額不會因持有行程離開自動返還。詳細介面、例外與驗證狀態見 [Spec 22](../SPEC-22-synchronization.md)，[核心原始碼](https://github.com/johnson931128/WUWAOS/blob/main/kernel/sync.c)。
+
+可以在 QEMU 使用 `sync sem create 0` 建立初始值為 0 的號誌，再以 `syncbg sem wait <id>` 啟動等待的子行程。使用 `ps` 看到 Waiting sync，之後以 `sync sem post <id>` 喚醒它，再用 `wait <pid>` 回收。`syncbg mutex hold <id>` 的子行程持鎖等待通道 7，`wakeup 7` 使其解鎖並離開；實際編號以畫面顯示為準。`wakeup 7` 同時喚醒其他等待此通道的行程。
