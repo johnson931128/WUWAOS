@@ -58,7 +58,7 @@ flowchart TD
 | `cd -` | 返回前一個目錄並印出路徑 |
 | `ls` | 列出目前目錄 |
 
-初始 shell 從 `/` 開始。spawn、fork 或 pipe 新建的子行程繼承目錄，exec 保留；之後各行程各自管理。目標不存在或不是目錄時不會改變位置。規格與驗收見 [Spec 19](../SPEC-19-cwd-shell.md)。[shell 原始碼](https://github.com/johnson931128/WUWAOS/blob/main/user/shell.c)、[系統呼叫分派](https://github.com/johnson931128/WUWAOS/blob/main/kernel/syscall.c)。
+提示字元顯示完整目前路徑，例如 `wuwaos/>`、`wuwaos/note>`；若取得目錄失敗則顯示 `wuwaos?>`。初始 shell 從 `/` 開始。spawn、fork 或 pipe 新建的子行程繼承目錄，exec 保留；之後各行程各自管理。目標不存在或不是目錄時不會改變位置。規格與驗收見 [Spec 19](../SPEC-19-cwd-shell.md)。[shell 原始碼](https://github.com/johnson931128/WUWAOS/blob/main/user/shell.c)、[系統呼叫分派](https://github.com/johnson931128/WUWAOS/blob/main/kernel/syscall.c)。
 
 ## 三份獨立使用者映像
 

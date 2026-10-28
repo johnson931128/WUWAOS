@@ -21,3 +21,9 @@
 Clang 建置通過；使用獨立 WUFS 與 swap 磁碟在 QEMU 互動確認上述目錄切換、錯誤保留目錄、mkdir/touch/write/cp/ls/cat/rm、spawn 的 PCB、fork/exec 的 counter PCB、fan 相對路徑保存及重新啟動後讀回；亦確認原本的 writer | reader 可運作。新 shell 重啟從 `/` 開始。尚未逐一涵蓋所有長路徑邊界與所有終端。
 
 參考使用者筆記 `notes/Chapter 13 file system Interface.md` 中的目錄與路徑觀念；此處敘述的是 WUWAOS 自己的簡化實作，不宣稱 Linux 相容。
+
+## 提示字元更新
+
+shell 每次等待命令前讀取目前工作目錄：根目錄顯示 `wuwaos/>`，`/note` 顯示 `wuwaos/note>`；讀取失敗則顯示 `wuwaos?>`。切換成功或失敗後提示字元應反映行程實際位置。
+
+驗證：使用獨立磁碟在 QEMU 確認根目錄、`cd note`、切換失敗、`cd ..`、`cd` 與 `cd -` 的提示字元。

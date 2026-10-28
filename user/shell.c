@@ -426,7 +426,11 @@ long shell_main(void) {
            before drawing a fresh prompt. This is still cooperative scheduling. */
         yield();
         yield();
-        user_puts("wuwaos> ");
+        char cwd[128];
+        user_puts("wuwaos");
+        if (getcwd(cwd, sizeof(cwd)) == 0) user_puts(cwd);
+        else user_puts("?");
+        user_puts("> ");
         const long length = read(0, line, sizeof(line) - 1);
         if (length < 0) {
             user_puts("Input rejected: line too long or invalid buffer.\n");
