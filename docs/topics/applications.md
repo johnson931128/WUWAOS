@@ -66,6 +66,19 @@ Makefile 將 shell、app、fan 分別連結為 ELF，再轉成 binary 嵌入核�
 
 因此 fan 是真正的獨立行程，但還不是由 `/bin/fan` 磁碟執行檔載入。user/entry.S 將初始參數交給 user_main，返回值再交給 exit。
 
+## C 程式是在哪裡編譯的？
+
+目前在主機的 WSL Ubuntu 執行 Clang（C 編譯器），產生 RISC-V 機器碼；QEMU 再載入並執行已編譯的核心。這稱為**交叉編譯**：編譯器執行的位置與產物的目標 CPU 架構不同。
+
+```mermaid
+flowchart LR
+  A[主機上的 C 和組合語言] --> B[WSL 中的 Clang 與連結器]
+  B --> C[RISC-V 核心 ELF 和使用者映像]
+  C --> D[QEMU 載入核心並模擬 RISC-V CPU]
+```
+
+`fan` 可以寫 `.c` 檔，但 WUWAOS 現在還沒有系統內的 C 編譯器，也沒有從磁碟載入一般 ELF 程式的功能。未來先讓系統執行主機編譯好的外部程式，再依所選編譯工具補齊檔案介面、執行環境與工具鏈；詳細需求與階段記錄在 [Spec 21](../SPEC-21-native-compilation.md)。這些是長期目標，尚未實作。
+
 ## fan 的文字資料結構
 
 `user/fan.c` 用連續 byte 陣列存放最多 2048 bytes ASCII／LF 文字，cursor（游標）是陣列中的位移。
