@@ -1,5 +1,6 @@
 #include "api.h"
 #include "syscall_numbers.h"
+#include "sync_ops.h"
 
 static long syscall3(long number, long first, long second, long third) {
     register long a0 __asm__("a0") = first;
@@ -13,6 +14,14 @@ static long syscall3(long number, long first, long second, long third) {
 long write(long fd, const char *buffer, unsigned long length) {
     return syscall3(SYS_WRITE, fd, (long)buffer, (long)length);
 }
+
+long mutex_create(void) { return syscall3(SYS_SYNC, SYNC_MUTEX_CREATE, 0, 0); }
+long mutex_lock(long handle) { return syscall3(SYS_SYNC, SYNC_MUTEX_LOCK, handle, 0); }
+long mutex_unlock(long handle) { return syscall3(SYS_SYNC, SYNC_MUTEX_UNLOCK, handle, 0); }
+long semaphore_create(long initial) { return syscall3(SYS_SYNC, SYNC_SEM_CREATE, initial, 0); }
+long semaphore_wait(long handle) { return syscall3(SYS_SYNC, SYNC_SEM_WAIT, handle, 0); }
+long semaphore_post(long handle) { return syscall3(SYS_SYNC, SYNC_SEM_POST, handle, 0); }
+long sync_destroy(long handle) { return syscall3(SYS_SYNC, SYNC_DESTROY, handle, 0); }
 
 long getpid(void) {
     return syscall3(SYS_GETPID, 0, 0, 0);

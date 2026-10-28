@@ -4,6 +4,14 @@
 
 long write(long fd, const char *buffer, unsigned long length);
 long getpid(void);
+/* WUWAOS synchronization handles; not POSIX pthread/sem APIs. */
+long mutex_create(void);
+long mutex_lock(long handle);
+long mutex_unlock(long handle);
+long semaphore_create(long initial);
+long semaphore_wait(long handle);
+long semaphore_post(long handle);
+long sync_destroy(long handle);
 long spawn(long program);
 long yield(void);
 long sleep(long channel);

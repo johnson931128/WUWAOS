@@ -232,7 +232,7 @@ cat /home/user/notes/today.txt
 - 最多 4 個行程，每個獨立 Sv39 頁表、16 KiB 使用者 code、4 KiB data、4 KiB stack、最多 1 MiB heap，以及固定 16 KiB 核心堆疊。使用者頁按需配置與置換，核心及分頁表常駐。
 - fork 採完整複製，不使用 COW（寫入時複製）。exec 動態準備新位址空間，切換頁表後釋放舊空間；只接受內建程式 ID，fan 可額外接收一個檔案路徑參數。
 - PCB 是原本 Process 的延伸，沒有第二份重複的狀態。包含父子關係、等待資訊、管道端點與待完成 I/O。
-- `kernel/swtch.S` 以 RV64 組合語言保存／還原核心 ra、sp、s0～s11。每個 PCB 的 KernelContext 保留暫停中的 C 呼叫，排程器使用獨立 16 KiB 堆疊；sleep／wait／阻塞 I/O 恢復後從原函式繼續。pcb 顯示上次保存的核心 sp／ra。核心仍只在明確位置主動切換，尚無 Mutex／Semaphore。
+- `kernel/swtch.S` 以 RV64 組合語言保存／還原核心 ra、sp、s0～s11。每個 PCB 的 KernelContext 保留暫停中的 C 呼叫，排程器使用獨立 16 KiB 堆疊；sleep／wait／阻塞 I/O 恢復後從原函式繼續。pcb 顯示上次保存的核心 sp／ra。核心仍只在明確位置主動切換；自製 Mutex／Semaphore 與限制見 [Spec 22](docs/SPEC-22-synchronization.md)。
 - `processes[4]` 保存完整 PCB；`scheduler.c` 的單向鏈結 FIFO 只保存 Ready PCB 的指標，入列與取出隊首 O(1)，移除任意節點 O(P)。
 - read/write、行程管理與查詢都透過使用者模式系統呼叫。核心與 UART（序列埠）頁面仍不可由使用者模式直接存取。
 - 檔案系統經由 VirtIO-MMIO block driver（虛擬區塊裝置驅動）讀寫 QEMU 磁碟。UART、pipe 與磁碟檔案走不同 I/O 路徑；目前檔案呼叫以路徑為參數，尚未有通用檔案描述號或 POSIX `open/close`。

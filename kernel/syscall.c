@@ -7,6 +7,7 @@
 #include "fs.h"
 #include "workstate.h"
 #include "path.h"
+#include "sync.h"
 
 #define FS_PATH_MAX WUWA_PATH_MAX
 #define FS_IO_CHUNK 512
@@ -39,6 +40,9 @@ void syscall_dispatch(TrapFrame *frame) {
     case SYS_WRITE:
         result = io_write((long)frame->registers[10], frame->registers[11],
                            frame->registers[12]);
+        break;
+    case SYS_SYNC:
+        result = sync_call((long)frame->registers[10], (long)frame->registers[11]);
         break;
     case SYS_GETPID:
         result = process_current()->pid;

@@ -9,6 +9,7 @@
 #include "workstate.h"
 #include "fs.h"
 #include "path.h"
+#include "sync.h"
 #include <limits.h>
 
 static Process processes[PROCESS_LIMIT];
@@ -219,6 +220,7 @@ long process_exec(long program, const char *argument) {
         const int error = user_copy_to(root, stack, argument, length + 1);
         if (error < 0) { vm_destroy(root); return error; }
     }
+    sync_process_cleanup(process); /* New image must not inherit held mutexes. */
     (void)io_console_mode(0); /* Successful exec resets raw input ownership. */
     const uintptr_t old_root = process->page_table;
     const uint64_t status = process->frame->sstatus;
@@ -370,6 +372,7 @@ long process_wait(long pid, uintptr_t status_address) {
 }
 
 static void terminate(Process *process, long status) {
+    sync_process_cleanup(process);
     io_close_process(process);
     process->io_operation = IO_NONE;
     process->wait_reason = WAIT_NONE;
@@ -417,6 +420,20 @@ long process_kill(long pid) {
     return 0;
 }
 
+void process_block_sync(void) {
+    Process *process = process_current();
+    process->wait_reason = WAIT_SYNC;
+    transition(process, PROCESS_WAITING, "sync wait");
+    suspend_current();
+}
+
+void process_wake_sync(Process *process) {
+    if (process->state == PROCESS_WAITING && process->wait_reason == WAIT_SYNC) {
+        process->wait_reason = WAIT_NONE;
+        transition(process, PROCESS_READY, "sync wakeup");
+    }
+}
+
 long process_block_io(IoOperation operation, uintptr_t buffer, size_t length) {
     Process *process = process_current();
     process->io_operation = operation;
@@ -457,6 +474,7 @@ static const char *waiting_for(const Process *process) {
         return "channel";
     }
     if (process->wait_reason == WAIT_TIMER) return "timer";
+    if (process->wait_reason == WAIT_SYNC) return "sync";
     return (process->io_operation == IO_CONSOLE_READ || process->io_operation == IO_CONSOLE_RAW) ? "console" :
            process->io_operation == IO_PIPE_READ ? "pipe-read" : "pipe-write";
 }

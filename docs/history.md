@@ -25,6 +25,7 @@
 | 19 | [工作目錄與 shell 命令處理](./SPEC-19-cwd-shell.md)，每行程目錄、相對路徑 |
 | 20 | [資料夾刪除與確認](./SPEC-20-directory-removal.md)，子目錄與檔案回收 |
 | 21 | [系統內編譯 C 程式的長期目標](./SPEC-21-native-compilation.md)，目前為規劃、尚未實作 |
+| 22 | [自製 Mutex 與 Semaphore](./SPEC-22-synchronization.md)，單核心同步與驗證範圍 |
 
 ## 如何判斷是否驗證過
 

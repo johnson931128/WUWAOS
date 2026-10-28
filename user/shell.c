@@ -229,6 +229,48 @@ static void change_directory(const char *path) {
     else if (print) show_cwd();
 }
 
+static void sync_command(int count, char *words[4]) {
+    long argument = 0, result;
+    if (count == 3 && equal(words[1], "mutex") && equal(words[2], "create")) result = mutex_create();
+    else if (count == 4 && nonnegative(words[3], &argument)) {
+        if (equal(words[1], "mutex") && equal(words[2], "lock")) result = mutex_lock(argument);
+        else if (equal(words[1], "mutex") && equal(words[2], "unlock")) result = mutex_unlock(argument);
+        else if (equal(words[1], "sem") && equal(words[2], "create")) result = semaphore_create(argument);
+        else if (equal(words[1], "sem") && equal(words[2], "wait")) result = semaphore_wait(argument);
+        else if (equal(words[1], "sem") && equal(words[2], "post")) result = semaphore_post(argument);
+        else { user_puts("Invalid sync command.\n"); return; }
+    } else if (count == 3 && equal(words[1], "destroy") && positive_number(words[2], &argument)) {
+        result = sync_destroy(argument);
+    } else { user_puts("Usage: sync mutex create|lock <id>|unlock <id>; sync sem create <n>|wait <id>|post <id>; sync destroy <id>\n"); return; }
+    result_line("sync result=", result);
+}
+
+/* Run one synchronization operation in a separate child process. */
+static void sync_background(int count, char *words[4]) {
+    long id;
+    if (count != 4 || !positive_number(words[3], &id)) {
+        user_puts("Usage: syncbg sem wait|post <id>; syncbg mutex hold <id>\n");
+        return;
+    }
+    int hold = equal(words[1], "mutex") && equal(words[2], "hold");
+    int sem_wait = equal(words[1], "sem") && equal(words[2], "wait");
+    int sem_post = equal(words[1], "sem") && equal(words[2], "post");
+    if (!hold && !sem_wait && !sem_post) { user_puts("Invalid syncbg command.\n"); return; }
+    long child = fork();
+    if (child == 0) {
+        long result = hold ? mutex_lock(id) : sem_wait ? semaphore_wait(id) : semaphore_post(id);
+        user_puts("[syncbg] PID="); user_number(getpid());
+        result_line(" result=", result);
+        if (hold && result == 0) {
+            user_puts("[syncbg] holding mutex; wakeup 7 releases it.\n");
+            sleep(7);
+            result_line("[syncbg] unlock result=", mutex_unlock(id));
+        }
+        exit(result < 0 ? result : 0);
+    }
+    result_line("syncbg PID/result=", child);
+}
+
 static void help(void) {
     user_puts("help                            Show this command list.\n"
               "ps                              List processes and the RR ready queue.\n"
@@ -241,6 +283,11 @@ static void help(void) {
               "run quick                       Fork/exec quick; wait <pid> to collect.\n"
               "run counter                     Fork/exec counter; wakeup 9, then wait.\n"
               "yield                           Let the next ready process run.\n"
+              "sync mutex create|lock <id>|unlock <id>  Manage a mutex.\n"
+              "sync sem create <n>|wait <id>|post <id> Manage a semaphore.\n"
+              "sync destroy <id>               Destroy an unused sync object.\n"
+              "syncbg sem wait|post <id>       Run semaphore operation in child.\n"
+              "syncbg mutex hold <id>          Hold in child until wakeup 7.\n"
               "wakeup <channel>                Wake processes waiting on an event.\n"
               "wait <pid>                      Wait for and collect a direct child.\n"
               "kill <pid>                      Terminate a direct child process.\n"
@@ -318,6 +365,14 @@ static void filesystem_command(const char *command, const char *path, const char
 
 static int command(int count, char *words[4]) {
     if (count == 0) {
+        return 1;
+    }
+    if (equal(words[0], "syncbg")) {
+        sync_background(count, words);
+        return 1;
+    }
+    if (equal(words[0], "sync")) {
+        sync_command(count, words);
         return 1;
     }
     if (equal(words[0], "mem")) {

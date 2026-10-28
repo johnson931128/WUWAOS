@@ -47,6 +47,7 @@ CPU 執行記憶體中的機器碼，不知道來源檔名。OpenSBI 負責早�
 | include/workstate_info.h | 固定容量、版本化的行程 CPU／記憶體快照 ABI |
 | user/workstate.c / workstate.h | shell 內即時全螢幕、區間比率計算、定時休眠與 q 退出 |
 | kernel/scheduler.c / scheduler.h | 單向鏈結 FIFO 就緒佇列、入列／取隊首／移除與順序查閱 |
+| kernel/sync.c / sync.h、include/sync_ops.h | 自製 mutex／semaphore、等待佇列與行程離開清理；詳見 Spec 22 |
 | kernel/io.c / io.h | 行輸入／raw console、固定管道、pending I/O（尚未完成的輸入輸出） |
 | kernel/block.c / block.h | FDT 裝置探索、VirtIO-MMIO 區塊讀寫佇列 |
 | kernel/fs.c / fs.h | WUFS 區塊配置、inode、目錄與路徑操作 |
@@ -315,8 +316,9 @@ WUWAOS 自訂 ABI（呼叫約定）：a7（呼叫編號暫存器）、a0–a2（
 | 26 | sleep_ms(milliseconds) | 定時等待 1～60000 ms，核心到期後改 Ready |
 | 27 | console_poll() | raw console 所有者非阻塞讀鍵：0 無資料，1～256 為 byte 加一 |
 | 28 | fs_remove(path) | 刪除一般檔案並回收 inode 與資料區塊 |
-| 32 | fs_remove_tree(path) | 先檢查目錄樹及行程工作目錄，再由子向父移除並回收；shell 負責確認 |
 | 29 | fs_copy(source, destination) | 複製一般檔案，完整建立新 inode 後發布 |
+| 32 | fs_remove_tree(path) | 先檢查目錄樹及行程工作目錄，再由子向父移除並回收；shell 負責確認 |
+| 33 | sync(operation, argument) | 自製 mutex／semaphore 建立、操作與銷毀；使用者 API 封裝 |
 
 syscall_dispatch 用 switch 分派；結果填 frame->a0。阻塞服務保留核心呼叫堆疊、切到排程器，恢復後正常回傳真正結果，再走相同的 a0 回寫路徑，不先存 placeholder。
 exec 成功時 dispatcher 立即返回，不能把正常返回值 0 再寫進 frame->a0，否則會破壞新程式所需的初始角色參數。失敗才按一般規則回傳錯誤。
