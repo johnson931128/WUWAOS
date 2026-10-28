@@ -150,13 +150,20 @@ void syscall_dispatch(TrapFrame *frame) {
     }
     case SYS_FS_MKDIR:
     case SYS_FS_TOUCH:
-    case SYS_FS_REMOVE: {
+    case SYS_FS_REMOVE:
+    case SYS_FS_REMOVE_TREE: {
         char path[FS_PATH_MAX];
         result = copy_fs_path(process_current()->page_table, frame->registers[10], path);
         if (result == 0) {
+            if ((number == SYS_FS_REMOVE || number == SYS_FS_REMOVE_TREE) && fs_is_directory(path) == 0) {
+                size_t length = 0;
+                while (path[length]) ++length;
+                while (length > 1 && path[length - 1] == '/') path[--length] = 0;
+            }
             if (number == SYS_FS_MKDIR) result = fs_mkdir(path);
             else if (number == SYS_FS_TOUCH) result = fs_touch(path);
-            else result = fs_remove(path);
+            else if (number == SYS_FS_REMOVE) result = fs_remove(path);
+            else result = fs_remove_tree(path);
         }
         break;
     }

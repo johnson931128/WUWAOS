@@ -1,6 +1,7 @@
 #include "fs.h"
 #include "block.h"
 #include "console.h"
+#include "process.h"
 #include <stdint.h>
 
 #define FS_MAGIC "WUFS0001"
@@ -535,6 +536,71 @@ long fs_remove(const char *path) {
     parent.size = new_size;
     if (inode_write(parent_number, &parent) < 0) return -5;
     return inode_release(entry.inode, &inode);
+}
+
+/* Validate the whole tree before deleting: no root, cycles or live CWDs.
+   A bounded breadth-first list reversed for deletion gives child-before-parent. */
+long fs_remove_tree(const char *path) {
+    if (!mounted) return -22;
+    uint32_t parent_number, index;
+    char name[FS_NAME_SIZE] = {0};
+    int error = parent_lookup(path, &parent_number, name);
+    if (error < 0) return error;
+    if (special_name(name)) return -22;
+    Inode parent, inode;
+    DirectoryEntry entry;
+    if (inode_read(parent_number, &parent) < 0) return -5;
+    error = directory_find_entry(&parent, name, &index, &entry);
+    if (error < 0) return error;
+    if (entry.inode == superblock.root_inode) return -16;
+    if (inode_read(entry.inode, &inode) < 0) return -5;
+    if (inode.type != FS_TYPE_DIRECTORY) return -20;
+
+    uint32_t nodes[FS_INODE_COUNT], parents[FS_INODE_COUNT];
+    uint8_t seen[FS_INODE_COUNT] = {0};
+    uint32_t count = 1;
+    nodes[0] = entry.inode; parents[0] = parent_number;
+    if (entry.inode >= FS_INODE_COUNT) return -5;
+    seen[entry.inode] = 1;
+    for (uint32_t i = 0; i < count; ++i) {
+        if (inode_read(nodes[i], &inode) < 0) return -5;
+        if (inode.type == FS_TYPE_FILE) continue;
+        if (inode.type != FS_TYPE_DIRECTORY || inode.size % sizeof(DirectoryEntry)) return -5;
+        for (int slot = 0; slot < PROCESS_LIMIT; ++slot) {
+            const Process *p = process_slot(slot);
+            if (p->state == PROCESS_UNUSED || p->state == PROCESS_ZOMBIE) continue;
+            uint32_t cwd;
+            error = path_lookup(p->cwd, &cwd);
+            if (error < 0) return error;
+            if (cwd == nodes[i]) return -16;
+        }
+        uint32_t entries = inode.size / (uint32_t)sizeof(DirectoryEntry);
+        for (uint32_t j = 0; j < entries; ++j) {
+            if (dir_entry_read(&inode, j, &entry) < 0) return -5;
+            if (special_name(entry.name)) continue;
+            if (entry.inode >= FS_INODE_COUNT || seen[entry.inode] || count == FS_INODE_COUNT) return -5;
+            seen[entry.inode] = 1;
+            nodes[count] = entry.inode; parents[count++] = nodes[i];
+        }
+    }
+    while (count > 0) {
+        --count;
+        if (inode_read(parents[count], &parent) < 0 || inode_read(nodes[count], &inode) < 0) return -5;
+        uint32_t entries = parent.size / (uint32_t)sizeof(DirectoryEntry);
+        uint32_t found = entries;
+        for (uint32_t j = 0; j < entries; ++j) {
+            if (dir_entry_read(&parent, j, &entry) < 0) return -5;
+            if (entry.inode == nodes[count] && !special_name(entry.name)) { found = j; break; }
+        }
+        if (found == entries) return -5;
+        if (found != entries - 1) {
+            DirectoryEntry last;
+            if (dir_entry_read(&parent, entries - 1, &last) < 0 || dir_entry_write(&parent, found, &last) < 0) return -5;
+        }
+        parent.size -= (uint32_t)sizeof(DirectoryEntry);
+        if (inode_write(parents[count], &parent) < 0 || inode_release(nodes[count], &inode) < 0) return -5;
+    }
+    return 0;
 }
 
 long fs_copy(const char *source, const char *destination) {

@@ -256,7 +256,7 @@ static void help(void) {
               "touch <path>                    Create a file; keep existing contents.\n"
               "cat <path>                      Display up to 2048 bytes of a file.\n"
               "write <path> <text>             Overwrite a file with one text token.\n"
-              "rm <path>                       Remove a regular file.\n"
+              "rm <path>                       Remove file or confirm directory tree.\n"
               "cp <source> <destination>       Copy a regular file.\n"
               "cls                             Clear screen and scrollback.\n"
               "fan <path>                      Edit text; Ctrl+O save, Ctrl+X exit.\n"
@@ -285,7 +285,21 @@ static void filesystem_command(const char *command, const char *path, const char
     } else if (equal(command, "touch")) {
         result_line("touch result=", fs_touch(path));
     } else if (equal(command, "rm")) {
-        result_line("rm result=", fs_remove(path));
+        long result = fs_remove(path);
+        if (result == -21) {
+            char reply[8];
+            user_puts("WARNING: Delete directory ");
+            user_puts(path);
+            user_puts(" and ALL contents? [Y/N] ");
+            long length = read(0, reply, sizeof(reply) - 1);
+            if (length == 2 && reply[1] == '\n' && (reply[0] == 'Y' || reply[0] == 'y')) {
+                result = fs_remove_tree(path);
+            } else {
+                user_puts("Cancelled.\n");
+                return;
+            }
+        }
+        result_line("rm result=", result);
     } else if (equal(command, "cat")) {
         char output[2048];
         const long length = fs_readfile(path, output, sizeof(output));

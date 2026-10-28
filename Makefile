@@ -32,6 +32,9 @@ build/swtch.o: kernel/swtch.S kernel/context.h | build
 build/user_entry.o: user/entry.S | build
 	$(CC) $(ARCH_FLAGS) -g -c $< -o $@
 
+build/user_shell.o: user/shell.c | build
+	$(CC) $(CFLAGS) -Oz -c $< -o $@
+
 build/user_%.o: user/%.c | build
 	$(CC) $(CFLAGS) -c $< -o $@
 

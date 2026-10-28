@@ -1,6 +1,6 @@
 # 10 · Shell 與 fan 編輯器
 
-`ls` 不帶參數時列出目前目錄；`rm /absolute/file` 刪除檔案，`cp /absolute/source /absolute/destination` 複製檔案。`cls` 會要求終端清除畫面和捲動歷史，保留 WUFS 檔案；捲動歷史是否真的清除取決於終端對控制序列的支援。命令範圍與限制見 [Spec 18](../SPEC-18-file-commands.md)。
+`ls` 不帶參數時列出目前目錄；`rm 路徑` 刪除檔案或資料夾（資料夾需輸入 Y 確認），`cp /absolute/source /absolute/destination` 複製檔案。`cls` 會要求終端清除畫面和捲動歷史，保留 WUFS 檔案；捲動歷史是否真的清除取決於終端對控制序列的支援。命令範圍與限制見 [Spec 18](../SPEC-18-file-commands.md)。
 
 核心提供能力，使用者程式把能力組合成操作。WUWAOS 的 shell 與 fan 都是 U-mode（使用者模式）程式，透過 syscall 操作行程、終端與檔案。
 

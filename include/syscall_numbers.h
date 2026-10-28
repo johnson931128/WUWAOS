@@ -33,6 +33,7 @@
 #define SYS_FS_COPY 29
 #define SYS_CHDIR 30
 #define SYS_GETCWD 31
+#define SYS_FS_REMOVE_TREE 32
 
 #define PROGRAM_WORKER 1
 #define PROGRAM_QUICK 2

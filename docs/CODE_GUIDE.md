@@ -315,6 +315,7 @@ WUWAOS 自訂 ABI（呼叫約定）：a7（呼叫編號暫存器）、a0–a2（
 | 26 | sleep_ms(milliseconds) | 定時等待 1～60000 ms，核心到期後改 Ready |
 | 27 | console_poll() | raw console 所有者非阻塞讀鍵：0 無資料，1～256 為 byte 加一 |
 | 28 | fs_remove(path) | 刪除一般檔案並回收 inode 與資料區塊 |
+| 32 | fs_remove_tree(path) | 先檢查目錄樹及行程工作目錄，再由子向父移除並回收；shell 負責確認 |
 | 29 | fs_copy(source, destination) | 複製一般檔案，完整建立新 inode 後發布 |
 
 syscall_dispatch 用 switch 分派；結果填 frame->a0。阻塞服務保留核心呼叫堆疊、切到排程器，恢復後正常回傳真正結果，再走相同的 a0 回寫路徑，不先存 placeholder。
