@@ -36,7 +36,7 @@ inode 有 8 個直接指標與 8 個單層間接指標。每個間接區塊可�
 
 核心介面的宣告見 [kernel/fs.h（GitHub）](https://github.com/johnson931128/WUWAOS/blob/main/kernel/fs.h)：初始化、列目錄、建立目錄／檔案、讀寫、刪除與複製。
 
-`rm /absolute/file` 移除一般檔案：從父目錄移掉名稱，再回收檔案的資料區塊與 inode（檔案資訊）。為保持目錄項目連續，核心會把最後一項移到刪除位置；目錄本身的既有資料區塊保留，之後的項目可重用。目錄與 `.`／`..` 不可用 rm 刪除。
+`rm /absolute/file` 移除一般檔案：從父目錄移掉名稱，再回收檔案的資料區塊與 inode（檔案資訊）。為保持目錄項目連續，核心會把最後一項移到刪除位置；目錄本身的既有資料區塊保留，之後的項目可重用。`rm` 遇到資料夾會顯示路徑和警告，輸入 Y/y 再按 Enter 才刪除該資料夾與所有內容；N/n 或其他輸入取消。根目錄、`.`、`..` 不能刪除，若任何活躍行程正使用該目錄樹中的工作目錄則回傳 -16。詳見 [Spec 20](../SPEC-20-directory-removal.md)。
 
 `cp /absolute/source /absolute/destination` 用 512-byte 緩衝區複製一般檔案；目的檔存在時，先寫完整的新 inode，成功連入目錄後才回收舊目的檔。複製到同一 inode 會被拒絕，避免清空來源。要同時容納新舊目的檔，因此剩餘空間不足可能回報錯誤。磁碟異常或斷電時仍可能留下未回收區塊或部分目錄更新，WUFS 尚無 journal（交易日誌）；見 [Spec 18](../SPEC-18-file-commands.md)。
 
@@ -62,6 +62,6 @@ cat 會在非空內容末端缺少換行時補一個「顯示用換行」，防�
 
 make disk-image 先產生 kernel-disk.elf，移除除錯資料後才存入 WUFS，以免除錯段超過單檔容量；QEMU 與 GDB 仍使用保留除錯資料的 kernel.elf。這不是從磁碟開機，也沒有改變 WUFS 格式。
 
-目前只支援刪除一般檔案；尚無目錄刪除、重新命名、權限、連結、掛載其他格式、journal（日誌）或掉電交易保護。資料持久保存不等於每一次寫入都具備原子性。
+尚無重新命名、權限、連結、掛載其他格式、journal（日誌）或掉電交易保護。資料夾刪除若中途發生磁碟錯誤，可能只刪除一部分，無法自動復原。資料持久保存不等於每一次寫入都具備原子性。
 
 觀念參考：`notes/Chapter 13 file system Interface.md`、`notes/chapter 14 File-System Implementation.md`、`notes/chapter 15  File System  Internals.md`。WUFS 格式與既有持久性驗收見 [Spec 06](../SPEC-06-filesystem.md)。
