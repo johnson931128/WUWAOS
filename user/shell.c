@@ -226,10 +226,14 @@ static void help(void) {
               "writer | reader                 Run the built-in foreground byte pipe.\n"
               "\n"
               "ls <path>                       List directory entries.\n"
+              "ls                              List the root directory.\n"
               "mkdir <path>                    Create a directory.\n"
               "touch <path>                    Create a file; keep existing contents.\n"
               "cat <path>                      Display up to 2048 bytes of a file.\n"
               "write <path> <text>             Overwrite a file with one text token.\n"
+              "rm <path>                       Remove a regular file.\n"
+              "cp <source> <destination>       Copy a regular file.\n"
+              "cls                             Clear screen and scrollback.\n"
               "fan <path>                      Edit text; Ctrl+O save, Ctrl+X exit.\n"
               "\n"
               "vmstat                          Show page faults, FIFO and swap usage.\n"
@@ -255,6 +259,8 @@ static void filesystem_command(const char *command, const char *path, const char
         result_line("mkdir result=", fs_mkdir(path));
     } else if (equal(command, "touch")) {
         result_line("touch result=", fs_touch(path));
+    } else if (equal(command, "rm")) {
+        result_line("rm result=", fs_remove(path));
     } else if (equal(command, "cat")) {
         char output[2048];
         const long length = fs_readfile(path, output, sizeof(output));
@@ -298,6 +304,10 @@ static int command(int count, char *words[4]) {
             help();
         } else if (equal(words[0], "ps")) {
             ps();
+        } else if (equal(words[0], "ls")) {
+            filesystem_command("ls", "/", "");
+        } else if (equal(words[0], "cls")) {
+            user_puts("\033[2J\033[3J\033[H");
         } else if (equal(words[0], "workstate")) {
             workstate_main();
         } else if (equal(words[0], "fork")) {
@@ -335,7 +345,7 @@ static int command(int count, char *words[4]) {
             return 1;
         }
         if (equal(words[0], "ls") || equal(words[0], "mkdir") ||
-            equal(words[0], "touch") || equal(words[0], "cat")) {
+            equal(words[0], "touch") || equal(words[0], "cat") || equal(words[0], "rm")) {
             filesystem_command(words[0], words[1], "");
             return 1;
         }
@@ -364,6 +374,10 @@ static int command(int count, char *words[4]) {
     }
     if (count == 3 && equal(words[0], "write")) {
         filesystem_command(words[0], words[1], words[2]);
+        return 1;
+    }
+    if (count == 3 && equal(words[0], "cp")) {
+        result_line("cp bytes=", fs_copy(words[1], words[2]));
         return 1;
     }
     user_puts("Invalid command or argument. Type help.\n");

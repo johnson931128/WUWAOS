@@ -52,7 +52,7 @@ CPU 執行記憶體中的機器碼，不知道來源檔名。OpenSBI 負責早�
 | kernel/memory.c | freestanding（無標準執行環境）建置所需的 byte-wise memset／memcpy |
 | kernel/page.c / page.h | 4 KiB 實體頁面空閒串列、配置／回收、配置 bitmap 與頁數查詢 |
 | kernel/swap.c / swap.h | 獨立交換區標頭、slot bitmap、4 KiB 換入／換出讀寫 |
-| kernel/syscall.c / syscall.h | 27 個 syscall（系統呼叫）的編號分派 |
+| kernel/syscall.c / syscall.h | 29 個 syscall（系統呼叫）的編號分派 |
 | kernel/user_image.S | 把 user.bin、app.bin 與 fan.bin 三份獨立映像嵌入核心唯讀資料 |
 | kernel/linker.ld | 核心入口、記憶體區段與權限邊界 |
 | include/syscall_numbers.h | 共用系統呼叫編號、內建程式角色、錯誤碼 |
@@ -280,6 +280,8 @@ WUFS 在 LBA 0 存 superblock，接著 inode bitmap、block bitmap、固定 inod
 
 目錄內容是順序 DirectoryEntry（24-byte 名稱 + 4-byte inode 編號），路徑查找從 root inode 逐層掃描目錄。C 層支援跨 sector 的目錄項目複製。`fs_list` 回傳目錄名稱，`fs_mkdir` 建立目錄及 `.`／`..`，`fs_touch` 建立空檔，`fs_read` 依位移讀資料，`fs_write` 釋放舊區塊後覆寫並更新 inode 長度。
 
+`fs_remove` 找出一般檔案的目錄項目，以尾項替補後縮短父目錄，再釋放目標的資料區塊、間接表及 inode。`fs_copy` 先建立未公開的新 inode，逐扇區複製所有 bytes，再發布新目錄項或替換舊項，最後釋放原目的檔；比較 inode 防止同檔複製。磁碟空間不足時不先清空既有目的檔；掉電或 I/O 錯誤沒有 journal 保證，發布失敗可能留下未回收空間。見 SPEC-18。
+
 `tools/make_disk.py` 在首次使用時建立 WUFS 目錄與 `/boot/kernel.elf`；每次 make run 只替換這個 inode 的資料區，其他目錄項目和使用者檔案會保留。核心本身也能在空白磁碟格式化並建立目錄。`/boot/kernel.elf` 是一般核心 ELF 檔案副本；QEMU 目前仍以 `-kernel` 載入另一份 ELF，磁碟檔案沒有參與開機。
 
 目前路徑型 syscall 是教學用介面，不是 POSIX VFS：沒有 `open/close`、檔案 descriptor table、cwd（目前目錄）、相對路徑或通用 `read/write` 檔案 FD。shell 的 `write` 只接一個文字 token，`cat` 顯示前 2048 bytes；核心複製可跨合法使用者頁面，包含按需載入與 swap。磁碟資料寫入同步完成，未實作掉電交易／journal（寫入日誌）與損毀復原。
@@ -311,6 +313,8 @@ WUWAOS 自訂 ABI（呼叫約定）：a7（呼叫編號暫存器）、a0–a2（
 | 25 | workstate_snapshot(snapshot) | 唯讀行程 CPU／RAM 快照，核心檢查完整結構長度與使用者範圍 |
 | 26 | sleep_ms(milliseconds) | 定時等待 1～60000 ms，核心到期後改 Ready |
 | 27 | console_poll() | raw console 所有者非阻塞讀鍵：0 無資料，1～256 為 byte 加一 |
+| 28 | fs_remove(path) | 刪除一般檔案並回收 inode 與資料區塊 |
+| 29 | fs_copy(source, destination) | 複製一般檔案，完整建立新 inode 後發布 |
 
 syscall_dispatch 用 switch 分派；結果填 frame->a0。阻塞服務保留核心呼叫堆疊、切到排程器，恢復後正常回傳真正結果，再走相同的 a0 回寫路徑，不先存 placeholder。
 exec 成功時 dispatcher 立即返回，不能把正常返回值 0 再寫進 frame->a0，否則會破壞新程式所需的初始角色參數。失敗才按一般規則回傳錯誤。
@@ -322,6 +326,7 @@ filesystem syscall 先複製 NUL 結尾路徑，資料透過可回報錯誤的 u
 shell 的 memory_command 提供 mem alloc／write／read／free：sbrk 保留頁數；以 volatile 指標填寫整頁及查看首／中／尾 bytes，讓一般互動能觸發真實硬體缺頁。vmstat 與 vmstat limit 呼叫核心診斷介面。這些是使用者可操作工具，不含自動斷言或測試程式。
 
 shell_main 顯示提示、read 一行、tokenize（切分命令）、command（分派），全程在 U-mode 執行。
+`ls` 無參數列根目錄；rm、cp 使用絕對檔案路徑。`cls` 經 write 輸出 ANSI 清畫面、清捲動歷史與游標回原點序列，不操作磁碟；實際歷史清除由終端決定。
 每次提示前 yield 兩輪，足以讓本版 worker（自身先 yield 一次）到達等待點，避免背景文字蓋過新提示；不是通用工作控制或時間片。
 tokenize 原地將空白／tab／換行及 | 分開，最多 4 個 token（詞元）。只有 writer、|、reader 的三詞組合啟動固定管線，其他組合不會被當作主機命令。
 positive_number 檢查每個十進位數字與 LONG_MAX 溢位；wait_child 顯示結果，run_pipeline 前景等待兩個端點行程。

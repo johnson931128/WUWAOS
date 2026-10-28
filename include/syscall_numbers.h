@@ -29,6 +29,8 @@
 #define SYS_WORKSTATE 25
 #define SYS_SLEEP_MS 26
 #define SYS_CONSOLE_POLL 27
+#define SYS_FS_REMOVE 28
+#define SYS_FS_COPY 29
 
 #define PROGRAM_WORKER 1
 #define PROGRAM_QUICK 2

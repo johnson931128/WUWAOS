@@ -65,6 +65,10 @@ long fs_list(const char *path, char *buffer, unsigned long capacity) {
 }
 long fs_mkdir(const char *path) { return syscall3(SYS_FS_MKDIR, (long)path, 0, 0); }
 long fs_touch(const char *path) { return syscall3(SYS_FS_TOUCH, (long)path, 0, 0); }
+long fs_remove(const char *path) { return syscall3(SYS_FS_REMOVE, (long)path, 0, 0); }
+long fs_copy(const char *source, const char *destination) {
+    return syscall3(SYS_FS_COPY, (long)source, (long)destination, 0);
+}
 long fs_readfile(const char *path, char *buffer, unsigned long capacity) {
     return syscall3(SYS_FS_READ, (long)path, (long)buffer, (long)capacity);
 }

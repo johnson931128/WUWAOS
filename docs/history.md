@@ -21,6 +21,7 @@
 | 15 | [計時器中斷與 RR 排程](./SPEC-15-timer-rr.md)，現行 CPU 排程政策 |
 | 16 | [RV64 核心上下文切換](./SPEC-16-kernel-context.md)，獨立排程器堆疊、阻塞後恢復 C 呼叫 |
 | 17 | [workstate 即時監測](./SPEC-17-workstate.md)，CPU／RAM 快照、毫秒休眠與全螢幕操作 |
+| 18 | [檔案命令與 cls](./SPEC-18-file-commands.md)，刪除、複製、畫面與捲動歷史 |
 
 ## 如何判斷是否驗證過
 

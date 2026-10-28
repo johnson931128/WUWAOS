@@ -127,10 +127,22 @@ void syscall_dispatch(TrapFrame *frame) {
         break;
     }
     case SYS_FS_MKDIR:
-    case SYS_FS_TOUCH: {
+    case SYS_FS_TOUCH:
+    case SYS_FS_REMOVE: {
         char path[FS_PATH_MAX];
         result = copy_path(process_current()->page_table, frame->registers[10], path);
-        if (result == 0) result = number == SYS_FS_MKDIR ? fs_mkdir(path) : fs_touch(path);
+        if (result == 0) {
+            if (number == SYS_FS_MKDIR) result = fs_mkdir(path);
+            else if (number == SYS_FS_TOUCH) result = fs_touch(path);
+            else result = fs_remove(path);
+        }
+        break;
+    }
+    case SYS_FS_COPY: {
+        char source[FS_PATH_MAX], destination[FS_PATH_MAX];
+        result = copy_path(process_current()->page_table, frame->registers[10], source);
+        if (result == 0) result = copy_path(process_current()->page_table, frame->registers[11], destination);
+        if (result == 0) result = fs_copy(source, destination);
         break;
     }
     case SYS_FS_READ: {

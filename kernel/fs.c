@@ -469,6 +469,122 @@ static int inode_free_blocks(Inode *inode) {
     return 0;
 }
 
+/* Distinguish a missing entry from an I/O error before destructive operations. */
+static int directory_find_entry(const Inode *directory, const char *name,
+                                uint32_t *index, DirectoryEntry *result) {
+    if (directory->type != FS_TYPE_DIRECTORY) return -20;
+    const uint32_t count = directory->size / (uint32_t)sizeof(DirectoryEntry);
+    for (uint32_t i = 0; i < count; ++i) {
+        DirectoryEntry entry;
+        if (dir_entry_read(directory, i, &entry) < 0) return -5;
+        size_t j = 0;
+        while (j < FS_NAME_SIZE && entry.name[j] == name[j] && name[j]) ++j;
+        if (j < FS_NAME_SIZE && entry.name[j] == 0 && name[j] == 0) {
+            *index = i;
+            *result = entry;
+            return 0;
+        }
+    }
+    return -2;
+}
+
+static int special_name(const char *name) {
+    return name[0] == '.' && (name[1] == 0 || (name[1] == '.' && name[2] == 0));
+}
+
+/* Only call on an inode which is no longer reachable from a directory. */
+static int inode_release(uint32_t number, Inode *inode) {
+    if (inode_free_blocks(inode) < 0) return -5;
+    *inode = (Inode){0};
+    if (inode_write(number, inode) < 0) return -5;
+    if (bitmap_set(superblock.inode_bitmap_sector, number, 0) < 0) return -5;
+    return 0;
+}
+
+long fs_remove(const char *path) {
+    if (!mounted) return -22;
+    uint32_t parent_number, index;
+    char name[FS_NAME_SIZE] = {0};
+    int error = parent_lookup(path, &parent_number, name);
+    if (error < 0) return error;
+    if (special_name(name)) return -22;
+    Inode parent, inode;
+    DirectoryEntry entry;
+    if (inode_read(parent_number, &parent) < 0) return -5;
+    error = directory_find_entry(&parent, name, &index, &entry);
+    if (error < 0) return error;
+    if (inode_read(entry.inode, &inode) < 0) return -5;
+    if (inode.type != FS_TYPE_FILE) return -21;
+
+    const uint32_t count = parent.size / (uint32_t)sizeof(DirectoryEntry);
+    const uint32_t new_size = parent.size - (uint32_t)sizeof(DirectoryEntry);
+    if (index != count - 1) {
+        DirectoryEntry last;
+        if (dir_entry_read(&parent, count - 1, &last) < 0 ||
+            dir_entry_write(&parent, index, &last) < 0) return -5;
+    }
+    parent.size = new_size;
+    if (inode_write(parent_number, &parent) < 0) return -5;
+    return inode_release(entry.inode, &inode);
+}
+
+long fs_copy(const char *source, const char *destination) {
+    if (!mounted) return -22;
+    uint32_t source_number, parent_number, index = 0;
+    int error = path_lookup(source, &source_number);
+    if (error < 0) return error;
+    Inode original;
+    if (inode_read(source_number, &original) < 0) return -5;
+    if (original.type != FS_TYPE_FILE) return -21;
+
+    char name[FS_NAME_SIZE] = {0};
+    error = parent_lookup(destination, &parent_number, name);
+    if (error < 0) return error;
+    if (special_name(name)) return -21;
+    Inode parent, old = {0};
+    DirectoryEntry entry;
+    if (inode_read(parent_number, &parent) < 0) return -5;
+    error = directory_find_entry(&parent, name, &index, &entry);
+    const int exists = error == 0;
+    if (error != 0 && error != -2) return error;
+    if (exists) {
+        if (entry.inode == source_number) return -22;
+        if (inode_read(entry.inode, &old) < 0) return -5;
+        if (old.type != FS_TYPE_FILE) return -21;
+    }
+
+    const long allocated = inode_allocate(FS_TYPE_FILE);
+    if (allocated < 0) return -28;
+    Inode copy = { .type = FS_TYPE_FILE };
+    for (uint32_t position = 0; position < original.size; position += FS_SECTOR_SIZE) {
+        uint32_t from, to;
+        uint8_t data[FS_SECTOR_SIZE];
+        const uint32_t block = position / FS_SECTOR_SIZE;
+        if (inode_block(&original, block, 0, &from) < 0 || from == 0 ||
+            read_sector(from, data) < 0) { error = -5; goto discard; }
+        if (inode_block(&copy, block, 1, &to) < 0 || to == 0) { error = -28; goto discard; }
+        if (write_sector(to, data) < 0) { error = -5; goto discard; }
+    }
+    copy.size = original.size;
+    if (inode_write((uint32_t)allocated, &copy) < 0) { error = -5; goto discard; }
+
+    /* Do not free the new inode on a failed publication: it may already be linked. */
+    if (exists) {
+        const uint32_t old_number = entry.inode;
+        entry.inode = (uint32_t)allocated;
+        if (dir_entry_write(&parent, index, &entry) < 0) return -5;
+        if (inode_release(old_number, &old) < 0) return -5;
+    } else {
+        error = directory_add(parent_number, name, (uint32_t)allocated);
+        if (error < 0) return error;
+    }
+    return (long)copy.size;
+
+discard:
+    if (inode_release((uint32_t)allocated, &copy) < 0) return -5;
+    return error;
+}
+
 long fs_read(const char *path, size_t offset, void *buffer, size_t length) {
     uint32_t number;
     const int found = path_lookup(path, &number);

@@ -201,6 +201,10 @@ cat /home/user/notes/today.txt
 | help | 指令說明 |
 | ps | 有效行程、父 PID、名稱、狀態、等待原因、空閒欄位與 FIFO 就緒佇列 |
 | workstate | 每秒更新所有行程、區間 CPU%、RSS／Swap、整體 RAM；按 q 返回 shell |
+| ls | 不帶參數列出根目錄；`ls <絕對路徑>` 列出指定目錄 |
+| rm | `rm <絕對路徑>` 刪除一般檔案並回收空間 |
+| cp | `cp <來源絕對路徑> <目的絕對路徑>` 複製一般檔案，目的檔存在時覆寫 |
+| cls | 清除終端畫面與捲動歷史，是否能清除歷史取決於終端支援 |
 | pcb <pid> | 特定 PCB 的實際保存資料 |
 | spawn worker / spawn quick | 建立背景子行程 |
 | fork | 複製 shell，顯示父子返回值與私有資料，子行程結束後等待回收 |
@@ -211,7 +215,6 @@ cat /home/user/notes/today.txt
 | kill <pid> | 終止 shell 的直接子行程；不可終止 PID 1 或自己 |
 | trace on / trace off | 開關子行程狀態轉換紀錄；shell 自身用 pcb 1 查閱 |
 | writer \| reader | 前景執行固定雙行程管線 |
-| ls <path> | 列出目錄內容 |
 | mkdir <path> | 建立目錄 |
 | touch <path> | 建立空檔案；檔案已存在時不清空 |
 | write <path> <text> | 建立或覆寫檔案，文字不含空白 |
@@ -250,6 +253,7 @@ cat /home/user/notes/today.txt
 - [SPEC-15](docs/SPEC-15-timer-rr.md)：計時器中斷、50 ms RR、模組分類與無 yield 的搶占驗證；[主題章節](docs/topics/scheduling.md) 包含 Mermaid 流程圖。
 - [SPEC-16](docs/SPEC-16-kernel-context.md)：核心組合語言上下文、獨立排程器堆疊與核心函式阻塞／恢復；[行程章節](docs/topics/processes.md) 包含流程圖。
 - [SPEC-17](docs/SPEC-17-workstate.md)：workstate 即時 CPU／記憶體監測、統計口徑與定時等待；[操作與原理](docs/topics/monitoring.md)。
+- [SPEC-18](docs/SPEC-18-file-commands.md)：ls、rm、cp 與 cls 的操作、檔案回收與複製限制。
 
 先讀 user/shell.c 的 shell_main／command，再追蹤 user/api.c → kernel/syscall.c → process.c 或 io.c，最後看 trap.S 如何交還使用者程式。
 手動練習：對照 pcb 2 顯示的等待通道與 sepc（保存的指令位址），說明 wakeup 後為什麼從 sleep 呼叫後面繼續。
