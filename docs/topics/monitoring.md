@@ -9,9 +9,11 @@
 | PID／PPID、NAME、STATE | 行程編號、父行程、內建程式名稱與真實 PCB 狀態，包含 Waiting／Zombie |
 | CPU% | 最近兩次畫面快照之間，被派發執行的時間比例 |
 | CPU ms | 從建立以來累計的派發執行時間，fork 子從零開始，exec 保留 |
-| RSS KiB | 目前仍在 RAM 的使用者頁面，不含核心堆疊與頁表 |
+| RSS(K) | 目前仍在 RAM 的使用者頁面，單位 KiB，不含核心堆疊與頁表 |
 | MEM% | RSS 除以平台的總 RAM，目前為 128 MiB；小行程可能顯示 0.0%，可看 KiB |
-| SWAP KiB | 已換出而不常駐 RAM 的使用者頁面 |
+| SWAP(K) | 已換出而不常駐 RAM 的使用者頁面，單位 KiB |
+
+行程使用 ASCII 表格顯示，數字靠右、名稱與狀態靠左；標題與資料共用欄寬。數值變長時欄位會擴展，避免截斷；若總寬超過終端視窗，請加寬 PowerShell 視窗。
 
 上方 RAM used 包含核心、頁表、OpenSBI 與 FDT 等保留區，不等於各列 RSS 相加。Reserved/static 是未進入動態配置池的部分。Swap slots 也包含常駐頁仍保留的交換區備份，所以不一定等於表格的 SWAP KiB 總和。
 

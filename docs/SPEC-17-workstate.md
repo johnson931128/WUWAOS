@@ -40,3 +40,11 @@
 - npm docs:build 通過，維持既有 Mermaid 大型 chunk 提醒；瀏覽器確認新章節欄位表格、導覽與 CPU 流程圖。
 
 未注入錯誤快照長度／位址、計數器長期溢位或終端 I/O 失敗；未驗證優先權排程、多核心與真實硬體。不含每執行緒統計、user/system 分離、I/O wait 分類、歷史儲存、排序／kill 操作、核心同步鎖與遠端監測。網站不內嵌 OS 程式碼，僅連結 GitHub。
+
+## 2026-10-28：行程表格排版調整
+
+需求：workstate 的標題與行程資料欄位不易對齊，改為易讀的表格。保留一秒更新、q 退出、所有欄位和統計口徑，不新增測試程式碼。
+
+設計：先將快照各欄格式化，計算標題及所有行程所需最大欄寬；以 ASCII `+`、`-`、`|` 畫邊框，數字靠右、名稱及狀態靠左。預設表格寬 77 欄，RSS(K)／SWAP(K) 的 K 表示 KiB。長數值會擴展欄寬，不截斷；超過終端寬度時需加寬視窗。每行一次輸出並清除行尾，避免上一輪較寬時殘留。固定 4 個 PCB、9 欄，欄寬掃描及輸出成本與顯示欄位數成正比。
+
+驗收：WSL Ubuntu／Clang／QEMU 8.2.2 使用獨立 workstate-table-check.img 與 workstate-table-swap.img。建置通過；workstate 同時顯示 shell Running、worker Waiting、quick Zombie、counter Waiting 四列，標題與數字對齊、第一輪為 --、後續每秒更新，q 返回 shell。wakeup／wait 回收子行程後再次開啟，單列顯示與 q 返回正常。觀察初版 shell text 已達 16368 bytes、距 16 KiB 上限僅 16 bytes；限制重複的數字格式化函式內聯後降至 14624 bytes，重新建置並重新完成以上 QEMU 操作。最終互動紀錄在 build/workstate-table-final.log。未實際驗證超出終端寬度的數值。

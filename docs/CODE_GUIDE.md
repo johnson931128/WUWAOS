@@ -224,6 +224,8 @@ kernel/workstate.c 在派發前記錄 run_started，suspend_current 切走前將
 
 user/workstate.c 以 PID 配對兩次快照、計算 ticks 差與牆鐘差，整數長除法產生千分比，顯示一位小數；首張不虛構區間。RAM used=128 MiB-free，RSS 僅使用者常駐頁；核心與保留區不能由各列 RSS 相加得到。workstate_main 取得 raw console、進 alternate screen，經 console_poll 非阻塞讀鍵與 sleep_ms(50) 讓出 CPU，每至少 1 秒重畫，q 後恢復終端。功能在 shell PID 內，不新增 PCB。限制與驗收見 SPEC-17。
 
+process_table 先格式化各列，依最大資料長度調整欄寬，再輸出 ASCII 表頭、邊框與資料；數值右對齊、名稱及狀態左對齊，逐行清除剩餘字元。預設寬 77 欄，欄位增長不截斷；較窄視窗或很長數值可能需要加寬終端。RSS(K)／SWAP(K) 的單位是 KiB。
+
 ### scheduler.c / scheduler.h：保存 Ready 行程的 FIFO
 
 `ReadyQueue` 保存 `Process *head`、`Process *tail` 與 count。節點鏈結直接放在 PCB，無需 malloc 或額外複製行程資料。
