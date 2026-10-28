@@ -42,6 +42,9 @@ CPU 執行記憶體中的機器碼，不知道來源檔名。OpenSBI 負責早�
 | kernel/clock.h | 共用 rdtime、QEMU 10 MHz 時基與毫秒換算 |
 | kernel/sbi.c / sbi.h | SBI BASE／TIME 呼叫，隔離韌體 ABI |
 | kernel/timer.c / timer.h | 中斷初始化、時間片到期事件、清除 pending 與計數 |
+| kernel/workstate.c / workstate.h | 派發時間累計、系統 busy 總計、安全唯讀監測快照 |
+| include/workstate_info.h | 固定容量、版本化的行程 CPU／記憶體快照 ABI |
+| user/workstate.c / workstate.h | shell 內即時全螢幕、區間比率計算、定時休眠與 q 退出 |
 | kernel/scheduler.c / scheduler.h | 單向鏈結 FIFO 就緒佇列、入列／取隊首／移除與順序查閱 |
 | kernel/io.c / io.h | 行輸入／raw console、固定管道、pending I/O（尚未完成的輸入輸出） |
 | kernel/block.c / block.h | FDT 裝置探索、VirtIO-MMIO 區塊讀寫佇列 |
@@ -49,7 +52,7 @@ CPU 執行記憶體中的機器碼，不知道來源檔名。OpenSBI 負責早�
 | kernel/memory.c | freestanding（無標準執行環境）建置所需的 byte-wise memset／memcpy |
 | kernel/page.c / page.h | 4 KiB 實體頁面空閒串列、配置／回收、配置 bitmap 與頁數查詢 |
 | kernel/swap.c / swap.h | 獨立交換區標頭、slot bitmap、4 KiB 換入／換出讀寫 |
-| kernel/syscall.c / syscall.h | 24 個 syscall（系統呼叫）的編號分派 |
+| kernel/syscall.c / syscall.h | 27 個 syscall（系統呼叫）的編號分派 |
 | kernel/user_image.S | 把 user.bin、app.bin 與 fan.bin 三份獨立映像嵌入核心唯讀資料 |
 | kernel/linker.ld | 核心入口、記憶體區段與權限邊界 |
 | include/syscall_numbers.h | 共用系統呼叫編號、內建程式角色、錯誤碼 |
@@ -211,6 +214,16 @@ process_pipeline 先驗證兩個 PID 的回寫範圍與資源，分配 pipe，�
 
 KernelContext 共 14 個 64-bit 欄位，大小 112 bytes；共享偏移與編譯期布局契約避免 C／組合語言不一致。context_switch 在 C 呼叫邊界用 a0 指向舊上下文、a1 指向新上下文，保存 ra、sp、s0～s11，再恢復新值，以 ret 跳到新 ra。單次 O(1)。a／t 等 caller-saved 暫存器由呼叫端依 ABI 保護，使用者完整暫存器仍在 TrapFrame；swtch 不取代 trap.S，也不自行改 satp、sscratch 或 sstatus。堆疊需 16-byte 對齊，核心 SIE 始終為零。pcb 顯示的 context.sp／ra 在 Running 時可能過時。完整設計見 SPEC-16。
 
+### process_sleep_ms：定時等待
+
+Spec 17 增加 WAIT_TIMER：process_sleep_ms 接受 1～60000 ms，記錄硬體 deadline 並保存核心呼叫；scheduler_loop 每輪檢查到期者改 Ready。全員等時間時保持期限輪詢，不走沒有事件來源的永久 idle。尚無中斷驅動的 idle 喚醒；長核心服務可延遲期限。
+
+### workstate：計時、快照與畫面
+
+kernel/workstate.c 在派發前記錄 run_started，suspend_current 切走前將差值累加到 PCB cpu_ticks 與全域 busy_ticks；全域累計不因 reap 減少。快照以同一個 now 補上目前行程尚未結算的時間，不改動原計數。頁面用量透過 vm_get_usage 掃描補充頁表，page_get_stats 讀配置池計數。固定 4 PCB、每空間固定補充頁表上限，快照成本 O(P×每空間頁數)。先檢查 ABI 長度與可寫位址，再安全複製，不公開核心指標。
+
+user/workstate.c 以 PID 配對兩次快照、計算 ticks 差與牆鐘差，整數長除法產生千分比，顯示一位小數；首張不虛構區間。RAM used=128 MiB-free，RSS 僅使用者常駐頁；核心與保留區不能由各列 RSS 相加得到。workstate_main 取得 raw console、進 alternate screen，經 console_poll 非阻塞讀鍵與 sleep_ms(50) 讓出 CPU，每至少 1 秒重畫，q 後恢復終端。功能在 shell PID 內，不新增 PCB。限制與驗收見 SPEC-17。
+
 ### scheduler.c / scheduler.h：保存 Ready 行程的 FIFO
 
 `ReadyQueue` 保存 `Process *head`、`Process *tail` 與 count。節點鏈結直接放在 PCB，無需 malloc 或額外複製行程資料。
@@ -293,6 +306,9 @@ WUWAOS 自訂 ABI（呼叫約定）：a7（呼叫編號暫存器）、a0–a2（
 | 22 | console_mode(raw) | 取得／釋放逐字元、不回顯的終端輸入模式 |
 | 23 | sbrk(increment) | 增減 heap 合法範圍，回傳舊 break；按需配置實體頁 |
 | 24 | vmstat(frame_limit) | 0 查閱 VM／swap 統計，正數設定使用者常駐頁預算 |
+| 25 | workstate_snapshot(snapshot) | 唯讀行程 CPU／RAM 快照，核心檢查完整結構長度與使用者範圍 |
+| 26 | sleep_ms(milliseconds) | 定時等待 1～60000 ms，核心到期後改 Ready |
+| 27 | console_poll() | raw console 所有者非阻塞讀鍵：0 無資料，1～256 為 byte 加一 |
 
 syscall_dispatch 用 switch 分派；結果填 frame->a0。阻塞服務保留核心呼叫堆疊、切到排程器，恢復後正常回傳真正結果，再走相同的 a0 回寫路徑，不先存 placeholder。
 exec 成功時 dispatcher 立即返回，不能把正常返回值 0 再寫進 frame->a0，否則會破壞新程式所需的初始角色參數。失敗才按一般規則回傳錯誤。

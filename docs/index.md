@@ -16,6 +16,7 @@ WUWAOS 是以 C 與 RISC-V 組合語言撰寫、真正運行於 QEMU 虛擬電�
 | CPU 如何找到資料，缺頁時發生什麼？ | [Sv39](./topics/memory.md) → [按需分頁與交換](./topics/paging.md) |
 | 輸入的文字如何存到磁碟？ | [輸入輸出](./topics/io.md) → [WUFS](./topics/filesystem.md) |
 | 如何寫自己的互動程式？ | [Shell 與 fan](./topics/applications.md) |
+| 如何觀察行程的 CPU 與記憶體用量？ | [workstate 即時監測](./topics/monitoring.md) |
 
 ## 目前的系統邊界
 
@@ -29,6 +30,7 @@ WUWAOS 是以 C 與 RISC-V 組合語言撰寫、真正運行於 QEMU 虛擬電�
 | 記憶體 | Sv39 三級頁表、4 KiB 頁、按需分頁、FIFO 置換、獨立 Swap |
 | 磁碟 | VirtIO 區塊 I/O、自訂 WUFS、重新啟動後保留檔案 |
 | 操作 | Shell、固定 writer \| reader 管道、fan 全螢幕文字編輯器 |
+| 監測 | workstate 全螢幕；每秒更新行程、CPU 派發時間、RSS／Swap 與整體 RAM |
 
 這是現有功能的實作紀錄，不是承諾與 Linux 相容。沒有一般磁碟 ELF 載入器、通用檔案描述號、網路或圖形桌面。
 

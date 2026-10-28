@@ -200,6 +200,7 @@ cat /home/user/notes/today.txt
 | --- | --- |
 | help | 指令說明 |
 | ps | 有效行程、父 PID、名稱、狀態、等待原因、空閒欄位與 FIFO 就緒佇列 |
+| workstate | 每秒更新所有行程、區間 CPU%、RSS／Swap、整體 RAM；按 q 返回 shell |
 | pcb <pid> | 特定 PCB 的實際保存資料 |
 | spawn worker / spawn quick | 建立背景子行程 |
 | fork | 複製 shell，顯示父子返回值與私有資料，子行程結束後等待回收 |
@@ -248,6 +249,7 @@ cat /home/user/notes/today.txt
 - [SPEC-10](docs/SPEC-10-demand-paging.md)：按需分頁、FIFO 頁面置換、獨立 swap 與失敗處理。
 - [SPEC-15](docs/SPEC-15-timer-rr.md)：計時器中斷、50 ms RR、模組分類與無 yield 的搶占驗證；[主題章節](docs/topics/scheduling.md) 包含 Mermaid 流程圖。
 - [SPEC-16](docs/SPEC-16-kernel-context.md)：核心組合語言上下文、獨立排程器堆疊與核心函式阻塞／恢復；[行程章節](docs/topics/processes.md) 包含流程圖。
+- [SPEC-17](docs/SPEC-17-workstate.md)：workstate 即時 CPU／記憶體監測、統計口徑與定時等待；[操作與原理](docs/topics/monitoring.md)。
 
 先讀 user/shell.c 的 shell_main／command，再追蹤 user/api.c → kernel/syscall.c → process.c 或 io.c，最後看 trap.S 如何交還使用者程式。
 手動練習：對照 pcb 2 顯示的等待通道與 sepc（保存的指令位址），說明 wakeup 後為什麼從 sleep 呼叫後面繼續。
