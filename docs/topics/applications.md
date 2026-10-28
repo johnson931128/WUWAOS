@@ -1,5 +1,7 @@
 # 10 · Shell 與 fan 編輯器
 
+`ls` 不帶參數時列出根目錄；`rm /absolute/file` 刪除檔案，`cp /absolute/source /absolute/destination` 複製檔案。`cls` 會要求終端清除畫面和捲動歷史，保留 WUFS 檔案；捲動歷史是否真的清除取決於終端對控制序列的支援。命令範圍與限制見 [Spec 18](../SPEC-18-file-commands.md)。
+
 核心提供能力，使用者程式把能力組合成操作。WUWAOS 的 shell 與 fan 都是 U-mode（使用者模式）程式，透過 syscall 操作行程、終端與檔案。
 
 ## Shell 如何執行命令
@@ -11,7 +13,8 @@
 | 操作 | 主要流程 |
 | --- | --- |
 | ps／pcb | 進核心查詢行程狀態 |
-| ls／cat／write | 以路徑呼叫 WUFS 服務 |
+| ls／cat／write／rm／cp | 以路徑呼叫 WUFS 服務 |
+| cls | 透過終端控制序列清除畫面及捲動歷史 |
 | run counter | fork 子行程，再 exec 指定內建程式 ID |
 | writer \| reader | 建立固定管道與兩個端點行程 |
 | fan 路徑 | fork → exec fan 並傳入路徑 → 父 shell 等待 |
