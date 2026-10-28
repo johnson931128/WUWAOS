@@ -10,7 +10,7 @@ static void field(const char *text, unsigned int width) {
     while (length++ < width) user_puts(" ");
 }
 
-static void number(uint64_t value, unsigned int width) {
+static __attribute__((noinline)) void number(uint64_t value, unsigned int width) {
     char text[21];
     unsigned int length = 0;
     do { text[length++] = (char)('0' + value % 10); value /= 10; } while (value);
@@ -52,6 +52,108 @@ static uint64_t previous_cpu(const WorkstateSnapshot *previous, int64_t pid) {
     return 0; /* PID created during this interval; never compare reused PCB slots. */
 }
 
+enum { COLUMNS = 9, CELL_SIZE = 24, LINE_SIZE = 256 };
+static const char *const headers[COLUMNS] = {
+    "PID", "PPID", "NAME", "STATE", "CPU%", "RSS(K)", "MEM%", "SWAP(K)", "CPUms"
+};
+static const unsigned int minimum_widths[COLUMNS] = {3, 4, 7, 7, 6, 6, 6, 7, 5};
+
+static unsigned int text_length(const char *text) {
+    unsigned int length = 0;
+    while (text[length]) ++length;
+    return length;
+}
+
+static __attribute__((noinline)) void decimal(char out[CELL_SIZE], uint64_t value) {
+    unsigned int length = 0;
+    do { out[length++] = (char)('0' + value % 10); value /= 10; } while (value);
+    for (unsigned int i = 0; i < length / 2; ++i) {
+        const char saved = out[i]; out[i] = out[length - i - 1]; out[length - i - 1] = saved;
+    }
+    out[length] = 0;
+}
+
+static void percentage(char out[CELL_SIZE], uint64_t value) {
+    decimal(out, value / 10);
+    unsigned int length = text_length(out);
+    out[length++] = '.';
+    out[length++] = (char)('0' + value % 10);
+    out[length++] = '%';
+    out[length] = 0;
+}
+
+static void cells(char out[COLUMNS][CELL_SIZE], const WorkstateProcess *row,
+                  const WorkstateSnapshot *now, const WorkstateSnapshot *previous) {
+    const uint64_t elapsed = now->ticks - previous->ticks;
+    decimal(out[0], (uint64_t)row->pid);
+    decimal(out[1], (uint64_t)row->parent_pid);
+    for (unsigned int column = 2; column <= 3; ++column) {
+        const char *source = column == 2 ? row->name : row->state;
+        unsigned int i = 0;
+        while (i + 1 < CELL_SIZE && source[i]) { out[column][i] = source[i]; ++i; }
+        out[column][i] = 0;
+    }
+    if (elapsed) percentage(out[4], ratio(row->cpu_ticks - previous_cpu(previous, row->pid), elapsed));
+    else { out[4][0] = '-'; out[4][1] = '-'; out[4][2] = 0; }
+    decimal(out[5], row->resident_pages * now->page_bytes / 1024);
+    percentage(out[6], ratio(row->resident_pages * now->page_bytes, now->ram_bytes));
+    decimal(out[7], row->swapped_pages * now->page_bytes / 1024);
+    decimal(out[8], row->cpu_ticks / (now->timebase_hz / 1000));
+}
+
+static void border(const unsigned int widths[COLUMNS]) {
+    char line[LINE_SIZE];
+    unsigned int at = 0;
+    line[at++] = '+';
+    for (unsigned int column = 0; column < COLUMNS; ++column) {
+        for (unsigned int i = 0; i < widths[column] + (column < 2 ? 1U : 2U); ++i) line[at++] = '-';
+        line[at++] = '+';
+    }
+    line[at++] = '\033'; line[at++] = '['; line[at++] = 'K'; line[at++] = '\n';
+    (void)user_write_all(1, line, at);
+}
+
+static void table_row(const char *const values[COLUMNS], const unsigned int widths[COLUMNS], int header) {
+    char line[LINE_SIZE];
+    unsigned int at = 0;
+    line[at++] = '|';
+    for (unsigned int column = 0; column < COLUMNS; ++column) {
+        const unsigned int length = text_length(values[column]);
+        const int right = !header && column != 2 && column != 3;
+        if (column >= 2) line[at++] = ' ';
+        if (right) for (unsigned int i = length; i < widths[column]; ++i) line[at++] = ' ';
+        for (unsigned int i = 0; i < length; ++i) line[at++] = values[column][i];
+        if (!right) for (unsigned int i = length; i < widths[column]; ++i) line[at++] = ' ';
+        line[at++] = ' ';
+        line[at++] = '|';
+    }
+    line[at++] = '\033'; line[at++] = '['; line[at++] = 'K'; line[at++] = '\n';
+    (void)user_write_all(1, line, at);
+}
+
+static void process_table(const WorkstateSnapshot *now, const WorkstateSnapshot *previous) {
+    unsigned int widths[COLUMNS];
+    char rendered[COLUMNS][CELL_SIZE];
+    const char *values[COLUMNS];
+    for (unsigned int column = 0; column < COLUMNS; ++column) widths[column] = minimum_widths[column];
+    for (uint64_t i = 0; i < now->count; ++i) {
+        cells(rendered, &now->processes[i], now, previous);
+        for (unsigned int column = 0; column < COLUMNS; ++column) {
+            const unsigned int length = text_length(rendered[column]);
+            if (length > widths[column]) widths[column] = length;
+        }
+    }
+    border(widths);
+    table_row(headers, widths, 1);
+    border(widths);
+    for (uint64_t i = 0; i < now->count; ++i) {
+        cells(rendered, &now->processes[i], now, previous);
+        for (unsigned int column = 0; column < COLUMNS; ++column) values[column] = rendered[column];
+        table_row(values, widths, 0);
+    }
+    border(widths);
+}
+
 static void draw(const WorkstateSnapshot *now, const WorkstateSnapshot *previous) {
     const uint64_t elapsed = now->ticks - previous->ticks;
     const uint64_t cpu = ratio(now->busy_ticks - previous->busy_ticks, elapsed);
@@ -69,19 +171,7 @@ static void draw(const WorkstateSnapshot *now, const WorkstateSnapshot *previous
     user_puts(" KiB | Swap slots: "); number(now->swap_used_pages, 0); user_puts("/");
     number(now->swap_total_pages, 0); user_puts("\033[K\nProcesses: "); number(now->count, 0);
     user_puts(" | monitor runs inside shell\033[K\n\033[K\n");
-    user_puts("PID  PPID NAME     STATE    CPU%    RSS KiB MEM%    SWAP KiB CPU ms\033[K\n");
-    for (uint64_t i = 0; i < now->count; ++i) {
-        const WorkstateProcess *row = &now->processes[i];
-        number((uint64_t)row->pid, 5); number((uint64_t)row->parent_pid, 5);
-        field(row->name, 9); field(row->state, 9);
-        if (elapsed) percent(ratio(row->cpu_ticks - previous_cpu(previous, row->pid), elapsed));
-        else field("--", 7);
-        number(row->resident_pages * now->page_bytes / 1024, 8);
-        percent(ratio(row->resident_pages * now->page_bytes, now->ram_bytes));
-        number(row->swapped_pages * now->page_bytes / 1024, 9);
-        number(row->cpu_ticks / (now->timebase_hz / 1000), 0);
-        user_puts("\033[K\n");
-    }
+    process_table(now, previous);
     user_puts("\033[J\nCPU counts dispatched user + kernel time, not host CPU load.\n");
     user_puts("Idle includes scheduler/UART polling; RSS excludes kernel stacks/tables.\n");
     user_puts("RAM used includes reserved/static memory; MEM% uses total RAM.\n");
