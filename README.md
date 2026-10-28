@@ -190,7 +190,7 @@ write /home/user/notes/today.txt hello
 cat /home/user/notes/today.txt
 ```
 
-目錄採 Linux 熟悉的名稱，檔案系統格式是 WUFS，並非 Linux 可掛載的格式。`write` 會覆寫檔案內容，只接受一個不含空白的文字 token。磁碟映像在 QEMU 關閉後保留；`make clean` 不會刪除它。
+目前工作目錄由各行程保存；檔案命令可使用相對或絕對路徑。`cd` 和 `cd ~` 到 `/home/user`，`cd -` 返回前一個目錄；詳見 [Spec 19](docs/SPEC-19-cwd-shell.md)。目錄採 Linux 熟悉的名稱，檔案系統格式是 WUFS，並非 Linux 可掛載的格式。`write` 會覆寫檔案內容，只接受一個不含空白的文字 token。磁碟映像在 QEMU 關閉後保留；`make clean` 不會刪除它。
 
 `/boot/kernel.elf` 是磁碟內的核心副本；目前仍由 QEMU `-kernel` 直接載入執行，尚未由 bootloader 從磁碟開機。`/bin` 與 `/dev` 目前先建立為空目錄。
 
@@ -201,9 +201,10 @@ cat /home/user/notes/today.txt
 | help | 指令說明 |
 | ps | 有效行程、父 PID、名稱、狀態、等待原因、空閒欄位與 FIFO 就緒佇列 |
 | workstate | 每秒更新所有行程、區間 CPU%、RSS／Swap、整體 RAM；按 q 返回 shell |
-| ls | 不帶參數列出根目錄；`ls <絕對路徑>` 列出指定目錄 |
-| rm | `rm <絕對路徑>` 刪除一般檔案並回收空間 |
-| cp | `cp <來源絕對路徑> <目的絕對路徑>` 複製一般檔案，目的檔存在時覆寫 |
+| pwd / cd | `pwd` 顯示目前目錄；`cd` 回家目錄，`cd ..` 上一層，`cd -` 返回上一個目錄 |
+| ls | 不帶參數列出目前目錄；`ls <路徑>` 列出指定目錄 |
+| rm | `rm <路徑>` 刪除一般檔案並回收空間 |
+| cp | `cp <來源路徑> <目的路徑>` 複製一般檔案，目的檔存在時覆寫 |
 | cls | 清除終端畫面與捲動歷史，是否能清除歷史取決於終端支援 |
 | pcb <pid> | 特定 PCB 的實際保存資料 |
 | spawn worker / spawn quick | 建立背景子行程 |

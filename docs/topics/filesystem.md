@@ -13,6 +13,8 @@ shell 的 cat／write／fan
 
 Linux 風格的 `/bin`、`/boot`、`/dev`、`/home/user` 是目錄命名慣例，並不表示 WUFS 可被 Linux 直接掛載，也不表示這些目錄已具備 Linux 的全部語意。
 
+目前目錄記在各行程的 PCB。相對路徑先接上目前目錄，核心再逐段查找，包含 `.` 和 `..`；`cd` 只有在目標查找成功且是目錄時才更新位置。`pwd` 可以查看，詳細命令及流程見 [Shell 章節](./applications.md)。
+
 ## 磁碟資料結構
 
 | 結構 | 負責什麼 |
