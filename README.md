@@ -1,262 +1,159 @@
 # WUWAOS
 
-## 實作文件網站
+WUWAOS 是以 C 與 RISC-V 組合語言開發的小型作業系統，能在 QEMU 模擬的 RISC-V 64-bit 電腦上啟動。它用來學習作業系統如何管理行程、排程、記憶體、同步工具及檔案系統。
 
-文件依開機、行程、排程、記憶體、I/O、檔案系統與使用者程式分類，原始規格另外保留為歷史紀錄。第一次閱讀從 [文件首頁](docs/index.md) 開始；網站設定與使用方式見 [維護文件網站](docs/topics/writing.md)。
+**[閱讀實作文件網站](https://johnson931128.github.io/WUWAOS/)** · [程式碼與架構導覽](docs/CODE_GUIDE.md) · [規格與驗收紀錄](docs/history.md)
 
-安裝 Node.js 後，在專案根目錄 PowerShell 執行：
+## 目前實作了什麼？
+
+| 主題 | 目前功能 |
+| --- | --- |
+| 開機與執行 | QEMU `virt`、RISC-V 64-bit、單核心、128 MiB RAM；OpenSBI 啟動 S-mode（監督模式）核心 |
+| 使用者程式 | U-mode（使用者模式）、syscall（系統呼叫）、互動式 shell |
+| 行程與排程 | PCB（行程控制區塊）、fork／內建程式 exec／wait／exit、計時器中斷及 50 ms RR（輪詢排程） |
+| 同步與通訊 | 自製 Mutex（互斥鎖）、Semaphore（號誌）、等待／喚醒、固定的 `writer \| reader` 資料管道 |
+| 記憶體 | Sv39 三級頁表、4 KiB 分頁、按需分頁、FIFO 頁面置換與獨立 swap（交換區） |
+| 檔案系統 | VirtIO 區塊裝置、自訂 WUFS、目錄與檔案讀寫，關閉 QEMU 後資料保留 |
+| 互動工具 | `fan` 文字編輯器、`workstate` 即時監測、`demo sync` 同步示範 |
+
+這是教學用途的小型系統，**不是 Linux 相容系統**。目前限制與未完成項目見[系統邊界](#系統邊界與後續方向)。
+
+## 啟動 WUWAOS
+
+以下以 Windows PowerShell、WSL Ubuntu 和此專案路徑為例。WSL 內需要 Clang、LLD、llvm-objcopy、Make、Python 3、QEMU RISC-V 和 OpenSBI。已記錄的驗證環境為 Clang 18.1.3、QEMU 8.2.2、OpenSBI 1.3；其他版本需視環境確認。
+
+在 PowerShell 執行：
+
+```powershell
+wsl -d Ubuntu -- bash -lc 'cd /mnt/c/programing/WUWAOS && make run'
+```
+
+`make run` 會先由主機的 Clang **交叉編譯** RISC-V 機器碼，再啟動 QEMU；沒有變動的檔案通常不會重新編譯。開機後會看到 WUWAOS 字樣及 shell 提示字元：
+
+```text
+WUWAOS user shell. Type help. State tracing is on.
+wuwaos/>
+```
+
+接下來的 `help`、`ls`、`demo sync` 等命令是在 **WUWAOS 的 `wuwaos/>` 提示字元**輸入，不是在 PowerShell 輸入。提示字元會顯示目前目錄，例如 `wuwaos/home/user>`。
+
+退出 QEMU：先按 **Ctrl+A**，放開後按 **X**。`exit` 只結束 shell，不會關閉 QEMU。
+
+## 快速體驗
+
+以下範例逐行輸入；行程 PID（行程編號）每次可能不同，請以畫面顯示的數字為準。
+
+### 看可用指令與系統狀態
+
+```text
+help
+ps
+workstate
+```
+
+`help` 列出命令；`ps` 列出行程狀態；`workstate` 顯示每秒更新的行程 CPU／記憶體資訊，按 **q** 回到 shell。CPU% 是 WUWAOS 行程的派發時間比例，不是 Windows 主機的 CPU 使用率。詳見 [workstate](docs/topics/monitoring.md)。
+
+### 建立檔案並編輯
+
+```text
+cd
+mkdir notes
+cd notes
+touch today.txt
+write today.txt hello_WUWAOS
+cat today.txt
+fan today.txt
+```
+
+`cd` 進入 `/home/user`；`pwd` 可顯示目前目錄，`cd ..` 回上一層，`cd -` 返回前一個目錄。`write` 覆寫檔案，只接受一個不含空白的文字參數；要編輯空白或多行文字，使用 `fan`。
+
+`fan` 中按 **Ctrl+O** 儲存、**Ctrl+X** 離開，再以 `cat today.txt` 讀回。fan 目前支援最多 2048 bytes 的 ASCII／LF 文字，建議終端至少 80×24。`mkdir` 若回 `-17`，代表名稱可能已存在；可用 `ls` 查看。
+
+刪除一般檔案使用 `rm today.txt`。刪除資料夾例如 `rm notes` 時，會警告並要求輸入 `Y`／`N`；選 Y 後會刪除該資料夾及所有內容。根目錄與活躍行程正在使用的工作目錄受到保護。WUFS 沒有交易日誌，磁碟出錯時遞迴刪除可能只完成一部分。
+
+### 觀察同步工具
+
+```text
+demo sync
+```
+
+父行程先持有 Mutex；子行程嘗試取得時會等待。父行程釋放後，子行程取得並釋放鎖，再等待初始值為 0 的 Semaphore；父行程 `post` 後，子行程繼續並被回收。過程會顯示兩次真實 `ps` 快照；繁忙時不保證每次快照剛好看到等待狀態。範例以終端輸出展示臨界區域，沒有使用共享記憶體。[示範說明](docs/SPEC-23-sync-demo.md) · [同步工具設計](docs/SPEC-22-synchronization.md)
+
+### 觀察行程生命週期
+
+```text
+spawn worker
+ps
+pcb <PID>
+wakeup 7
+wait <PID>
+```
+
+將 `<PID>` 換成 `spawn worker` 印出的數字。worker 會先等待通道 7，`wakeup 7` 後退出，`wait` 回收。**先 wakeup，再 wait**；若 shell 先阻塞等待，而沒有其他行程能喚醒 worker，操作就會停住。`run counter` 則示範 fork → exec，使用 `wakeup 9` 和 `wait <PID>` 回收。
+
+### 管道與虛擬記憶體
+
+```text
+writer | reader
+vmstat
+```
+
+前者執行固定的雙行程位元組管道；後者顯示缺頁與 swap 統計。可透過 `vmstat limit <frames>` 和 `mem alloc`／`write`／`read`／`free` 觀察按需分頁及 FIFO 置換，完整步驟與限制見 [記憶體章節](docs/topics/paging.md)。
+
+## 命令速查
+
+| 命令 | 用途 |
+| --- | --- |
+| `help`、`ps`、`pcb <pid>`、`workstate` | 指令說明、行程與資源觀察 |
+| `spawn worker\|quick`、`fork`、`run worker\|quick\|counter` | 建立行程或執行內建程式 |
+| `yield`、`wakeup <channel>`、`wait <pid>`、`kill <pid>` | 讓出 CPU、喚醒、回收或終止直接子行程 |
+| `trace on\|off`、`writer \| reader` | 控制狀態追蹤、執行固定管道 |
+| `demo sync` | 觀察父子行程使用 Mutex 和 Semaphore |
+| `sync mutex create`／`lock <id>`／`unlock <id>` | 建立及操作互斥鎖；完整命令須在 lock／unlock 前加上 `sync mutex` |
+| `sync sem create <n>`／`wait <id>`／`post <id>` | 建立及操作號誌；完整命令須在 wait／post 前加上 `sync sem` |
+| `sync destroy <id>`、`syncbg ...` | 銷毀閒置物件，或在子行程操作同步物件；詳見 `help` |
+| `pwd`、`cd [path]`、`ls [path]` | 查看及切換目錄、列出目錄內容 |
+| `mkdir <path>`、`touch <path>`、`rm <path>`、`cp <source> <destination>` | 建立目錄／檔案、刪除或複製 |
+| `write <path> <text>`、`cat <path>`、`fan <path>` | 覆寫、讀取及編輯檔案 |
+| `cls` | 清除畫面並要求終端清除捲動歷史；效果視終端支援而定 |
+| `vmstat`、`mem ...` | 查看與操作虛擬記憶體 |
+| `exit` | 結束 shell；不會關閉 QEMU |
+
+檔案指令支援絕對和相對路徑。輸入不支援引號、一般背景 `&`、任意程式管線或主機命令。同步操作可能阻塞：如果沒有其他行程能解鎖或 post，shell 會等待；目前沒有前景 Ctrl+C 取消功能。
+
+## 系統架構
+
+```text
+PowerShell → WSL 的 Clang／Make → 已編譯的 RISC-V 核心
+  → QEMU 虛擬電腦 → OpenSBI → WUWAOS 核心 → 使用者模式 shell
+      → syscall（系統呼叫）→ 行程／排程／同步／記憶體／WUFS
+      → UART 終端及 VirtIO 虛擬磁碟
+```
+
+核心有獨立排程器堆疊，使用 RISC-V 組合語言保存與恢復核心上下文。使用者行程可被計時器搶占；核心內不搶占，長時間 syscall 或同步磁碟 I/O 可能延後切換。[行程管理](docs/topics/processes.md) · [RR 排程](docs/topics/scheduling.md) · [虛擬記憶體](docs/topics/paging.md) · [WUFS](docs/topics/filesystem.md)
+
+`make run` 使用 `build/wuwaos.img`（WUFS）及 `build/wuwaos-swap.img`（獨立交換區）；首次建立，後續保留使用者檔案。`make clean` 不會刪除磁碟映像。`/boot/kernel.elf` 是磁碟內的核心副本，**目前 QEMU 仍使用 `-kernel` 直接載入核心**，尚未從該副本開機。
+
+## 系統邊界與後續方向
+
+- 最多 4 個行程；每個行程的使用者程式碼區 16 KiB、資料區與堆疊各 4 KiB，heap 最多 1 MiB。fork 複製私有資料，尚無 COW（寫入時複製）或共享記憶體。
+- 自製 Mutex／Semaphore 目前依賴單核心、核心內不搶占；同步物件最多 8 個。持鎖者離開時 Mutex 會標記資料可能不一致；號誌名額不會因行程結束自動歸還。
+- WUFS 是 WUWAOS 自訂格式，不是可直接掛載的 Linux 檔案系統；尚無完整 POSIX 檔案描述號介面、權限、journal（交易日誌）或一般檔案重導向。
+- shell 的 exec 目前載入內建程式映像，沒有一般磁碟 ELF 載入器、PATH 搜尋或 WUWAOS 內的 C 編譯器。未來在系統內編譯與執行 C 的規劃見 [Spec 21](docs/SPEC-21-native-compilation.md)。
+- 尚無多核心、優先權排程、網路、圖形桌面或完整終端工作控制。各規格的驗收紀錄標明當時實際驗證過的範圍。
+
+## 文件與網站
+
+- [文件網站](https://johnson931128.github.io/WUWAOS/)：依開機、行程、排程、記憶體、I/O、檔案系統及應用程式分類。
+- [CODE_GUIDE](docs/CODE_GUIDE.md)：程式檔案職責與架構。
+- [規格與驗收索引](docs/history.md)：各階段設計、驗證與限制；舊規格保留當時背景。
+- [notes/](notes/)：使用者提供的作業系統課程筆記。
+
+在 Windows 主機預覽文件網站：
 
 ```powershell
 npm.cmd ci
 npm.cmd run docs:dev
 ```
 
-公開網站：[WUWAOS 實作紀錄](https://johnson931128.github.io/WUWAOS/)。本機瀏覽器開啟終端印出的 Local 網址，預設 `http://127.0.0.1:5173/`。`npm.cmd run docs:build` 建置靜態網頁，`npm.cmd run docs:preview` 預覽產物。這些命令在 Windows 主機執行，與下方 WSL／QEMU 的 OS 建置流程各自獨立。
-
-網站只提供閱讀與搜尋，原始碼以 GitHub 連結提供，沒有公開編輯或來源切換。維護者以 `powershell -File tools/publish-docs.ps1` 發布到專用 gh-pages 分支，需有 repository 寫入權限；文件來源另存於 codex/documentation 分支，main 的未提交 OS 工作不會順帶發布。
-
-## 系統概況
-
-可在 QEMU 上操作的小型 RISC-V 64-bit 作業系統。開機進入 U-mode（使用者模式）的 shell（命令列介面），透過 syscall（系統呼叫）控制行程。
-
-記憶體使用 Sv39（三級分頁）：L2 → L1 → L0，每張表 4 KiB、512 個表項。使用者程式碼／資料／堆疊採按需載入，sbrk 可保留最多 1 MiB heap；常駐使用者頁以全域 FIFO 置換，dirty 頁換出到獨立 swap 磁碟。fork 複製私有內容，exec 切換後回收舊空間，wait 歸還頁面與 swap slots。`ps` 顯示底層 RAM 頁數，`vmstat` 顯示缺頁／換入換出與常駐預算。平台仍為 QEMU virt／128 MiB；現行設計見 [Spec 10](docs/SPEC-10-demand-paging.md)，[Spec 08](docs/SPEC-08-memory.md) 保留前階段歷史。
-
-## 啟動
-
-在專案根目錄的 PowerShell 執行：
-
-```powershell
-wsl -d Ubuntu -- bash -lc 'cd /mnt/c/programing/WUWAOS && make'
-wsl -d Ubuntu -- bash -lc 'cd /mnt/c/programing/WUWAOS && make run'
-```
-
-需要 WSL Ubuntu 的 Clang、LLD、llvm-objcopy、Make、qemu-system-riscv64 與 OpenSBI。
-已使用 Clang 18.1.3、QEMU 8.2.2、OpenSBI 1.3 驗證。平台固定為 virt、單核心、128 MiB RAM。
-更改編譯選項後先 `make clean`。build/ 的映像與本機日誌不納入 Git。
-
-開機後看到：
-
-先出現由中央向左右展開的 `WUWAOS` 螢光色塊粗體字，從黃綠漸變到薄荷綠，約 1.3 秒後保留完整字樣並顯示核心資訊，再進入下方 shell。
-字形用 ANSI 256 色背景與空格填成實心筆畫，不使用星號／井字號或特殊 Unicode 字型。圖案 70 欄、左側留白 5 欄，建議至少 80 欄；會清除先前 OpenSBI 的可見輸出。速度由 kernel/splash.c 的每格 32 ms 與最後停留 200 ms 控制，結束重設顏色並恢復游標。詳見 [Spec 13](docs/SPEC-13-block-splash.md)。
-
-```text
-WUWAOS user shell. Type help. State tracing is on.
-wuwaos>
-```
-
-**在 wuwaos> 後輸入下面的命令，不是在 PowerShell 輸入。** 按 Enter 執行，可用 Backspace 修正。
-按 Ctrl+A，再按 X 離開 QEMU；shell 的 exit 只結束 shell，不會關閉 QEMU。
-
-## Fork → Exec → 排程 → 回收
-
-從全新啟動開始，在 `wuwaos>` 一次輸入一條：
-
-```text
-fork
-ps
-wait 2
-run counter
-run counter
-ps
-pcb 3
-wakeup 9
-wait 3
-wait 4
-ps
-```
-
-`fork` 複製 shell 的使用者記憶體與暫存器。父返回子 PID，子返回 0；子修改後顯示 data=101、stack=101，父仍為 data=1、stack=100。子結束後保留 Zombie（已退出、待回收），`wait 2` 才釋放 PCB（行程控制區塊）欄位。
-
-`run counter` 先 fork，再由子行程 exec（替換執行程式）。shell 與 app 是獨立映像；exec 保留子 PID、換掉使用者程式碼／資料／堆疊，從新入口執行。兩個 counter 先 sleep（等待事件）於通道 9，因此可用 ps／pcb 觀察。
-
-`wakeup 9` 後兩者各自從 3 倒數至 1，每次 yield（主動讓出 CPU）使另一個 Ready（就緒）行程取得執行機會；`wait` 回收結果 0。最後 ps 應只剩 shell、Free PCB slots: 3。
-
-目前使用 RR（輪詢排程），就緒佇列以 FIFO 保存順序，每次派發預設 50 ms。時間到由監督模式計時器中斷將 Running 行程放回隊尾，不需主動 yield；普通 syscall 或合法缺頁恢復不重置時間片。仍支援 yield、阻塞與喚醒。核心內不搶占，長 syscall／同步磁碟 I/O 會延後切換，因此不是嚴格即時保證。輸出可能交錯；run 不自動回收，請依實際 PID 執行 wait。
-
-`ps` 顯示 `Scheduler: RR, quantum_ms=50 timer_interrupts=N` 與 `Ready queue (RR), count=N: ...`，只列出等待 CPU 的 Ready 行程。`pcb <pid>` 的 ready_queued 表示是否在佇列，dispatches／preemptions 分別是派發／時間片到期次數。短程式可能在第一個時間片前結束，因此中斷數為 0 也正常。
-
-也可用 `run quick` 觀察結束碼 40，或 `run worker` 搭配 `wakeup 7`／`wait <pid>`。下方保留直接 spawn（建立指定程式）的操作。
-
-## fan 文字編輯器
-
-在 QEMU 的 `wuwaos>` 輸入：
-
-```text
-fan /home/user/note.txt
-```
-
-直接輸入文字、空白及 Enter 換行。方向鍵移動，Home／End 到行首／行尾，Backspace／Delete 刪除，PageUp／PageDown 捲動，Tab 插入空白。`Ctrl+O` 儲存，`Ctrl+X` 離開；有未儲存內容時選 `y` 儲存後離開、`n` 捨棄、`c` 或 Escape 取消。`Ctrl+L` 完整重畫。離開後用 `cat /home/user/note.txt` 讀回，QEMU 重啟後檔案仍保留。
-
-fan 是在 WUWAOS 使用者模式執行的獨立 C 程式，畫面經 UART 與 ANSI 控制碼顯示在終端，需至少 80×24。第一版支援最多 2 KiB ASCII／LF 文字；超大檔案、UTF-8 或不支援的控制字元會拒絕開啟，避免截斷覆寫。既有 Tab 以 `>` 顯示並保留。新檔案直到儲存才建立，父目錄須先存在。沒有 Vim 命令模式、undo 或一般磁碟執行檔載入；fan 映像仍嵌入核心。詳見 [Spec 09](docs/SPEC-09-fan.md)。
-
-## 觀察 Demand paging／FIFO／Swap
-
-`make run` 自動建立獨立的 `build/wuwaos-swap.img`（預設 16 MiB），不占用 WUFS 檔案資料。依序輸入：
-
-```text
-vmstat
-vmstat limit 8
-mem alloc 16
-mem read 0
-mem write 0 65
-mem write 1 66
-mem write 2 67
-mem write 3 68
-mem write 4 69
-mem write 5 70
-mem write 6 71
-mem write 7 72
-mem write 8 73
-mem write 9 74
-mem write 10 75
-mem write 11 76
-vmstat
-mem read 0
-pcb 1
-mem free
-vmstat limit 64
-```
-
-mem alloc 只保留虛擬範圍；首次讀取得到零，mem write 將指定頁的所有 bytes 填成指定值（0–255）。常駐頁超過預算後會置換；vmstat 的 swap_out／swap_in 可觀察實際磁碟交換。mem read 顯示該頁第 0／2048／4095 byte。`limit 8` 是使用者頁預算，不是把 QEMU RAM 改為 8 頁；預設為 64 頁。swap slot 可在頁面已換回時繼續保留為 backing，heap 縮小與行程回收時才釋放。mem free 後空的 heap 分頁表仍保留到行程銷毀。
-
-## 直接建立行程並觀察
-
-從全新啟動開始，一次輸入一條：
-
-```text
-help
-ps
-pcb 1
-spawn worker
-ps
-pcb 2
-wakeup 7
-ps
-wait 2
-ps
-```
-
-實際流程：
-
-1. shell 為 PID 1（行程識別碼）；spawn 建立 PID 2。
-2. 追蹤訊息顯示 New（建立中）→ Ready（就緒）→ Running（執行中）。
-3. worker（工作程式）先 yield（讓出 CPU），再 sleep(7) 等事件；ps 可見 Waiting channel（等待通道）。
-4. pcb 2 顯示實際 PCB（行程控制區塊）的父 PID、狀態、頁表、保存指令位址、堆疊與通道 7。
-5. wakeup 7 顯示 woken=1，子行程恢復執行，最後進入 Zombie（已結束、等待回收）。
-6. wait 2 取得結束碼 0，將欄位回收到 Unused（可重用）；ps 不再列出 PID 2。
-
-PID 會持續遞增；若不是剛啟動，請依 spawn 顯示的 PID 操作，不要固定使用 2。
-可繼續輸入 `spawn quick`，它會結束並保留結果 40，供 wait 回收。
-也可先 `spawn worker`，用 `kill <剛取得的 PID>` 終止等待中的子行程，再 wait 取得 -9。
-
-**先 wakeup 再 wait 等事件的 worker。** wait 是阻塞式前景等待；如果唯一能發出事件的 shell 自己也在 wait，就沒有行程可以喚醒 worker。本版未實作 Ctrl+C 取消前景工作。
-
-## 真實 Pipe（行程間資料管道）
-
-```text
-writer | reader
-ps
-trace off
-writer|reader
-ps
-trace on
-```
-
-核心建立兩個子行程及一條 16-byte 環形緩衝區。writer 寫入 80 bytes，reader 從管道讀出、收到 EOF（資料結束）後輸出：
-
-```text
-[reader] Hello through a real pipe: this message is longer than the 16-byte ring buffer.
-[reader] EOF, bytes=80
-```
-
-trace on 時可看到 Waiting(pipe write／pipe read) 與 I/O ready（輸入輸出已就緒）的狀態轉換。
-父行程等待並回收兩個子行程，顯示 pipeline complete 後提示字元恢復。可重複執行。
-需要至少 2 個空閒 PCB 欄位；先回收其他 Zombie，或結束／回收既有 worker。
-
-這版是固定內建 `writer | reader`，不是通用多段管線，不提供檔案重導向、pipe()/dup2() 或任意程式組合。
-
-## 磁碟檔案系統
-
-`make run` 會連接 `build/wuwaos.img` 這個 16 MiB QEMU 虛擬磁碟。首次使用會建立 WUFS（WUWAOS 自有檔案系統），並將當前核心 ELF 放在 `/boot/kernel.elf`。後續建置會更新這個檔案，同時保留其他使用者檔案。
-
-磁碟副本來自 `build/kernel-disk.elf`，以 `llvm-objcopy --strip-debug` 移除除錯資料，避免超過 WUFS 單檔容量；QEMU 與 GDB 仍使用完整的 `build/kernel.elf`。
-
-```text
-ls /
-ls /boot
-mkdir /home/user/notes
-touch /home/user/notes/today.txt
-write /home/user/notes/today.txt hello
-cat /home/user/notes/today.txt
-```
-
-目前工作目錄由各行程保存；檔案命令可使用相對或絕對路徑。`cd` 和 `cd ~` 到 `/home/user`，`cd -` 返回前一個目錄；詳見 [Spec 19](docs/SPEC-19-cwd-shell.md)。目錄採 Linux 熟悉的名稱，檔案系統格式是 WUFS，並非 Linux 可掛載的格式。`write` 會覆寫檔案內容，只接受一個不含空白的文字 token。磁碟映像在 QEMU 關閉後保留；`make clean` 不會刪除它。
-
-`/boot/kernel.elf` 是磁碟內的核心副本；目前仍由 QEMU `-kernel` 直接載入執行，尚未由 bootloader 從磁碟開機。`/bin` 與 `/dev` 目前先建立為空目錄。
-
-## 指令表
-
-| 指令 | 功能 |
-| --- | --- |
-| help | 指令說明 |
-| ps | 有效行程、父 PID、名稱、狀態、等待原因、空閒欄位與 FIFO 就緒佇列 |
-| demo sync | 以父子行程和 ps 觀察 Mutex、Semaphore 的等待與喚醒 |
-| workstate | 每秒更新所有行程、區間 CPU%、RSS／Swap、整體 RAM；按 q 返回 shell |
-| pwd / cd | `pwd` 顯示目前目錄；`cd` 回家目錄，`cd ..` 上一層，`cd -` 返回上一個目錄 |
-| ls | 不帶參數列出目前目錄；`ls <路徑>` 列出指定目錄 |
-| rm | `rm <路徑>` 刪除檔案；資料夾需輸入 Y 確認後一併刪除內容 |
-| cp | `cp <來源路徑> <目的路徑>` 複製一般檔案，目的檔存在時覆寫 |
-| cls | 清除終端畫面與捲動歷史，是否能清除歷史取決於終端支援 |
-| pcb <pid> | 特定 PCB 的實際保存資料 |
-| spawn worker / spawn quick | 建立背景子行程 |
-| fork | 複製 shell，顯示父子返回值與私有資料，子行程結束後等待回收 |
-| run worker / run quick / run counter | fork 子行程後 exec 獨立工作映像；以 wait 回收 |
-| yield | shell 主動讓出 CPU |
-| wakeup <channel> | 喚醒事件通道等待者 |
-| wait <pid> | 等待直接子行程並回收 |
-| kill <pid> | 終止 shell 的直接子行程；不可終止 PID 1 或自己 |
-| trace on / trace off | 開關子行程狀態轉換紀錄；shell 自身用 pcb 1 查閱 |
-| writer \| reader | 前景執行固定雙行程管線 |
-| mkdir <path> | 建立目錄 |
-| touch <path> | 建立空檔案；檔案已存在時不清空 |
-| write <path> <text> | 建立或覆寫檔案，文字不含空白 |
-| cat <path> | 顯示檔案前 2048 bytes；若內容未以換行結尾，顯示後補換行 |
-| fan <path> | 前景文字編輯器，Ctrl+O 儲存、Ctrl+X 離開並自動回收行程 |
-| vmstat / vmstat limit <frames> | 查閱缺頁／交換統計，或設定全域使用者常駐頁預算（至少 8） |
-| mem alloc / write / read / free | 保留 heap、填寫與查看頁面、釋放 heap，詳見上方範例 |
-| exit | 結束 shell |
-
-輸入上限為 126 個內容字元加換行；超長行顯示錯誤，不執行截斷命令。只有固定命令與正整數參數，不支援引號、一般參數展開、背景 & 語法或主機命令。
-
-## 架構與限制
-
-- 最多 4 個行程，每個獨立 Sv39 頁表、16 KiB 使用者 code、4 KiB data、4 KiB stack、最多 1 MiB heap，以及固定 16 KiB 核心堆疊。使用者頁按需配置與置換，核心及分頁表常駐。
-- fork 採完整複製，不使用 COW（寫入時複製）。exec 動態準備新位址空間，切換頁表後釋放舊空間；只接受內建程式 ID，fan 可額外接收一個檔案路徑參數。
-- PCB 是原本 Process 的延伸，沒有第二份重複的狀態。包含父子關係、等待資訊、管道端點與待完成 I/O。
-- `kernel/swtch.S` 以 RV64 組合語言保存／還原核心 ra、sp、s0～s11。每個 PCB 的 KernelContext 保留暫停中的 C 呼叫，排程器使用獨立 16 KiB 堆疊；sleep／wait／阻塞 I/O 恢復後從原函式繼續。pcb 顯示上次保存的核心 sp／ra。核心仍只在明確位置主動切換；自製 Mutex／Semaphore 與限制見 [Spec 22](docs/SPEC-22-synchronization.md)。
-- `processes[4]` 保存完整 PCB；`scheduler.c` 的單向鏈結 FIFO 只保存 Ready PCB 的指標，入列與取出隊首 O(1)，移除任意節點 O(P)。
-- read/write、行程管理與查詢都透過使用者模式系統呼叫。核心與 UART（序列埠）頁面仍不可由使用者模式直接存取。
-- 檔案系統經由 VirtIO-MMIO block driver（虛擬區塊裝置驅動）讀寫 QEMU 磁碟。UART、pipe 與磁碟檔案走不同 I/O 路徑；目前檔案呼叫以路徑為參數，尚未有通用檔案描述號或 POSIX `open/close`。
-- CPU 排程為單核心、50 ms RR，保留主動 yield。shell 提示前兩輪 yield 只協助內建 worker 到達等待點，不是時間片的來源；counter 也有 yield，不能只憑倒數交替證明搶占。
-- timer 經 OpenSBI TIME 設定，clock.h 統一 QEMU virt 的 10 MHz 計時。終端與磁碟仍輪詢、核心內不搶占；沒有多核心、優先權、外部 ELF loader、Linux 相容檔案系統或浮點／向量環境。
-- 未加入測試框架或負面測試程式。實際互動驗證及未執行的邊界路徑詳見 spec。
-
-## 文件與閱讀順序
-
-- [SPEC.md](docs/SPEC.md)：fork／exec／回收里程碑規格與驗收紀錄；目前 CPU 排程以 SPEC-15 為準。
-- [CODE_GUIDE.md](docs/CODE_GUIDE.md)：所有程式碼功能、演算法與硬體關係。
-- [SPEC-01](docs/SPEC-01-user-syscalls.md)、[SPEC-02](docs/SPEC-02-process-lifecycle.md)、[SPEC-03](docs/SPEC-03-shell-pipe.md)：使用者呼叫、行程生命週期與互動 shell／pipe 規格。
-- [SPEC-04](docs/SPEC-04-boot-splash.md)：開機動畫規格與驗收紀錄。
-- [SPEC-06](docs/SPEC-06-filesystem.md)：VirtIO 區塊 I/O、WUFS 與持久磁碟驗收紀錄。
-- [SPEC-07](docs/SPEC-07-fifo-scheduler.md)：FIFO 就緒佇列、非搶占式排程與驗收紀錄。
-- [SPEC-08](docs/SPEC-08-memory.md)：動態實體頁配置、三級分頁與回收。
-- [SPEC-09](docs/SPEC-09-fan.md)：fan 編輯器、raw console 與路徑參數傳遞。
-- [SPEC-10](docs/SPEC-10-demand-paging.md)：按需分頁、FIFO 頁面置換、獨立 swap 與失敗處理。
-- [SPEC-15](docs/SPEC-15-timer-rr.md)：計時器中斷、50 ms RR、模組分類與無 yield 的搶占驗證；[主題章節](docs/topics/scheduling.md) 包含 Mermaid 流程圖。
-- [SPEC-16](docs/SPEC-16-kernel-context.md)：核心組合語言上下文、獨立排程器堆疊與核心函式阻塞／恢復；[行程章節](docs/topics/processes.md) 包含流程圖。
-- [SPEC-17](docs/SPEC-17-workstate.md)：workstate 即時 CPU／記憶體監測、統計口徑與定時等待；[操作與原理](docs/topics/monitoring.md)。
-- [SPEC-18](docs/SPEC-18-file-commands.md)：ls、rm、cp 與 cls 的操作、檔案回收與複製限制。
-
-先讀 user/shell.c 的 shell_main／command，再追蹤 user/api.c → kernel/syscall.c → process.c 或 io.c，最後看 trap.S 如何交還使用者程式。
-手動練習：對照 pcb 2 顯示的等待通道與 sepc（保存的指令位址），說明 wakeup 後為什麼從 sleep 呼叫後面繼續。
-前景 Ctrl+C 取消、優先權與核心內搶占可另訂後續規格。
+以終端顯示的 Local 網址開啟；`npm.cmd run docs:build` 可建置網站。網站僅閱讀與搜尋，OS 原始碼以 GitHub 連結提供；維護與發布方式見 [網站維護文件](docs/topics/writing.md)。
