@@ -1,6 +1,6 @@
 # 11 · workstate 即時監測
 
-在 WUWAOS shell 輸入 `workstate`，會開啟終端全螢幕的行程監測，每秒更新、按 q 或 Q 返回原 shell。第一張的 CPU 顯示 sampling，取得下一個時間區間後才顯示百分比。
+在 WUWAOS shell 輸入 `workstate`，會開啟終端全螢幕的行程監測，每秒更新、每頁最多 8 個行程，按 n／p 切換頁面、q 或 Q 返回原 shell。第一張的 CPU 顯示 sampling，取得下一個時間區間後才顯示百分比。
 
 ## 畫面有哪些資料
 

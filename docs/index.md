@@ -24,7 +24,7 @@ WUWAOS 是以 C 與 RISC-V 組合語言撰寫、真正運行於 QEMU 虛擬電�
 | --- | --- |
 | 平台 | QEMU virt、RV64、單核心、128 MiB RAM |
 | 執行模式 | S-mode 核心、U-mode 使用者程式 |
-| 行程 | 最多 4 個 PCB；fork／exec／exit／wait 與事件等待 |
+| 行程 | 最多 16 個 PCB；fork／exec／exit／wait 與事件等待 |
 | 核心上下文 | RV64 swtch.S；每行程保留 C 呼叫堆疊、獨立排程器堆疊 |
 | 同步 | 自製 Mutex／Semaphore；`demo sync` 可觀察父子行程等待與喚醒 |
 | 排程 | 單核心 RR、50 ms 時間片；使用者程式可搶占，核心內不搶占 |

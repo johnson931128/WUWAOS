@@ -14,7 +14,7 @@ WUWAOS is a small operating system written in **C and RISC-V assembly** that boo
 | Area | Current implementation |
 | --- | --- |
 | Platform | QEMU `virt`, RISC-V 64-bit, one CPU core, and 128 MiB RAM; OpenSBI starts the kernel |
-| Processes and scheduling | Process control blocks, fork, exec for built-in programs, wait, exit, and timer-driven round-robin scheduling |
+| Processes and scheduling | Up to 16 processes, process control blocks, fork, exec for built-in programs, wait, exit, and timer-driven round-robin scheduling |
 | Synchronization and IPC | Custom mutexes and semaphores, sleep/wakeup, and a built-in `writer \| reader` pipe |
 | Virtual memory | Sv39 three-level page tables, demand paging, FIFO page replacement, and swap |
 | File system | VirtIO block device and the custom WUFS file system, with persistent files and directories |
@@ -24,7 +24,9 @@ WUWAOS focuses on fundamental operating system mechanisms and is not Linux-compa
 
 ## Demo Video
 
-[Watch or download the WUWAOS QEMU demo](docs/media/wuwaos-demo.mp4) (MP4, about 2 minutes).
+![WUWAOS QEMU demo: live terminal recording](docs/media/wuwaos-demo.gif)
+
+The animation plays directly in the README. For playback controls and higher quality, [watch or download the MP4](docs/media/wuwaos-demo.mp4) (about 2 minutes).
 
 The video follows a live QEMU session through the shell, processes, synchronization, pipes, WUFS, `fan`, `workstate`, and virtual memory. It was rendered from terminal output with chapter labels and has no narration; see the [recording details](docs/SPEC-24-demo-video.md).
 

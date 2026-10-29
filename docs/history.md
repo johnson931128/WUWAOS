@@ -28,6 +28,7 @@
 | 22 | [自製 Mutex 與 Semaphore](./SPEC-22-synchronization.md)，單核心同步與驗證範圍 |
 | 23 | [同步工具互動示範](./SPEC-23-sync-demo.md)，實際行程與等待狀態 |
 | 24 | [功能示範影片](./SPEC-24-demo-video.md)，QEMU 實際操作與影片驗證 |
+| 25 | [行程容量擴充](./SPEC-25-process-capacity.md)，16 個行程、資源回收與 workstate 分頁 |
 
 ## 如何判斷是否驗證過
 
