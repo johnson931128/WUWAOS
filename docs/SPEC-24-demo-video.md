@@ -26,3 +26,5 @@
 實際 QEMU 終端紀錄確認 worker 和 counter 收集、sync demo 完成、pipe 傳輸、檔案寫入與 fan 讀回；VM 統計顯示 swap_in=7、swap_out=14，頁 0 的三處資料均讀回 65。抽查影片中編輯器、退出後畫面、workstate 及 VM 畫面；影片為約 2 分鐘、1280×720、H.264 MP4、6 fps。各功能的其他邊界並未由此影片完整驗證，顯示畫面只是一次示範。錄製未使用或修改原本的 build/wuwaos.img。
 
 影片：[WUWAOS QEMU demo on GitHub](https://github.com/johnson931128/WUWAOS/blob/main/docs/media/wuwaos-demo.mp4)。
+
+README 另提供由同一 MP4 轉製的 960×540、4 fps 完整 GIF 動畫，可直接播放但沒有播放控制；原始 MP4 保留較高畫質與播放控制。

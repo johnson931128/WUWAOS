@@ -24,7 +24,9 @@ WUWAOS focuses on fundamental operating system mechanisms and is not Linux-compa
 
 ## Demo Video
 
-[Watch or download the WUWAOS QEMU demo](docs/media/wuwaos-demo.mp4) (MP4, about 2 minutes).
+![WUWAOS QEMU demo: live terminal recording](docs/media/wuwaos-demo.gif)
+
+The animation plays directly in the README. For playback controls and higher quality, [watch or download the MP4](docs/media/wuwaos-demo.mp4) (about 2 minutes).
 
 The video follows a live QEMU session through the shell, processes, synchronization, pipes, WUFS, `fan`, `workstate`, and virtual memory. It was rendered from terminal output with chapter labels and has no narration; see the [recording details](docs/SPEC-24-demo-video.md).
 
