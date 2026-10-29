@@ -52,7 +52,7 @@ static uint64_t previous_cpu(const WorkstateSnapshot *previous, int64_t pid) {
     return 0; /* PID created during this interval; never compare reused PCB slots. */
 }
 
-enum { COLUMNS = 9, CELL_SIZE = 24, LINE_SIZE = 256 };
+enum { COLUMNS = 9, CELL_SIZE = 24, LINE_SIZE = 256, ROWS_PER_PAGE = 8 };
 static const char *const headers[COLUMNS] = {
     "PID", "PPID", "NAME", "STATE", "CPU%", "RSS(K)", "MEM%", "SWAP(K)", "CPUms"
 };
@@ -131,7 +131,7 @@ static void table_row(const char *const values[COLUMNS], const unsigned int widt
     (void)user_write_all(1, line, at);
 }
 
-static void process_table(const WorkstateSnapshot *now, const WorkstateSnapshot *previous) {
+static void process_table(const WorkstateSnapshot *now, const WorkstateSnapshot *previous, uint64_t page) {
     unsigned int widths[COLUMNS];
     char rendered[COLUMNS][CELL_SIZE];
     const char *values[COLUMNS];
@@ -146,7 +146,10 @@ static void process_table(const WorkstateSnapshot *now, const WorkstateSnapshot 
     border(widths);
     table_row(headers, widths, 1);
     border(widths);
-    for (uint64_t i = 0; i < now->count; ++i) {
+    const uint64_t first = page * ROWS_PER_PAGE;
+    uint64_t end = first + ROWS_PER_PAGE;
+    if (end > now->count) end = now->count;
+    for (uint64_t i = first; i < end; ++i) {
         cells(rendered, &now->processes[i], now, previous);
         for (unsigned int column = 0; column < COLUMNS; ++column) values[column] = rendered[column];
         table_row(values, widths, 0);
@@ -154,7 +157,9 @@ static void process_table(const WorkstateSnapshot *now, const WorkstateSnapshot 
     border(widths);
 }
 
-static void draw(const WorkstateSnapshot *now, const WorkstateSnapshot *previous) {
+static void draw(const WorkstateSnapshot *now, const WorkstateSnapshot *previous, uint64_t page) {
+    const uint64_t pages = now->count ? (now->count + ROWS_PER_PAGE - 1) / ROWS_PER_PAGE : 1;
+    if (page >= pages) page = pages - 1;
     const uint64_t elapsed = now->ticks - previous->ticks;
     const uint64_t cpu = ratio(now->busy_ticks - previous->busy_ticks, elapsed);
     user_puts("\033[H\033[1;36mworkstate\033[0m | refresh 1s | q: return to shell\033[K\n");
@@ -170,8 +175,9 @@ static void draw(const WorkstateSnapshot *now, const WorkstateSnapshot *previous
     user_puts("Reserved/static: "); number(now->reserved_bytes / 1024, 0);
     user_puts(" KiB | Swap slots: "); number(now->swap_used_pages, 0); user_puts("/");
     number(now->swap_total_pages, 0); user_puts("\033[K\nProcesses: "); number(now->count, 0);
-    user_puts(" | monitor runs inside shell\033[K\n\033[K\n");
-    process_table(now, previous);
+    user_puts(" | page "); number(page + 1, 0); user_puts("/"); number(pages, 0);
+    user_puts(" | n/p: pages\033[K\n\033[K\n");
+    process_table(now, previous, page);
     user_puts("\033[J\nCPU counts dispatched user + kernel time, not host CPU load.\n");
     user_puts("Idle includes scheduler/UART polling; RSS excludes kernel stacks/tables.\n");
     user_puts("RAM used includes reserved/static memory; MEM% uses total RAM.\n");
@@ -180,29 +186,37 @@ static void draw(const WorkstateSnapshot *now, const WorkstateSnapshot *previous
 void workstate_main(void) {
     long result = console_mode(1);
     if (result < 0) { user_puts("workstate: console is busy\n"); return; }
-    WorkstateSnapshot previous, current;
+    /* Two snapshots grow with PROCESS_LIMIT; keep them out of the 4 KiB stack. */
+    static WorkstateSnapshot previous, current;
     result = workstate_snapshot(&previous);
     if (result == 0 && previous.version != WORKSTATE_VERSION) result = -1;
     if (result == 0) {
         user_puts("\033[?1049h\033[2J\033[?25l");
-        draw(&previous, &previous);
+        for (size_t i = 0; i < sizeof(previous); ++i)
+            ((volatile unsigned char *)&current)[i] = ((const unsigned char *)&previous)[i];
+        uint64_t page = 0;
+        draw(&previous, &previous, page);
         int done = 0;
         while (!done) {
+            int redraw = 0;
             for (int i = 0; i < 32; ++i) {
                 const long key = console_poll();
                 if (key < 0) { result = key; done = 1; break; }
                 if (key == 0) break;
                 if (key - 1 == 'q' || key - 1 == 'Q') { done = 1; break; }
+                if ((key - 1 == 'n' || key - 1 == 'N') && (page + 1) * ROWS_PER_PAGE < current.count) { ++page; redraw = 1; }
+                if ((key - 1 == 'p' || key - 1 == 'P') && page > 0) { --page; redraw = 1; }
             }
             if (done) break;
             result = workstate_snapshot(&current);
             if (result < 0) break;
+            if (page && page * ROWS_PER_PAGE >= current.count) { page = current.count ? (current.count - 1) / ROWS_PER_PAGE : 0; redraw = 1; }
             if (current.ticks - previous.ticks >= current.timebase_hz) {
-                draw(&current, &previous);
+                draw(&current, &previous, page);
                 volatile unsigned char *to = (volatile unsigned char *)&previous;
                 const unsigned char *from = (const unsigned char *)&current;
                 for (size_t i = 0; i < sizeof(previous); ++i) to[i] = from[i];
-            }
+            } else if (redraw) draw(&current, &previous, page);
             result = sleep_ms(50);
             if (result < 0) break;
         }

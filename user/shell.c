@@ -276,7 +276,7 @@ static void help(void) {
     user_puts("help                            Show this command list.\n"
               "ps                              List processes and the RR ready queue.\n"
               "demo sync                       Observe mutex and semaphore.\n"
-              "workstate                       Live CPU/memory monitor; q returns.\n"
+              "workstate                       Live monitor; n/p pages, q returns.\n"
               "pcb <pid>                       Show one process control block.\n"
               "spawn worker                    Create a worker; wake it with wakeup 7.\n"
               "spawn quick                     Create a process that exits with code 40.\n"

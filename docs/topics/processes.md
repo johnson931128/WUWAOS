@@ -6,7 +6,7 @@
 
 原始碼：[kernel/process.h（GitHub）](https://github.com/johnson931128/WUWAOS/blob/main/kernel/process.h)。
 
-`ProcessControlBlock` 就是 PCB（行程控制區塊），`processes[4]` 是目前行程表。`page_table` 找到私有位址空間，`frame` 找到暫存器保存狀態；等待與 I/O 欄位記錄阻塞後還沒完成的事。
+`ProcessControlBlock` 就是 PCB（行程控制區塊），`processes[16]` 是目前行程表。`page_table` 找到私有位址空間，`frame` 找到暫存器保存狀態；等待與 I/O 欄位記錄阻塞後還沒完成的事。
 
 `ready_next` 是指向下一個 Ready PCB 的指標，不是另一份行程副本。核心堆疊每欄固定 16 KiB；使用者頁面則由 VM 按需要配置。
 
@@ -74,7 +74,7 @@ ps
 
 exit 關閉端點並留下 Zombie；wait 取得結果後釋放使用者頁、Swap slots（交換區槽位）、私有頁表及 PCB。孤兒行程另有接管與回收流程。狀態結果寫入父使用者空間失敗時，不會先丟棄 Zombie。
 
-最多 4 個行程，exec 仍只選擇核心內嵌的程式 ID，不是載入任意磁碟執行檔。沒有執行緒與完整作業控制。
+最多 16 個行程（含 shell），exec 仍只選擇核心內嵌的程式 ID，不是載入任意磁碟執行檔。沒有執行緒與完整作業控制。
 
 觀念參考：`notes/ch3 Process.md`。實作脈絡見 [Spec 02](../SPEC-02-process-lifecycle.md)、[Spec 05](../SPEC.md)，目前私有記憶體複製見 [Spec 10](../SPEC-10-demand-paging.md)。
 

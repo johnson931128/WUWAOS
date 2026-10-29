@@ -14,7 +14,7 @@ WUWAOS is a small operating system written in **C and RISC-V assembly** that boo
 | Area | Current implementation |
 | --- | --- |
 | Platform | QEMU `virt`, RISC-V 64-bit, one CPU core, and 128 MiB RAM; OpenSBI starts the kernel |
-| Processes and scheduling | Process control blocks, fork, exec for built-in programs, wait, exit, and timer-driven round-robin scheduling |
+| Processes and scheduling | Up to 16 processes, process control blocks, fork, exec for built-in programs, wait, exit, and timer-driven round-robin scheduling |
 | Synchronization and IPC | Custom mutexes and semaphores, sleep/wakeup, and a built-in `writer \| reader` pipe |
 | Virtual memory | Sv39 three-level page tables, demand paging, FIFO page replacement, and swap |
 | File system | VirtIO block device and the custom WUFS file system, with persistent files and directories |
