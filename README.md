@@ -22,6 +22,12 @@ WUWAOS is a small operating system written in **C and RISC-V assembly** that boo
 
 WUWAOS focuses on fundamental operating system mechanisms and is not Linux-compatible. QEMU currently loads the kernel using `-kernel`. Loading general ELF executables from disk, compiling C inside WUWAOS, networking, and a graphical desktop are not yet supported. See the [documentation](https://johnson931128.github.io/WUWAOS/) and [Spec 21](docs/SPEC-21-native-compilation.md) for limitations and future plans.
 
+## Demo Video
+
+[Watch or download the WUWAOS QEMU demo](docs/media/wuwaos-demo.mp4) (MP4, about 2 minutes).
+
+The video follows a live QEMU session through the shell, processes, synchronization, pipes, WUFS, `fan`, `workstate`, and virtual memory. It was rendered from terminal output with chapter labels and has no narration; see the [recording details](docs/SPEC-24-demo-video.md).
+
 ## Boot Screenshot
 
 ![WUWAOS booting in QEMU](docs/images/wuwaos-boot.png)
