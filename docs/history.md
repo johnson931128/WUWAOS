@@ -26,6 +26,7 @@
 | 20 | [資料夾刪除與確認](./SPEC-20-directory-removal.md)，子目錄與檔案回收 |
 | 21 | [系統內編譯 C 程式的長期目標](./SPEC-21-native-compilation.md)，目前為規劃、尚未實作 |
 | 22 | [自製 Mutex 與 Semaphore](./SPEC-22-synchronization.md)，單核心同步與驗證範圍 |
+| 23 | [同步工具互動示範](./SPEC-23-sync-demo.md)，實際行程與等待狀態 |
 
 ## 如何判斷是否驗證過
 

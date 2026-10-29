@@ -4,7 +4,7 @@ OBJCOPY := llvm-objcopy
 TARGET := build/kernel.elf
 KERNEL_SOURCES := main console trap sbi timer page swap vm process scheduler sync workstate syscall io splash block fs path memory
 OBJECTS := build/entry.o build/trap_entry.o build/swtch.o build/user_image.o $(addprefix build/kernel_,$(addsuffix .o,$(KERNEL_SOURCES)))
-USER_OBJECTS := build/user_entry.o build/user_api.o build/user_print.o build/user_demo.o build/user_shell.o build/user_workstate.o
+USER_OBJECTS := build/user_entry.o build/user_api.o build/user_print.o build/user_demo.o build/user_sync_demo.o build/user_shell.o build/user_workstate.o
 APP_OBJECTS := build/user_entry.o build/user_api.o build/user_print.o build/user_app.o
 FAN_OBJECTS := build/user_entry.o build/user_api.o build/user_print.o build/user_fan.o
 ARCH_FLAGS := --target=riscv64-unknown-elf -march=rv64imac_zicsr_zifencei -mabi=lp64 -mcmodel=medany -msmall-data-limit=0 -mno-relax
@@ -31,6 +31,12 @@ build/swtch.o: kernel/swtch.S kernel/context.h | build
 
 build/user_entry.o: user/entry.S | build
 	$(CC) $(ARCH_FLAGS) -g -c $< -o $@
+
+build/user_workstate.o: user/workstate.c | build
+	$(CC) $(CFLAGS) -Oz -c $< -o $@
+
+build/user_sync_demo.o: user/sync_demo.c | build
+	$(CC) $(CFLAGS) -Oz -c $< -o $@
 
 build/user_shell.o: user/shell.c | build
 	$(CC) $(CFLAGS) -Oz -c $< -o $@

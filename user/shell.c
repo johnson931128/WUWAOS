@@ -4,6 +4,7 @@
 #include "syscall_numbers.h"
 #include "vm_limits.h"
 #include "workstate.h"
+#include "sync_demo.h"
 #include <limits.h>
 
 static int equal(const char *first, const char *second) {
@@ -274,6 +275,7 @@ static void sync_background(int count, char *words[4]) {
 static void help(void) {
     user_puts("help                            Show this command list.\n"
               "ps                              List processes and the RR ready queue.\n"
+              "demo sync                       Observe mutex and semaphore.\n"
               "workstate                       Live CPU/memory monitor; q returns.\n"
               "pcb <pid>                       Show one process control block.\n"
               "spawn worker                    Create a worker; wake it with wakeup 7.\n"
@@ -420,6 +422,10 @@ static int command(int count, char *words[4]) {
         return 1;
     }
     if (count == 2) {
+        if (equal(words[0], "demo") && equal(words[1], "sync")) {
+            sync_demo();
+            return 1;
+        }
         if (equal(words[0], "cd")) {
             change_directory(words[1]);
             return 1;
