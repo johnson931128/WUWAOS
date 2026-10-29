@@ -48,6 +48,7 @@ CPU 執行記憶體中的機器碼，不知道來源檔名。OpenSBI 負責早�
 | user/workstate.c / workstate.h | shell 內即時全螢幕、區間比率計算、定時休眠與 q 退出 |
 | kernel/scheduler.c / scheduler.h | 單向鏈結 FIFO 就緒佇列、入列／取隊首／移除與順序查閱 |
 | kernel/sync.c / sync.h、include/sync_ops.h | 自製 mutex／semaphore、等待佇列與行程離開清理；詳見 Spec 22 |
+| user/sync_demo.c / sync_demo.h | shell 的同步示範：父子行程、等待狀態與資源回收 |
 | kernel/io.c / io.h | 行輸入／raw console、固定管道、pending I/O（尚未完成的輸入輸出） |
 | kernel/block.c / block.h | FDT 裝置探索、VirtIO-MMIO 區塊讀寫佇列 |
 | kernel/fs.c / fs.h | WUFS 區塊配置、inode、目錄與路徑操作 |

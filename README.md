@@ -200,6 +200,7 @@ cat /home/user/notes/today.txt
 | --- | --- |
 | help | 指令說明 |
 | ps | 有效行程、父 PID、名稱、狀態、等待原因、空閒欄位與 FIFO 就緒佇列 |
+| demo sync | 以父子行程和 ps 觀察 Mutex、Semaphore 的等待與喚醒 |
 | workstate | 每秒更新所有行程、區間 CPU%、RSS／Swap、整體 RAM；按 q 返回 shell |
 | pwd / cd | `pwd` 顯示目前目錄；`cd` 回家目錄，`cd ..` 上一層，`cd -` 返回上一個目錄 |
 | ls | 不帶參數列出目前目錄；`ls <路徑>` 列出指定目錄 |

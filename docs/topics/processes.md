@@ -85,3 +85,9 @@ WUWAOS 以自訂核心物件與 syscall 實作 Mutex（互斥鎖）及 Semaphore
 目前單核心、核心內不搶占，這是等待佇列操作不被同時改動的前提。持鎖行程終止或 exec 時，鎖標記為 poisoned（資料可能不一致）；後續取得會回報錯誤。Semaphore 名額不會因持有行程離開自動返還。詳細介面、例外與驗證狀態見 [Spec 22](../SPEC-22-synchronization.md)，[核心原始碼](https://github.com/johnson931128/WUWAOS/blob/main/kernel/sync.c)。
 
 可以在 QEMU 使用 `sync sem create 0` 建立初始值為 0 的號誌，再以 `syncbg sem wait <id>` 啟動等待的子行程。使用 `ps` 看到 Waiting sync，之後以 `sync sem post <id>` 喚醒它，再用 `wait <pid>` 回收。`syncbg mutex hold <id>` 的子行程持鎖等待通道 7，`wakeup 7` 使其解鎖並離開；實際編號以畫面顯示為準。`wakeup 7` 同時喚醒其他等待此通道的行程。
+
+## 用 demo sync 觀察兩個行程
+
+在 `wuwaos/>` 輸入 `demo sync`，shell 父行程會持有 Mutex，建立子行程並顯示 `ps`。子行程取得鎖並釋放後，再等待初始值為 0 的 Semaphore；父行程顯示第二次 `ps`，接著發出 post。最後子行程結束並由父行程回收。行程編號每次可能不同。
+
+此範例用終端輸出展示臨界區域，不是共享記憶體範例。兩次快照前各等待 200 ms，讓子行程有機會執行；快照反映真實狀態，忙碌時不保證剛好看到 Waiting。完成後回收同步物件；若行程欄位不足會顯示錯誤。詳細設計見 [Spec 23](../SPEC-23-sync-demo.md)，原始程式見 [GitHub](https://github.com/johnson931128/WUWAOS/blob/main/user/sync_demo.c)。
