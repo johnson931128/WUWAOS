@@ -45,26 +45,27 @@ CPU 執行記憶體中的機器碼，不知道來源檔名。OpenSBI 負責早�
 | kernel/timer.c / timer.h | 中斷初始化、時間片到期事件、清除 pending 與計數 |
 | kernel/workstate.c / workstate.h | 派發時間累計、系統 busy 總計、安全唯讀監測快照 |
 | include/workstate_info.h | 固定容量、版本化的行程 CPU／記憶體快照 ABI |
-| user/workstate.c / workstate.h | shell 內即時全螢幕、區間比率計算、定時休眠與 q 退出 |
+| user/workstate.c / workstate.h、user/workstate_entry.c | 獨立 workstate image、區間比率、定時休眠與 q 退出 |
 | kernel/scheduler.c / scheduler.h | 單向鏈結 FIFO 就緒佇列、入列／取隊首／移除與順序查閱 |
 | kernel/sync.c / sync.h、include/sync_ops.h | 自製 mutex／semaphore、等待佇列與行程離開清理；詳見 Spec 22 |
 | kernel/elf.c / elf.h | 驗證並載入受限 RV64 ELF 段，準備私有 VM；見 Spec 26 |
 | user/sync_demo.c / sync_demo.h | shell 的同步示範：父子行程、等待狀態與資源回收 |
-| kernel/io.c / io.h | 行輸入／raw console、固定管道、pending I/O（尚未完成的輸入輸出） |
+| kernel/io.c / io.h | 行輸入／raw console、FD/OFD、WUFS file descriptor、pipe ring 與 pending I/O |
 | kernel/block.c / block.h | FDT 裝置探索、VirtIO-MMIO 區塊讀寫佇列 |
 | kernel/fs.c / fs.h | WUFS 區塊配置、inode、目錄與路徑操作 |
 | kernel/memory.c | freestanding（無標準執行環境）建置所需的 byte-wise memset／memcpy |
 | kernel/page.c / page.h | 4 KiB 實體頁面空閒串列、配置／回收、配置 bitmap 與頁數查詢 |
 | kernel/swap.c / swap.h | 獨立交換區標頭、slot bitmap、4 KiB 換入／換出讀寫 |
-| kernel/syscall.c / syscall.h | 29 個 syscall（系統呼叫）的編號分派 |
-| kernel/user_image.S | 把 user.bin、app.bin 與 fan.bin 三份獨立映像嵌入核心唯讀資料 |
+| kernel/syscall.c / syscall.h | 自訂 syscall ABI 分派；新增 open／close／dup／dup2／pipe／console 查詢 |
+| kernel/user_image.S | 把 user.bin、app.bin、fan.bin 與 workstate.bin 四份獨立映像嵌入核心唯讀資料 |
 | kernel/linker.ld | 核心入口、記憶體區段與權限邊界 |
 | include/syscall_numbers.h | 共用系統呼叫編號、內建程式角色、錯誤碼 |
 | include/process_limits.h | 行程與位址空間共用的上限 4 |
 | include/vm_limits.h | heap 起點、頁面大小、heap 頁數與常駐頁預算 |
 | user/entry.S | 使用者入口，將核心給的角色與可選路徑交給 user_main，返回後 exit |
 | user/api.c / api.h | 使用者系統呼叫包裝函式 |
-| user/shell.c / shell.h | 互動 shell、命令解析、fork／run／管線操作 |
+| user/shell.c / shell.h | 互動 shell、既有管理命令、fork／run／workstate 操作 |
+| user/shell_exec.c / shell_exec.h | 通用 echo／cat／ls／pwd command stage、argv parser、多階段 pipe 與重導向 |
 | user/demo.c | shell 映像的 user_main，呼叫 shell_main |
 | user/app.c | 獨立 app 映像的 user_main，分派 worker、quick、writer、reader、counter |
 | user/fan.c | 獨立文字編輯器映像、緩衝區編輯、按鍵解碼、TUI、儲存與退出確認 |
@@ -173,7 +174,7 @@ ps 的 free／total 是底層配置池頁數；vmstat 的 resident／limit 是�
 ## 7. process.c / process.h：PCB 與生命週期
 
 原本的 Process 結構現在以 ProcessControlBlock 標記，仍只有一份真實狀態。processes[16] 是行程表，kernel_stacks 每欄預留 16 KiB。
-PCB 保存 PID／父 PID／角色／狀態／結束碼、頁表與兩種 stack、frame、等待原因／事件通道／子 PID／結果位址、stdin/stdout pipe（輸入／輸出端點）、待完成 I/O 的種類／位址／長度／進度。
+PCB 保存 PID／父 PID／角色／狀態／結束碼、頁表與兩種 stack、frame、等待原因／事件通道／子 PID／結果位址、固定 8 格 FD table 與待完成 I/O 的種類／FD／位址／長度／進度。FD 0／1／2 預設為 console input／output／error，其他 FD 指向全域 OFD 表。
 `ready_next` 指向下一個就緒 PCB，`ready_queued` 標示是否已入列；只有 Ready 行程位於佇列，Running／Waiting／Zombie／Unused 不佔據佇列節點。行程表仍保存所有狀態，佇列不複製 PCB。
 
 ```text
@@ -188,8 +189,8 @@ Running／Waiting／Ready → exit／kill → Zombie（待回收） → wait →
 - create_process 掃描空欄位、分配遞增 PID、清除 PCB／stack、建立私有頁表、設定初始 frame，最後公布為 Ready。頁面不足回 -12 並恢復 Unused；失敗可能消耗 PID，但不占用 PCB 或頁面。
 - 初始 a0 存內建角色，sp 是使用者 stack 頂端，sepc 是 0x400000；sstatus 選 U-mode、SPIE=1、SIE=0，讓 sret 後可接收計時器中斷，核心內維持不搶占；停用浮點／向量能力。
 - process_init 建立 PID 1 的 shell；process_spawn 只接受 worker／quick，父 PID 為目前行程。
-- process_fork 建立尚未公布 Ready 的子 PCB，複製使用者頁及父 TrapFrame，設定子 a0=0、繼承端點後才改成 Ready；回傳新 PID 給父。trap_handler 已將 sepc 越過 ecall，父子都從 fork 呼叫後繼續。核心 stack 不複製，子使用新的保存框架。
-- process_exec 先拒絕未知 ID，再準備／交換位址空間。清除舊使用者暫存器、設定 sp／入口／a0 角色，保留原本合法的 sstatus、PID／父子關係／核心 stack／端點，清除等待及 I/O 欄位。切換 satp 後，trap.S 直接恢復新入口，不會返回舊 shell。所有空間共用核心映射，所以切換時目前核心 stack 仍有效。
+- process_fork 建立尚未公布 Ready 的子 PCB，複製使用者頁及父 TrapFrame，設定子 a0=0、複製 FD table 並增加 OFD 引用後才改成 Ready；父子共用同一個 open-file offset。父回傳新 PID，子從 fork 呼叫後繼續。核心 stack 不複製，子使用新的保存框架。
+- process_exec 先拒絕未知 ID，再準備／交換位址空間。清除舊使用者暫存器、設定 sp／入口／a0 角色，保留原本合法的 sstatus、PID／父子關係／核心 stack／FD table，清除等待及 I/O 欄位。切換 satp 後，trap.S 直接恢復新入口，不會返回舊 shell。所有空間共用核心映射，所以切換時目前核心 stack 仍有效。
 - transition 統一記錄與更新狀態，進入 Ready 時排到 FIFO 隊尾，離開 Ready 時移除；scheduler_next 已出列的節點不重複移除。trace_enabled 可關閉子行程的追蹤，但不會停用佇列維護。PID 1 與 fan 不輸出逐次狀態紀錄，以免打斷提示字元或編輯畫面，仍有真實狀態供 ps／pcb 查閱。fork 出來但還沒 exec 的 shell 子行程照常記錄。
 - PCB 的 context 保存 ra／sp／s0～s11；create_process 設定 first_run 與 frame 下緣作為初始核心入口／堆疊。fork 使用新的核心上下文，exec 保留目前核心 C 呼叫。
 - suspend_current 要求 SIE=0 且已離開 Running，停用原事件後以 context_switch 切到獨立 16 KiB scheduler stack。scheduler_loop 在自己的堆疊切核心根表、清除 current_index、輪詢 I/O、回收孤兒 Zombie，再取隊首、增加 dispatches、切頁表並設定新 50 ms 時間片，最後 context_switch 恢復行程核心呼叫。
@@ -202,17 +203,16 @@ process_wait 僅等待直接子行程；已是 Zombie 就 collect_child，否則
 子行程結束會使父行程回 Ready；父恢復到 process_wait 的原呼叫堆疊，自行檢查子行程、寫 status、回收並正常回傳 PID。舊 finish_wait 已移除，不再由排程器代填父的 a0。
 wait 的 status 可為空指標，否則阻塞前及回寫時檢查完整可寫範圍。驗證失敗時保留 Zombie 供重試。
 
-terminate 由 exit／kill 共用：關閉端點、取消 pending I/O、清理等待資訊、保存結果、成為 Zombie，並通知等待自己的父行程。
+terminate 由 exit／kill 共用：逐一 close FD、取消 pending I/O、清理等待資訊、保存結果、成為 Zombie，並通知等待自己的父行程。workstate/fan 終止時還復原終端畫面。
 process_kill 只接受目前行程的直接子行程，不接受自己、PID 1 或已是 Zombie，結果為 -9；不是完整訊號系統。
 父行程退出時子行程交給仍活著的 PID 1，否則無父行程；無父行程的 Zombie 由核心回收。
 reap 以 vm_destroy 釋放私有頁面與表、清除 PCB 的根表指標後將欄位改成 Unused；呼叫時必須已切離該根表及堆疊。孤兒回收在 scheduler stack，父 wait 在父堆疊；固定核心 stack 到下次建立才清零。kill 可丟棄沒有持鎖資源的暫停呼叫，未來加入鎖必須重新設計安全取消。
 
-### 查詢與固定管線建立
+### 查詢與管道
 
 process_list 列出有效 PCB、剩餘欄位與 scheduler_print_ready 的 FIFO 順序；process_inspect 顯示實際頁表、保存指令位置、stack、等待資訊、結束碼、端點、I/O 請求與 ready_queued。
-process_pipeline 先驗證兩個 PID 的回寫範圍與資源，分配 pipe，再建立 writer／reader，設定 writer 的 stdout 與 reader 的 stdin；失敗時回收未公布的資源。
-同一個核心系統呼叫內不會被其他行程插入，因此沒有建立到一半被排程的狀況。
-固定 PCB 表大小為 P=4，尋找／喚醒為 O(P)；建立先配置私有表與補充 metadata，映像頁面延遲載入，fork 另複製已修改的使用者狀態。候選行程由 FIFO 隊首 O(1) 取出，但 scheduler_loop 仍有 I/O 與 orphan 回收掃描，不宣稱整個派發都是 O(1)。
+一般管道由使用者 shell 建立 `pipe()`、fork 各階段、以 `dup2()` 接上 FD 0／1，所有階段啟動後再 wait。核心 `SYS_PIPELINE` 保留舊編號但回 `ERR_NO_SYSCALL`，不是現行管道實作。固定 PCB 表大小 P=16，pipe／FD／OFD 各有自己的上限。
+同一個核心系統呼叫內不會被其他行程插入，因此各表的引用計數更新不需要額外鎖。候選行程由 FIFO 隊首 O(1) 取出，但 scheduler_loop 仍有 I/O 與 orphan 回收掃描，不宣稱整個派發都是 O(1)。
 
 ### context.h / swtch.S：核心上下文
 
@@ -226,7 +226,7 @@ Spec 17 增加 WAIT_TIMER：process_sleep_ms 接受 1～60000 ms，記錄硬體 
 
 kernel/workstate.c 在派發前記錄 run_started，suspend_current 切走前將差值累加到 PCB cpu_ticks 與全域 busy_ticks；全域累計不因 reap 減少。快照以同一個 now 補上目前行程尚未結算的時間，不改動原計數。頁面用量透過 vm_get_usage 掃描補充頁表，page_get_stats 讀配置池計數。固定 16 PCB、每空間固定補充頁表上限，快照成本 O(P×每空間頁數)。先檢查 ABI 長度與可寫位址，再安全複製，不公開核心指標。
 
-user/workstate.c 以 PID 配對兩次快照、計算 ticks 差與牆鐘差，整數長除法產生千分比，顯示一位小數；首張不虛構區間。RAM used=128 MiB-free，RSS 僅使用者常駐頁；核心與保留區不能由各列 RSS 相加得到。workstate_main 取得 raw console、進 alternate screen，經 console_poll 非阻塞讀鍵與 sleep_ms(50) 讓出 CPU，每至少 1 秒重畫，q 後恢復終端。功能在 shell PID 內，不新增 PCB。限制與驗收見 SPEC-17。
+user/workstate.c 以 PID 配對兩次快照、計算 ticks 差與牆鐘差，整數長除法產生千分比，顯示一位小數；首張不虛構區間。RAM used=128 MiB-free，RSS 僅使用者常駐頁；核心與保留區不能由各列 RSS 相加得到。workstate_main 取得 raw console、進 alternate screen，經 console_poll 非阻塞讀鍵與 sleep_ms(50) 讓出 CPU，每至少 1 秒重畫，q 後恢復終端。現在它是獨立內嵌 PROGRAM_WORKSTATE image，由 shell fork／exec 執行，會占一個 PCB；exit／kill 都釋放 raw owner。見 SPEC-17 與 SPEC-27。
 
 process_table 先格式化各列，依最大資料長度調整欄寬，再輸出 ASCII 表頭、邊框與資料；數值右對齊、名稱及狀態左對齊，逐行清除剩餘字元。預設寬 77 欄，欄位增長不截斷；較窄視窗或很長數值可能需要加寬終端。RSS(K)／SWAP(K) 的單位是 KiB。
 
@@ -244,25 +244,24 @@ process_table 先格式化各列，依最大資料長度調整欄寬，再輸出
 
 io_read 先驗證 fd（描述號）、長度與完整可寫範圍。fd0 未接管道時接受 2–128-byte 行輸入請求。
 process_block_io 將緩衝區／長度存入 PCB、設定 IO_CONSOLE_READ，狀態改為 Waiting。不是在使用者程式持續讀硬體。
-console_read_line 非阻塞輪詢字元、回顯、處理 CR／LF 與 Backspace。CR 後的 LF 會忽略；超長行丟棄到換行後回傳錯誤，不執行截斷命令。
+console_read_line 非阻塞輪詢字元、回顯、處理 CR／LF 與 Backspace。CR 後的 LF 會忽略；超長行丟棄到換行後回傳錯誤，不執行截斷命令。Ctrl+D（EOT）空行時回 EOF=0，行內有內容時回傳目前字元但不附換行；raw mode 不特殊處理。
 process_block_io 在核心函式內切走；完成時回寫換行與長度，process_complete_io 把結果存入 PCB io_result，再改 Ready。恢復後 process_block_io 正常回傳結果，經 io_read／io_write→syscall_dispatch 填 a0。
 
 `console_mode(1)` 取得 raw console 的單一持有權。持有者 read(0, buffer, 1) 設定 IO_CONSOLE_RAW，console_read_raw 取得一個 byte 後直接寫回、不回顯，不要求 Enter。其他 console 讀取者（包括已掛起的請求）回 -16，避免讀走編輯器按鍵；fork 不繼承持有權，exit／kill／成功 exec 釋放它。切換時略過 shell 命令 CR 後尚未消耗的 LF。這是自訂的簡化介面，沒有完整 termios、信號與前景 process group。
 
-### Pipe 環形緩衝區
+### FD、OFD 與 Pipe 環形緩衝區
 
-pipes[2] 每條有 used、readers／writers（端點數）、16-byte 資料陣列、read_at／write_at（索引）與 count（資料量）。
-寫一個 byte：放入 write_at，索引加一對 16 取餘數，count 加一。讀取相反；傳輸 N 個 byte 耗時 O(N)，儲存固定 O(16)。
+每 PCB 有 8 格 FD table，FD 0／1／2 初始指向特殊 console input／output／error；其他項目指向全域 16 格 OFD 表。OFD 保存一般檔案 inode、共享 offset／讀寫權限，或 pipe 的讀端／寫端。dup／dup2 與 fork 增加 OFD 引用，同一描述共用 offset；exec 保留描述，close／exit／kill 減少引用。open 與 pipe 選最小可用 FD，標準描述關閉後其槽位可重用。
 
-- pipe_read：有資料就回傳最多請求量；空且還有 writer 回 IO_PENDING（尚未可完成）；空且沒有 writer 回 0，也就是 EOF。
-- pipe_write：有空間就寫入並回傳實際量，可短寫；滿且有 reader 就 pending；沒有 reader 回 -32（broken pipe，無讀者）。
-- io_write：fd1 未接管道時輸出至 console，否則走 pipe_write。所有來源範圍先檢查可讀權限。
-- io_poll：掃描 Waiting／WAIT_IO 的 PCB，重試待完成請求；完成一次傳輸／EOF／錯誤後填返回值並喚醒。若一次完成請求促成另一請求就緒，繼續掃描直到無進展。
-- io_close_process：exit／kill 時減少該行程端點數；兩端都關閉就釋放 used。其他端的待完成請求會由下一次 io_poll 判斷 EOF／錯誤。
-- io_inherit：fork 時複製輸入／輸出端點並增加 readers／writers 參照數。exec 不關閉端點，exit／kill 逐份減少，避免其中一個持有者結束就提早出現 EOF。
+`pipes[8]` 各有固定 256-byte 資料陣列、reader／writer OFD 參照、`read_at`／`write_at` 與 `count`。寫 byte 後索引對 256 取餘數，讀取相反；傳輸 N bytes 耗時 O(N)，儲存固定 O(256)。pipe syscall 同時配置 read/write OFD；dup／fork 只增加 OFD 引用，不複製 ring。
 
-本版只有固定 fd0 輸入與 fd1 輸出，沒有一般描述號表、pipe()/dup2()/close() API 或多段管線。固定管線初始讀者／寫者各一個，fork 繼承可增加持有者。建立／繼承／關閉在核心單核心區間內完成，不需要額外鎖。
-只有 shell 會讀 console，內建 reader 綁定 pipe；不宣稱支援多行程同時編輯一個終端。
+- `io_read`／`io_write` 先按 OFD 類型與方向驗證，再檢查使用者記憶體權限；console、pipe 與 WUFS regular file 使用相同 FD 呼叫。
+- pipe 空且尚有 writer 時讀取 pending；無 writer 且資料已讀完回 EOF 0。滿時寫入 pending；無 reader 回 -32。pipe 讀寫允許短讀／短寫，使用者可循環處理。
+- file OFD 的 read offset 增加實際讀取量；write 使用 RMW sector 保留未改 bytes，`O_APPEND` 每次從目前 EOF 寫入並更新共享 offset。開啟中的 inode 不可透過 rm／rm tree／cp 覆寫／truncate 釋放或換代。
+- io_poll 掃描 WAIT_IO PCB，依保存的 FD 重新解析 OFD，重試 pipe／console 操作，完成傳輸／EOF／錯誤後填 io_result 並喚醒。
+- close／exit／kill 經 OFD 引用計數更新 pipe reader／writer。最後 writer 關閉且 ring 變空才回 EOF；最後 reader 關閉會讓 writer 回 -32。
+
+固定容量限制為每 process 8 descriptors、全域 16 OFD、8 pipes；建立／繼承／關閉在單核心核心區間內完成，不需要額外鎖。Shell 每行最多 3 個 stages；各 stage 用標準 FD，建立後關閉所有額外端點。
 
 ## 9. block.c 與 fs.c：I/O 層和檔案系統
 
@@ -349,7 +348,7 @@ fan.c 的 user_main(program, path) 開檔時讀最多 2049 bytes，超過 2048 �
 `decode` 用狀態機逐 byte 處理 CSI／SS3 按鍵序列；`handle` 實作一般編輯與未儲存退出確認。`render` 計算垂直／水平視窗，保留 78×20 編輯區，逐行比對畫面快取後只重畫有變動的行，Ctrl+L 強制完整重畫。`save` 對 WUFS 整檔覆寫，完整成功才清除 dirty；失敗保留緩衝區及錯誤訊息。實作與限制見 SPEC-09。
 
 print.c 的 user_write_all 迴圈處理短寫；user_puts 掃描字串；user_number 以除 10 與反轉輸出十進位，支援超過 9 的 PID。print.h 宣告共用輸出，shell.h 只宣告 shell 入口。
-命令解析 O(L)，L 最多 126；不支援引號、一般參數、多段管線或通用檔案描述號。
+`shell_exec.c` 解析 echo／cat／ls／pwd stages、單／雙引號詞元、pipe、`<`、`>`、`>>`；限制整行 128 bytes、最多 3 stages、每 stage 8 個 argv。建立所有 pipe 與重導向檔案後 fork 全部 stage，dup2 接標準 FD，父子都關閉額外端點；父回收全部 children。fork 途中失敗時關閉 FD、kill 並 wait 已建立 children。child 的 exec/setup 訊息寫 fd2。`cat` 無檔名讀 stdin，console 輸出末尾非 LF 時才補顯示換行；pipe／file byte 不變。直接外部 ELF 不傳 argv。
 
 demo.c 的 user_main 只進入 shell；app.c 是另一份獨立映像，依初始 a0 角色分派：1 worker（yield 後 sleep(7)，醒後 exit 0）、2 quick（exit 40）、3 writer、4 reader、5 counter。
 counter 先等待通道 9，再讀寫自己初始化為 3 的 volatile 全域 remaining，每次輸出後減一並 yield，至 0 結束。兩份 counter 各自從 3 開始，展示初始化資料與主動輪轉；現行另有硬體時間片，短程式不一定等到到期。
@@ -363,7 +362,7 @@ kernel/linker.ld 由 0x80200000 配置 .text（程式碼）、.rodata（唯讀�
 NOLOAD 不攜帶初始化內容但保留記憶體，KEEP 保護入口，ALIGN 決定對齊；限制核心不超過 0x80400000，保留低位址核心開機大小預算。RAM 映射現由多張 L0 動態建立，不再受單張 L0 的 2 MiB 覆蓋範圍限制。
 
 user/linker.ld 的入口固定 0x400000，code／唯讀資料最多 16 KiB，data／BSS 從 0x404000 開始最多 4 KiB；ASSERT（連結期限制）防止超出。stack 由核心映射，不在 user.bin 中。
-Makefile 將 user/entry.S、api.c、print.c、demo.c、shell.c 連結為 user.elf；entry.S、api.c、print.c、app.c 連結為 app.elf；entry.S、api.c、print.c、fan.c 連結為 fan.elf。三者各有自己的 user_main，但不互相連結。llvm-objcopy 轉成 user.bin／app.bin／fan.bin，kernel/user_image.S 的 incbin 嵌入核心唯讀資料，vm 依程式 ID 複製映像。不是 ELF parser（執行檔解析器）。
+Makefile 將 entry.S、api.c、print.c、demo.c、sync_demo.c、shell.c、shell_exec.c 連結為 user.elf；app.c 連結為 app.elf；fan.c 連結為 fan.elf；workstate_entry.c 與 workstate.c 連結為 workstate.elf。四者各自有 user_main，不互相連結。shell API 與新 parser 使用 `-Oz` 以維持固定 code 區；所有映像仍受 user/linker.ld 16 KiB code／4 KiB data ASSERT。llvm-objcopy 轉成四份 `.bin`，kernel/user_image.S 的 incbin 嵌入唯讀資料，vm 依程式 ID 複製映像。不是 ELF parser（執行檔解析器）。
 `make run` 先呼叫 tools/make_disk.py 建立或更新 `build/wuwaos.img`，再以 `-drive` 與 `virtio-blk-device` 接上 QEMU。Python 工具用相同 WUFS metadata layout 建立空卷、Linux 風格目錄與 `/boot/kernel.elf`；辨識已格式化映像後只更新 kernel inode，保留其他檔案。`make clean` 特意保留磁碟映像。
 
 磁碟副本使用 llvm-objcopy --strip-debug 產生的 build/kernel-disk.elf，移除除錯段以避免超過 WUFS 單檔容量；完整 build/kernel.elf 保留給 QEMU／GDB。clean 刪除兩份 ELF，映像與使用者檔案保留。
@@ -376,11 +375,11 @@ all 建置、run 啟動、clean 清理 build 產物。更改 flags（編譯選�
 
 ## 13. 驗證與閱讀練習
 
-早期行程驗收與 QEMU monitor 證據在 SPEC.md；VirtIO／WUFS 磁碟重啟持久性在 SPEC-06；FIFO 與 Ready 行程移除驗收在 SPEC-07；動態頁面／三級表的初期驗收在 SPEC-08，fan 互動操作在 SPEC-09，現行按需分頁／Swap／回收及失敗路徑在 SPEC-10。ps／pcb 是讀取真實 PCB 與就緒佇列；pipe 的 80 bytes 必須通過 16-byte 緩衝區與多次狀態切換。
+早期行程驗收與 QEMU monitor 證據在 SPEC.md；VirtIO／WUFS 磁碟重啟持久性在 SPEC-06；FIFO 與 Ready 行程移除驗收在 SPEC-07；動態頁面／三級表的初期驗收在 SPEC-08，fan 互動操作在 SPEC-09，現行按需分頁／Swap／回收及失敗路徑在 SPEC-10；一般 FD／管道驗收見 SPEC-27。ps／pcb 讀取真實 PCB 與就緒佇列；`writer | reader` 示範需超過 256-byte ring capacity 才能觀察阻塞。
 未完成 runtime 驗證的邊界不可等同已測試；沒有新增未經同意的測試程式碼。
 可先照 README 操作 worker，對照 saved sepc（保存指令位置）說明恢復後從哪裡繼續；再追蹤 writer 滿管道時的 buffer 位址如何留在 PCB。
 
-計時器與 RR 已在 Spec 15 實作；仍無核心內搶占、多核心、優先權、通用檔案描述號、任意執行檔與前景 Ctrl+C 取消。若 shell wait 一個永遠不會收到事件的子行程，也無其他行程能通知，會阻塞；先 wakeup 再 wait。
+計時器與 RR 已在 Spec 15 實作；仍無核心內搶占、多核心、優先權、seek、通用 shell/job control、外部 ELF argv 與前景 Ctrl+C 取消。描述號／OFD／pipe 表固定容量，shell 最多三 stage。若 shell wait 一個永遠不會收到事件的子行程，也無其他行程能通知，會阻塞；先 wakeup 再 wait。
 
 ## 官方參考
 

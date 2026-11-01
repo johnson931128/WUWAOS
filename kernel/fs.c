@@ -2,6 +2,7 @@
 #include "block.h"
 #include "console.h"
 #include "process.h"
+#include "io.h"
 #include <stdint.h>
 
 #define FS_MAGIC "WUFS0001"
@@ -525,6 +526,7 @@ long fs_remove(const char *path) {
     if (error < 0) return error;
     if (inode_read(entry.inode, &inode) < 0) return -5;
     if (inode.type != FS_TYPE_FILE) return -21;
+    if (io_inode_is_open(entry.inode)) return -16;
 
     const uint32_t count = parent.size / (uint32_t)sizeof(DirectoryEntry);
     const uint32_t new_size = parent.size - (uint32_t)sizeof(DirectoryEntry);
@@ -564,6 +566,7 @@ long fs_remove_tree(const char *path) {
     seen[entry.inode] = 1;
     for (uint32_t i = 0; i < count; ++i) {
         if (inode_read(nodes[i], &inode) < 0) return -5;
+        if (io_inode_is_open(nodes[i])) return -16;
         if (inode.type == FS_TYPE_FILE) continue;
         if (inode.type != FS_TYPE_DIRECTORY || inode.size % sizeof(DirectoryEntry)) return -5;
         for (int slot = 0; slot < PROCESS_LIMIT; ++slot) {
@@ -624,6 +627,7 @@ long fs_copy(const char *source, const char *destination) {
     if (error != 0 && error != -2) return error;
     if (exists) {
         if (entry.inode == source_number) return -22;
+        if (io_inode_is_open(entry.inode)) return -16;
         if (inode_read(entry.inode, &old) < 0) return -5;
         if (old.type != FS_TYPE_FILE) return -21;
     }
@@ -703,6 +707,8 @@ long fs_write(const char *path, const void *buffer, size_t length) {
         number = (uint32_t)created;
     } else if (found < 0) {
         return found;
+    } else if (io_inode_is_open(number)) {
+        return -16;
     }
     Inode inode;
     if (inode_read(number, &inode) < 0 || inode.type != FS_TYPE_FILE) return -21;
@@ -721,4 +727,85 @@ long fs_write(const char *path, const void *buffer, size_t length) {
     inode.size = (uint32_t)length;
     if (inode_write(number, &inode) < 0) return -5;
     return (long)length;
+}
+
+long fs_open_inode(const char *path, int create, uint32_t *number) {
+    if (!mounted) return -22;
+    uint32_t inode_number;
+    int found = path_lookup(path, &inode_number);
+    if (found == -2 && create) {
+        const long created = fs_touch(path);
+        if (created < 0) return created;
+        found = path_lookup(path, &inode_number);
+    }
+    if (found < 0) return found;
+    Inode inode;
+    if (inode_read(inode_number, &inode) < 0) return -5;
+    if (inode.type != FS_TYPE_FILE) return -21;
+    *number = inode_number;
+    return 0;
+}
+
+long fs_inode_size(uint32_t number) {
+    Inode inode;
+    if (inode_read(number, &inode) < 0) return -5;
+    return inode.type == FS_TYPE_FILE ? (long)inode.size : -21;
+}
+
+long fs_read_inode(uint32_t number, size_t offset, void *buffer, size_t length) {
+    Inode inode;
+    if (inode_read(number, &inode) < 0) return -5;
+    if (inode.type != FS_TYPE_FILE) return -21;
+    if (offset >= inode.size) return 0;
+    if (length > inode.size - offset) length = inode.size - offset;
+    size_t copied = 0;
+    while (copied < length) {
+        const size_t position = offset + copied;
+        uint32_t sector;
+        uint8_t data[FS_SECTOR_SIZE];
+        if (inode_block(&inode, (uint32_t)(position / FS_SECTOR_SIZE), 0, &sector) < 0 ||
+            sector == 0 || read_sector(sector, data) < 0) return -5;
+        const size_t in_sector = position % FS_SECTOR_SIZE;
+        size_t amount = FS_SECTOR_SIZE - in_sector;
+        if (amount > length - copied) amount = length - copied;
+        for (size_t i = 0; i < amount; ++i) ((uint8_t *)buffer)[copied + i] = data[in_sector + i];
+        copied += amount;
+    }
+    return (long)copied;
+}
+
+long fs_write_inode(uint32_t number, size_t offset, const void *buffer, size_t length) {
+    const size_t maximum = (FS_DIRECT + FS_INDIRECT * FS_POINTERS_PER_SECTOR) * FS_SECTOR_SIZE;
+    if (offset > maximum || length > maximum - offset || offset + length > UINT32_MAX) return -27;
+    Inode inode;
+    if (inode_read(number, &inode) < 0 || inode.type != FS_TYPE_FILE) return -21;
+    size_t copied = 0;
+    long failure = -5;
+    while (copied < length) {
+        const size_t position = offset + copied;
+        uint32_t sector, existing;
+        uint8_t data[FS_SECTOR_SIZE] = {0};
+        const uint32_t block = (uint32_t)(position / FS_SECTOR_SIZE);
+        if (inode_block(&inode, block, 0, &existing) < 0) { failure = -5; break; }
+        if (existing) sector = existing;
+        else if (inode_block(&inode, block, 1, &sector) < 0 || sector == 0) { failure = -28; break; }
+        const size_t in_sector = position % FS_SECTOR_SIZE;
+        if (existing && read_sector(sector, data) < 0) { failure = -5; break; }
+        size_t amount = FS_SECTOR_SIZE - in_sector;
+        if (amount > length - copied) amount = length - copied;
+        for (size_t i = 0; i < amount; ++i) data[in_sector + i] = ((const uint8_t *)buffer)[copied + i];
+        if (write_sector(sector, data) < 0) { failure = -5; break; }
+        copied += amount;
+    }
+    if (offset + copied > inode.size) inode.size = (uint32_t)(offset + copied);
+    if (inode_write(number, &inode) < 0) return copied ? (long)copied : -5;
+    return copied ? (long)copied : (length == 0 ? 0 : failure);
+}
+
+long fs_truncate_inode(uint32_t number) {
+    Inode inode;
+    if (inode_read(number, &inode) < 0 || inode.type != FS_TYPE_FILE) return -21;
+    if (inode_free_blocks(&inode) < 0) return -5;
+    inode.size = 0;
+    return inode_write(number, &inode) < 0 ? -5 : 0;
 }

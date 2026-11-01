@@ -57,7 +57,8 @@ static void transition(Process *process, ProcessState next, const char *reason) 
         scheduler_enqueue(process);
     }
     /* Keep the interactive prompt readable; inspect the shell through pcb. */
-    if (!trace_enabled || process->pid == 1 || process->program == PROGRAM_FAN) {
+    if (!trace_enabled || process->pid == 1 || process->program == PROGRAM_FAN ||
+        process->program == PROGRAM_WORKSTATE) {
         return;
     }
     console_puts("[process] PID=");
@@ -134,8 +135,10 @@ static long create_process(long program, long parent_pid, int publish) {
         }
     } else { process->cwd[0] = '/'; process->cwd[1] = 0; }
     process->program = program;
-    process->input_pipe = -1;
-    process->output_pipe = -1;
+    for (int fd = 0; fd < PROCESS_FD_LIMIT; ++fd) process->fd_table[fd] = -99;
+    process->fd_table[0] = -1;
+    process->fd_table[1] = -2;
+    process->fd_table[2] = -3;
     transition(process, PROCESS_NEW, "create");
     process->page_table = vm_create(program);
     if (process->page_table == 0) {
@@ -208,7 +211,7 @@ long process_fork(void) {
 static long process_install_image(Process *process, uintptr_t root, long program, uintptr_t entry, uintptr_t stack);
 
 long process_exec(long program, const char *argument) {
-    if (program < PROGRAM_WORKER || program > PROGRAM_FAN ||
+    if (program < PROGRAM_WORKER || (program > PROGRAM_FAN && program != PROGRAM_WORKSTATE) ||
         (program == PROGRAM_FAN && (argument == 0 || argument[0] != '/'))) {
         return ERR_INVALID; /* Preserve the current image on failure. */
     }
@@ -389,6 +392,8 @@ long process_wait(long pid, uintptr_t status_address) {
 static void terminate(Process *process, long status) {
     sync_process_cleanup(process);
     io_close_process(process);
+    if (process->program == PROGRAM_FAN || process->program == PROGRAM_WORKSTATE)
+        console_puts("\033[0m\033[?25h\033[?1049l");
     process->io_operation = IO_NONE;
     process->wait_reason = WAIT_NONE;
     process->channel = 0;
@@ -449,9 +454,10 @@ void process_wake_sync(Process *process) {
     }
 }
 
-long process_block_io(IoOperation operation, uintptr_t buffer, size_t length) {
+long process_block_io(IoOperation operation, int fd, uintptr_t buffer, size_t length) {
     Process *process = process_current();
     process->io_operation = operation;
+    process->io_fd = fd;
     process->io_buffer = buffer;
     process->io_length = length;
     process->io_count = 0;
@@ -472,7 +478,7 @@ void process_complete_io(Process *process, long result) {
 }
 
 static const char *program_name(long program) {
-    static const char *names[] = { "shell", "worker", "quick", "writer", "reader", "counter", "fan", "elf" };
+    static const char *names[] = { "shell", "worker", "quick", "writer", "reader", "counter", "fan", "elf", "workstate" };
     return names[program];
 }
 
@@ -566,10 +572,11 @@ long process_inspect(long pid) {
     console_number(process->wait_pid);
     console_puts(" exit_status=");
     console_number(process->exit_status);
-    console_puts("\nstdin_pipe=");
-    console_number(process->input_pipe);
-    console_puts(" stdout_pipe=");
-    console_number(process->output_pipe);
+    console_puts("\nFDs=");
+    for (int fd = 0; fd < PROCESS_FD_LIMIT; ++fd) {
+        console_number(process->fd_table[fd]);
+        console_putc(fd + 1 == PROCESS_FD_LIMIT ? '\n' : ' ');
+    }
     console_puts("\nio_buffer=");
     console_hex(process->io_buffer);
     console_puts(" length=");
@@ -590,50 +597,8 @@ long process_trace(long enabled) {
 }
 
 long process_pipeline(uintptr_t result_address) {
-    Process *parent = process_current();
-    if (!user_writable(parent->page_table, result_address, 2 * sizeof(long))) {
-        return ERR_ADDRESS;
-    }
-    int free_slots = 0;
-    for (int i = 0; i < PROCESS_LIMIT; ++i) {
-        free_slots += processes[i].state == PROCESS_UNUSED;
-    }
-    if (free_slots < 2 || next_pid > LONG_MAX - 2) {
-        return ERR_NO_SLOT;
-    }
-    const int pipe = io_pipe_create();
-    if (pipe < 0) {
-        return ERR_NO_SLOT;
-    }
-    const long writer = create_process(PROGRAM_WRITER, parent->pid, 1);
-    const long reader = create_process(PROGRAM_READER, parent->pid, 1);
-    if (writer < 0 || reader < 0) {
-        if (writer > 0) {
-            reap(find_pid(writer));
-        }
-        if (reader > 0) {
-            reap(find_pid(reader));
-        }
-        io_pipe_release(pipe);
-        return writer < 0 ? writer : reader;
-    }
-    find_pid(writer)->output_pipe = pipe;
-    find_pid(reader)->input_pipe = pipe;
-    const long pids[2] = {writer, reader};
-    const int error = user_copy_to(parent->page_table, result_address, pids, sizeof(pids));
-    if (error < 0) {
-        io_close_process(find_pid(writer));
-        io_close_process(find_pid(reader));
-        reap(find_pid(writer));
-        reap(find_pid(reader));
-        return error;
-    }
-    console_puts("[pipe] writer=");
-    console_number(writer);
-    console_puts(" reader=");
-    console_number(reader);
-    console_puts(" capacity=16\n");
-    return 0;
+    (void)result_address;
+    return ERR_NO_SYSCALL; /* Retained number; general pipes use SYS_PIPE. */
 }
 
 TrapFrame *process_resume(void) {

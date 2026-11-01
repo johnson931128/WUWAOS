@@ -47,6 +47,7 @@ extern unsigned char __text_end[], __rodata_end[];
 extern const unsigned char __user_image_start[], __user_image_end[];
 extern const unsigned char __app_image_start[], __app_image_end[];
 extern const unsigned char __fan_image_start[], __fan_image_end[];
+extern const unsigned char __workstate_image_start[], __workstate_image_end[];
 
 static _Noreturn void vm_panic(const char *message) {
     console_puts("[vm] "); console_puts(message); console_putc('\n'); kernel_idle();
@@ -180,9 +181,11 @@ static int obtain_frame(uintptr_t *result) {
 static void image_for(long program, const unsigned char **start, size_t *length) {
     if (program == PROGRAM_ELF) { *start = 0; *length = 0; return; }
     *start = program == 0 ? __user_image_start :
-        program == PROGRAM_FAN ? __fan_image_start : __app_image_start;
+        program == PROGRAM_FAN ? __fan_image_start :
+        program == PROGRAM_WORKSTATE ? __workstate_image_start : __app_image_start;
     const unsigned char *end = program == 0 ? __user_image_end :
-        program == PROGRAM_FAN ? __fan_image_end : __app_image_end;
+        program == PROGRAM_FAN ? __fan_image_end :
+        program == PROGRAM_WORKSTATE ? __workstate_image_end : __app_image_end;
     *length = (uintptr_t)end - (uintptr_t)*start;
 }
 
@@ -267,7 +270,7 @@ void vm_enable(uintptr_t root) {
 void vm_use_kernel(void) { vm_enable(kernel_root); }
 
 void vm_init(const void *fdt) {
-    for (long program = 0; program <= PROGRAM_FAN; ++program) {
+    for (long program = 0; program <= PROGRAM_WORKSTATE; ++program) {
         const unsigned char *image;
         size_t size;
         image_for(program, &image, &size);

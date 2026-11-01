@@ -34,7 +34,7 @@ CPU task 是排程工作占用率：包含行程被派發期間的使用者程�
 
 ## 監測者本身也需要資源
 
-workstate 是 shell 內的功能，所以表格中的 shell 就包含監測畫面的開銷，不額外占用一個 PCB。它取得 raw console，檢查鍵盤後以 sleep_ms 休眠 50 ms，再檢查更新時間；不在使用者模式持續忙等一秒。
+workstate 是獨立內嵌 user image。Shell fork 後 exec 此 image，所以監測行程會占一個 PCB，表格中的 `workstate` 列包含畫面刷新開銷。它取得 raw console，檢查鍵盤後以 sleep_ms 休眠 50 ms，再檢查更新時間；不在使用者模式持續忙等一秒。按 q 正常返回 shell；若被 kill，核心也會釋放 raw ownership 並退出 alternate screen。16 個 PCB 額滿時命令顯示 fork 錯誤。
 
 目前定時等待仍由核心排程迴圈檢查 deadline。同步磁碟 I/O 或其他行程的時間片可能延後畫面更新與 q 的處理，不是即時期限保證。其他行程的終端輸出可能交錯，下次更新會重畫。
 

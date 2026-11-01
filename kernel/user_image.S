@@ -17,3 +17,9 @@ __app_image_end:
 __fan_image_start:
     .incbin "build/fan.bin"
 __fan_image_end:
+    .balign 16
+    .globl __workstate_image_start
+    .globl __workstate_image_end
+__workstate_image_start:
+    .incbin "build/workstate.bin"
+__workstate_image_end:

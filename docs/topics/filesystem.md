@@ -30,7 +30,7 @@ inode 有 8 個直接指標與 8 個單層間接指標。每個間接區塊可�
 
 ## 路徑查找與讀寫
 
-`kernel/fs.c` 從根目錄開始，逐段查找名稱與 inode，最後依檔案內 offset（位移）找直接或間接區塊。建立檔案要配置 inode，擴展內容還要配置資料區塊與必要的間接區塊。
+`kernel/fs.c` 從根目錄開始，逐段查找名稱與 inode，最後依檔案內 offset（位移）找直接或間接區塊。建立檔案要配置 inode，擴展內容還要配置資料區塊與必要的間接區塊。`open` 建立的 OFD 保存 inode 和共享 offset，`read`／`write` 逐段存取；`O_APPEND` 寫入時從當下檔尾開始。
 
 由於 inode 為 80 bytes、磁區為 512 bytes，有些 inode 會跨磁區。`inode_read`／`inode_write` 依每個磁區剩餘長度分段搬移；寫入先讀出原磁區再修改，保護旁邊 inode 的內容。
 
@@ -40,7 +40,7 @@ inode 有 8 個直接指標與 8 個單層間接指標。每個間接區塊可�
 
 `cp /absolute/source /absolute/destination` 用 512-byte 緩衝區複製一般檔案；目的檔存在時，先寫完整的新 inode，成功連入目錄後才回收舊目的檔。複製到同一 inode 會被拒絕，避免清空來源。要同時容納新舊目的檔，因此剩餘空間不足可能回報錯誤。磁碟異常或斷電時仍可能留下未回收區塊或部分目錄更新，WUFS 尚無 journal（交易日誌）；見 [Spec 18](../SPEC-18-file-commands.md)。
 
-這是 path-based（直接以路徑呼叫）介面，還沒有完整 open／close／seek 與通用檔案描述號表。`fs_write` 是整檔覆寫，沒有 append（附加寫入）。
+Shell 同時保留 path-based（直接以路徑呼叫）的 `fs_readfile`／整檔 `fs_writefile`，並新增通用 open／close／read／write 描述號介面。`dup`、`dup2` 與 fork 共用同一 OFD offset；不提供 seek，描述號採固定容量。一般整檔覆寫、truncate、rm、rm tree 和 cp 覆寫若目標 inode 正被開啟，回 busy（-16）；本版不支援 unlink 後延遲回收。
 
 ## 在 QEMU 操作
 
@@ -55,6 +55,8 @@ cat /home/user/notes/today.txt
 若目錄已存在，mkdir 可能回 -17；不用再建立一次。write 的文字參數目前只能是一個不含空白的 token（解析單位）；有空白或多行內容請用 fan。
 
 cat 會在非空內容末端缺少換行時補一個「顯示用換行」，防止提示字元黏在文字後；不會因此修改檔案內容。退出並重新啟動 QEMU 後，再 cat 應仍可讀回。
+
+`echo hello > /home/user/out.txt` 會建立或截斷目的檔，`echo again >> /home/user/out.txt` 會附加；若 stage 執行前的開啟成功而後續 fork 失敗，已建立或截斷的目的檔狀態不回復。完整管線與 I/O 說明見 [Spec 27](../SPEC-27-file-descriptors-and-shell-pipelines.md)。
 
 ## 持久性與限制
 

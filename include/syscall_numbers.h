@@ -36,6 +36,19 @@
 #define SYS_FS_REMOVE_TREE 32
 #define SYS_SYNC 33
 #define SYS_EXEC_PATH 34
+#define SYS_OPEN 35
+#define SYS_CLOSE 36
+#define SYS_DUP2 37
+#define SYS_PIPE 38
+#define SYS_DUP 39
+#define SYS_IS_CONSOLE 40
+
+#define FD_O_RDONLY 0x01
+#define FD_O_WRONLY 0x02
+#define FD_O_RDWR 0x03
+#define FD_O_CREAT 0x10
+#define FD_O_TRUNC 0x20
+#define FD_O_APPEND 0x40
 
 #define PROGRAM_WORKER 1
 #define PROGRAM_QUICK 2
@@ -44,6 +57,7 @@
 #define PROGRAM_COUNTER 5
 #define PROGRAM_FAN 6
 #define PROGRAM_ELF 7
+#define PROGRAM_WORKSTATE 8
 
 #define ERR_NO_CHILD (-10L)
 #define ERR_NO_SLOT (-11L)
@@ -54,5 +68,6 @@
 #define ERR_ADDRESS (-14L)
 #define ERR_NO_SYSCALL (-38L)
 #define ERR_BROKEN_PIPE (-32L)
+#define ERR_BAD_FD (-9L)
 
 #endif

@@ -51,6 +51,13 @@ long read(long fd, char *buffer, unsigned long length) {
     return syscall3(SYS_READ, fd, (long)buffer, (long)length);
 }
 
+long open(const char *path, long flags) { return syscall3(SYS_OPEN, (long)path, flags, 0); }
+long close(long fd) { return syscall3(SYS_CLOSE, fd, 0, 0); }
+long dup2(long oldfd, long newfd) { return syscall3(SYS_DUP2, oldfd, newfd, 0); }
+long dup(long oldfd) { return syscall3(SYS_DUP, oldfd, 0, 0); }
+long is_console(long fd) { return syscall3(SYS_IS_CONSOLE, fd, 0, 0); }
+long pipe(long descriptors[2]) { return syscall3(SYS_PIPE, (long)descriptors, 0, 0); }
+
 long ps(void) { return syscall3(SYS_PS, 0, 0, 0); }
 long pcb(long pid) { return syscall3(SYS_PCB, pid, 0, 0); }
 long kill(long pid) { return syscall3(SYS_KILL, pid, 0, 0); }

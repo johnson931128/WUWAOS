@@ -30,6 +30,7 @@
 | 24 | [功能示範影片](./SPEC-24-demo-video.md)，QEMU 實際操作與影片驗證 |
 | 25 | [行程容量擴充](./SPEC-25-process-capacity.md)，16 個行程、資源回收與 workstate 分頁 |
 | 26 | [WUFS 路徑式 ELF 載入](./SPEC-26-elf-exec.md)，受限靜態 RV64 使用者程式 |
+| 27 | [檔案描述號、一般 I/O 與 Shell 管線](./SPEC-27-file-descriptors-and-shell-pipelines.md)，FD/OFD、WUFS offset I/O、多階段管線與重導向 |
 
 ## 如何判斷是否驗證過
 

@@ -3,8 +3,8 @@
 #include "print.h"
 #include "syscall_numbers.h"
 #include "vm_limits.h"
-#include "workstate.h"
 #include "sync_demo.h"
+#include "shell_exec.h"
 #include <limits.h>
 
 static int equal(const char *first, const char *second) {
@@ -149,6 +149,21 @@ static void run_fan(const char *path) {
     }
     wait_child(child);
     /* Also recover the terminal if the editor exited through a user trap. */
+    user_puts("\033[0m\033[?25h\033[?1049l");
+}
+
+static void run_workstate(void) {
+    const long child = fork();
+    if (child == 0) {
+        const long result = exec(PROGRAM_WORKSTATE);
+        result_line("workstate exec error: ", result);
+        exit(127);
+    }
+    if (child < 0) {
+        result_line("workstate fork error: ", child);
+        return;
+    }
+    wait_child(child);
     user_puts("\033[0m\033[?25h\033[?1049l");
 }
 
@@ -309,6 +324,13 @@ static void help(void) {
               "cls                             Clear screen and scrollback.\n"
               "fan <path>                      Edit text; Ctrl+O save, Ctrl+X exit.\n"
               "\n"
+              "echo <text...>                  Print text; supports quoted arguments.\n"
+              "cat [path]                      Copy a file or stdin to stdout.\n"
+              "                                Press Ctrl+D to finish cat stdin.\n"
+              "echo hello | cat                Connect up to 3 commands with pipes.\n"
+              "command < file                  Read stdin from a WUFS file.\n"
+              "echo hello > file               Truncate stdout into a file.\n"
+              "echo again >> file               Append stdout to a file.\n"
               "vmstat                          Show page faults, FIFO and swap usage.\n"
               "vmstat limit <frames>           Set the global resident limit (min 8).\n"
               "mem alloc <pages>               Reserve 1..256 heap pages on demand.\n"
@@ -316,6 +338,7 @@ static void help(void) {
               "mem read <page>                 Show the first, middle and last bytes.\n"
               "mem free                        Release the heap allocation.\n"
               "exit                            End the shell; Ctrl+A then X quits QEMU.\n"
+              "Ctrl+D                          End shell input when the line is empty.\n"
               "\n"
               "<path> may be absolute or relative; <page> is a zero-based page index.\n"
               "Files persist on the QEMU disk. Scheduling uses timer-driven RR.\n"
@@ -408,7 +431,7 @@ static int command(int count, char *words[4]) {
         } else if (equal(words[0], "cls")) {
             user_puts("\033[2J\033[3J\033[H");
         } else if (equal(words[0], "workstate")) {
-            workstate_main();
+            run_workstate();
         } else if (equal(words[0], "fork")) {
             fork_shell();
         } else if (equal(words[0], "yield")) {
@@ -510,7 +533,13 @@ long shell_main(void) {
             user_puts("Input rejected: line too long or invalid buffer.\n");
             continue;
         }
+        if (length == 0) {
+            return 0;
+        }
         line[length] = '\0';
+        if (shell_exec_line(line)) {
+            continue;
+        }
         const int count = tokenize(line, words);
         if (count < 0) {
             user_puts("Too many command tokens.\n");

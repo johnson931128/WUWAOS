@@ -30,7 +30,7 @@ WUWAOS 是以 C 與 RISC-V 組合語言撰寫、真正運行於 QEMU 虛擬電�
 | 排程 | 單核心 RR、50 ms 時間片；使用者程式可搶占，核心內不搶占 |
 | 記憶體 | Sv39 三級頁表、4 KiB 頁、按需分頁、FIFO 置換、獨立 Swap |
 | 磁碟 | VirtIO 區塊 I/O、自訂 WUFS、重新啟動後保留檔案 |
-| 操作 | Shell、固定 writer \| reader 管道、fan 全螢幕文字編輯器 |
+| 操作 | Shell FD/OFD、三階段管道、檔案重導向、fan 全螢幕文字編輯器 |
 | 監測 | workstate 全螢幕；每秒更新行程、CPU 派發時間、RSS／Swap 與整體 RAM |
 
 這是現有功能的實作紀錄，不是承諾與 Linux 相容。支援受限靜態 RV64 ELF 從 WUFS 載入；尚無通用 ELF／Linux 相容、通用檔案描述號、網路或圖形桌面。

@@ -94,6 +94,27 @@ void syscall_dispatch(TrapFrame *frame) {
         if (result == 0) return;
         break;
     }
+    case SYS_OPEN: {
+        char path[FS_PATH_MAX];
+        result = copy_fs_path(process_current()->page_table, frame->registers[10], path);
+        if (result == 0) result = io_open(path, (long)frame->registers[11]);
+        break;
+    }
+    case SYS_CLOSE:
+        result = io_close((long)frame->registers[10]);
+        break;
+    case SYS_DUP2:
+        result = io_dup2((long)frame->registers[10], (long)frame->registers[11]);
+        break;
+    case SYS_DUP:
+        result = io_dup((long)frame->registers[10]);
+        break;
+    case SYS_IS_CONSOLE:
+        result = io_is_console((long)frame->registers[10]);
+        break;
+    case SYS_PIPE:
+        result = io_pipe(frame->registers[10]);
+        break;
     case SYS_EXEC: {
         char argument[FS_PATH_MAX];
         const long program = (long)frame->registers[10];

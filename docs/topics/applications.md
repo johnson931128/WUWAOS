@@ -16,7 +16,7 @@
 | ls／cat／write／rm／cp | 以路徑呼叫 WUFS 服務 |
 | cls | 透過終端控制序列清除畫面及捲動歷史 |
 | run counter | fork 子行程，再 exec 指定內建程式 ID |
-| writer \| reader | 建立固定管道與兩個端點行程 |
+| `echo`／`cat`／`ls`／`pwd` 管線 | parser 建立多個 stage，pipe／fork／dup2 接上標準 FD，再 wait |
 | fan 路徑 | fork → exec fan 並傳入路徑 → 父 shell 等待 |
 | vmstat／mem | 查詢與操作使用者記憶體 |
 
@@ -40,12 +40,12 @@ flowchart TD
 ```
 
 1. UART（序列埠）接收終端字元；核心 I/O 完成一行後，shell 的 `read` 拿到文字。
-2. shell 的 `tokenize`（切詞）依空白分出命令與參數；`command` 比對第一個詞和參數數量。`cat`、`cd`、`ls` 是 shell 認得的內建命令，不是 Linux 程式，也不代表每個命令都是 syscall。
-3. `cat` 呼叫使用者 API 的檔案讀取介面。API 將 syscall 編號放入 `a7`（系統呼叫編號暫存器），參數放入 `a0` 等暫存器，執行 `ecall`（進入核心的指令）。
+2. shell 先由 `shell_exec.c` 解析可串接命令、引用文字、管線與檔案重導向；其他管理命令再由 `tokenize`／`command` 分派。這些都是 WUWAOS 使用者程式，不代表每個命令都是 syscall。
+3. `cat` 使用通用 open/read/write 描述號介面。API 將 syscall 編號放入 `a7`（系統呼叫編號暫存器），參數放入 `a0` 等暫存器，執行 `ecall`（進入核心的指令）。
 4. 硬體依 `stvec`（監督模式例外入口位址暫存器）轉到例外入口；核心保存行程狀態後，`syscall_dispatch`（系統呼叫分派器）依編號選擇檔案讀取。核心使用該行程 PCB 的 CWD（目前工作目錄），將 `note.txt` 視為 `/home/user/note.txt`，再逐層查找 WUFS。
 5. 核心將資料和結果交回 shell，shell 透過輸出 syscall 印出；`sepc`（例外返回指令位址暫存器）跳過剛執行的 `ecall`，最後 `sret`（返回使用者模式指令）恢復執行。若找不到檔案則顯示錯誤。
 
-`cd` 呼叫 chdir 改變本行程 PCB 的目錄，`pwd` 呼叫 getcwd 取得目錄；`cls` 輸出終端控制序列，`fan` 則 fork 子行程再 exec 對應內建映像。一個命令可以呼叫多次 syscall；`run <path>` 也可從 WUFS 執行符合限制的靜態 RV64 ELF；目前沒有 PATH 搜尋或任意 Linux ELF 相容。
+`cd` 呼叫 chdir 改變本行程 PCB 的目錄；`workstate`、`fan` fork 子行程再 exec 各自的內嵌 image。管線支援 `echo`、`cat`、`ls`、`pwd` 及無參數 ELF command stage；`run <path>` 也可從 WUFS 執行符合限制的靜態 RV64 ELF。目前沒有 PATH 搜尋、外部 ELF argv 或任意 Linux ELF 相容。shell 使用最多三個 stage、每階段最多八個參數 token、128-byte 命令列。
 
 ## 目錄操作
 

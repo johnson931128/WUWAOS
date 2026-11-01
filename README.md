@@ -15,12 +15,12 @@ WUWAOS is a small operating system written in **C and RISC-V assembly** that boo
 | --- | --- |
 | Platform | QEMU `virt`, RISC-V 64-bit, one CPU core, and 128 MiB RAM; OpenSBI starts the kernel |
 | Processes and scheduling | Up to 16 processes, process control blocks, fork, built-in and path-based exec, wait, exit, and timer-driven round-robin scheduling |
-| Synchronization and IPC | Custom mutexes and semaphores, sleep/wakeup, and a built-in `writer \| reader` pipe |
+| Synchronization and IPC | Custom mutexes and semaphores, sleep/wakeup, per-process file descriptors, and multi-stage pipes |
 | Virtual memory | Sv39 three-level page tables, demand paging, FIFO page replacement, and swap |
-| File system | VirtIO block device and the custom WUFS file system, with persistent files and directories |
+| File system | VirtIO block device and the custom WUFS file system, with persistent files, shared open-file offsets, and shell redirection |
 | User interface | A shell, the `fan` text editor, the `workstate` monitor, and the `demo sync` synchronization demo |
 
-WUWAOS focuses on fundamental operating system mechanisms and is not Linux-compatible. QEMU currently loads the kernel using `-kernel`. A restricted static RV64 ELF loader can run compatible WUWAOS programs from WUFS; general ELF/Linux compatibility, compiling C inside WUWAOS, networking, and a graphical desktop are not yet supported. See the [documentation](https://johnson931128.github.io/WUWAOS/) and [Spec 21](docs/SPEC-21-native-compilation.md) for limitations and future plans.
+WUWAOS focuses on fundamental operating system mechanisms and is not Linux-compatible. QEMU currently loads the kernel using `-kernel`. A restricted static RV64 ELF loader can run compatible WUWAOS programs from WUFS; general ELF/Linux compatibility, command-line arguments for external ELF programs, compiling C inside WUWAOS, networking, and a graphical desktop are not yet supported. See the [documentation](https://johnson931128.github.io/WUWAOS/) and [Spec 21](docs/SPEC-21-native-compilation.md) for limitations and future plans.
 
 ## Demo Video
 
