@@ -32,6 +32,7 @@
 | 26 | [WUFS 路徑式 ELF 載入](./SPEC-26-elf-exec.md)，受限靜態 RV64 使用者程式 |
 | 27 | [檔案描述號、一般 I/O 與 Shell 管線](./SPEC-27-file-descriptors-and-shell-pipelines.md)，FD/OFD、WUFS offset I/O、多階段管線與重導向 |
 | 28 | [原生 QEMU 圖形桌面與游標](./SPEC-28-native-desktop.md)，VirtIO GPU/tablet、1280×720 framebuffer 與 guest 游標驗收 |
+| 29 | [Windows 單指令桌面啟動器](./SPEC-29-desktop-launcher.md)，背景 QEMU、原生 VNC viewer、QMP 關閉與 Snapshot 磁碟隔離 |
 
 ## 如何判斷是否驗證過
 

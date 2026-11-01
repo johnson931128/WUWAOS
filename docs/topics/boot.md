@@ -43,14 +43,13 @@ QEMU 裝上 modern VirtIO GPU 與 tablet 後，kernel 以 FDT 找到裝置 MMIO 
 
 這是 kernel renderer（核心繪圖器），不是桌面伺服器或 user process；沒有視窗、工作列、圖形 shell、鍵盤操作或檔案管理器。沒有 GPU/tablet 時，原本的文字 shell 照常啟動。架構與實際驗收見 [Spec 28](../SPEC-28-native-desktop.md)。
 
-WSLg/Linux 圖形工作階段可用 `make run-gui GUI_DISPLAY=gtk`（或 `sdl`）。Windows/WSL1 可分別在兩個 PowerShell 視窗啟動 VNC guest 與 TigerVNC viewer：
+WSLg/Linux 圖形工作階段可用 `make run-gui GUI_DISPLAY=gtk`（或 `sdl`）。Windows/WSL1 建議從 repo 根目錄以單一 PowerShell 指令啟動背景 QEMU 與原生 VNC viewer：
 
 ```powershell
-wsl -d Ubuntu -- bash -lc 'cd /mnt/c/programing/WUWAOS && make run-gui-vnc'
-& 'C:\path\to\vncviewer64.exe' '127.0.0.1::5901'
+./tools/run-desktop.ps1
 ```
 
-TigerVNC viewer 請從[官方 releases](https://github.com/TigerVNC/tigervnc/releases)安裝／下載。VNC server 和 QMP debug control 都綁定 localhost；`run-gui-vnc` 預設 VNC port 為 5901、QMP port 為 4451。圖形目標會像 `make run` 一樣先建立或更新磁碟映像；客體寫入會持續保留。QEMU 執行期間不要從主機端操作磁碟映像。VNC QEMU 使用 `-serial stdio`，在其 WSL 終端按 Ctrl+C 結束。
+Launcher 會先檢查 Windows viewer、WSL 工具鏈及現有 QEMU，再建置並選擇未使用的 localhost VNC/QMP ports。關閉 viewer 會透過本次 QMP session 結束其 QEMU。TigerVNC viewer 可從[官方 releases](https://github.com/TigerVNC/tigervnc/releases)取得；若不在 PATH、標準安裝位置或 `build/tigervnc`，可用 `-ViewerPath` 指定。預設使用專案磁碟並保留客體寫入；`-Snapshot` 會改用關閉時刪除的暫存副本。launcher 的建置與序列輸出記錄在 `build/desktop-<session-id>`。手動進階流程仍可使用 `make run-gui-vnc` 加 Windows viewer；`make run` 的 UART 文字模式維持不變。
 
 ## 延伸資料
 

@@ -77,7 +77,7 @@ CPU 執行記憶體中的機器碼，不知道來源檔名。OpenSBI 負責早�
 | tools/make_disk.py | 建立／更新 WUFS 磁碟映像中的 kernel.elf，保留其他檔案 |
 | tools/make_swap.py | 建立有格式標記的獨立交換磁碟，可調整 slot 數，拒絕重格式化既有檔案 |
 | user/linker.ld | 使用者映像固定布局與大小限制 |
-| Makefile | 交叉編譯、連結、映像嵌入、持久 QEMU 磁碟與啟動 |
+| Makefile | 交叉編譯、連結、映像嵌入、持久 QEMU 磁碟與啟動；GUI image/serial/name/pidfile 可由 launcher 覆寫 |
 
 AGENTS.md 是協作規則，README.md 是操作說明，docs/ 下為規格與紀錄，.gitignore 排除 build/。標頭定義型別與契約，不是額外可執行程式。沒有新增測試框架或負面測試程式。
 
@@ -377,7 +377,7 @@ NOLOAD 不攜帶初始化內容但保留記憶體，KEEP 保護入口，ALIGN �
 
 user/linker.ld 的入口固定 0x400000，code／唯讀資料最多 16 KiB，data／BSS 從 0x404000 開始最多 4 KiB；ASSERT（連結期限制）防止超出。stack 由核心映射，不在 user.bin 中。
 Makefile 將 entry.S、api.c、print.c、demo.c、sync_demo.c、shell.c、shell_exec.c 連結為 user.elf；app.c 連結為 app.elf；fan.c 連結為 fan.elf；workstate_entry.c 與 workstate.c 連結為 workstate.elf。四者各自有 user_main，不互相連結。shell API 與新 parser 使用 `-Oz` 以維持固定 code 區；所有映像仍受 user/linker.ld 16 KiB code／4 KiB data ASSERT。llvm-objcopy 轉成四份 `.bin`，kernel/user_image.S 的 incbin 嵌入唯讀資料，vm 依程式 ID 複製映像。不是 ELF parser（執行檔解析器）。
-`make run` 與 `run-gui`／`run-gui-vnc` 都會先呼叫 `disk-image` target 建立或更新 `build/wuwaos.img`，並接上 WUFS 與 swap VirtIO block devices；圖形 target 與文字 target 採相同資料持續保存語意。`run-gui` 預設 `GUI_DISPLAY=gtk`，可覆寫為 `sdl`；`run-gui-vnc` 預設只在 `127.0.0.1:5901` 提供畫面，QMP debug control 只在 `127.0.0.1:4451` 提供控制，兩個 port 均可用 Make 變數調整。Windows WSL1 可用 TigerVNC viewer 連線 `127.0.0.1::5901`。`make clean` 特意保留磁碟映像。
+`make run` 與 `run-gui`／`run-gui-vnc` 都會先呼叫 `disk-image` target 建立或更新所選磁碟映像，並接上 WUFS 與 swap VirtIO block devices；圖形 target 與文字 target 採相同資料持續保存語意。`DISK_IMAGE`、`SWAP_IMAGE` 可改用其他映像；`run-gui` 預設 `GUI_DISPLAY=gtk`，可覆寫為 `sdl`。`run-gui-vnc` 的 VNC/QMP 預設 port 為 5901/4451，可由 Make 變數調整。Windows WSL1 建議使用 `tools/run-desktop.ps1` 單指令啟動背景 QEMU 與 Windows viewer；它先完成 image build，再以與 `run-gui-vnc` 共用參數的 `run-gui-vnc-session` 啟動 VM，並採動態 loopback ports、獨立 VM name、serial log 和 pidfile。`-Snapshot` 會建置並執行磁碟副本。`make clean` 特意保留磁碟映像；launcher 行為、失敗清理與驗收限制見 [Spec 29](./SPEC-29-desktop-launcher.md)。
 
 磁碟副本使用 llvm-objcopy --strip-debug 產生的 build/kernel-disk.elf，移除除錯段以避免超過 WUFS 單檔容量；完整 build/kernel.elf 保留給 QEMU／GDB。clean 刪除兩份 ELF，映像與使用者檔案保留。
 binary 以 0x400000 為起點，若有初始化 .data，會保留到 0x404000 的位址間距；vm 將前 16 KiB 放 code，其後放 data。BSS 不攜帶映像內容，page_alloc 配置零頁保證其初值。

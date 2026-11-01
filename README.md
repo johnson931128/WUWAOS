@@ -42,19 +42,20 @@ When QEMU has a VirtIO GPU and tablet, WUWAOS draws a 1280×720 pale-blue backgr
 
 ![WUWAOS native QEMU desktop with its guest-rendered pointer](docs/images/wuwaos-desktop.png)
 
-On Windows with WSL1, use the loopback VNC target. It listens only on `127.0.0.1`:
+On Windows with WSL1, start the desktop and its native viewer with one PowerShell command. The launcher builds the OS, runs QEMU in the background, and closes that QEMU session when the viewer closes:
 
 ```powershell
-wsl -d Ubuntu -- bash -lc 'cd /mnt/c/programing/WUWAOS && make run-gui-vnc'
+./tools/run-desktop.ps1
 ```
 
-In a second PowerShell window, start the Windows TigerVNC viewer and connect to port 5901. Install or download the official [TigerVNC Windows viewer](https://github.com/TigerVNC/tigervnc/releases) first; do not add the viewer executable to this repository.
+Install or download the official [TigerVNC Windows viewer](https://github.com/TigerVNC/tigervnc/releases) if one is not already installed or available in `build/tigervnc`. Pass `-ViewerPath 'C:\path\to\vncviewer64.exe'` to select a specific viewer. Add `-Snapshot` to work from temporary copies of the WUFS and swap images; those copies are discarded when the viewer closes. The default uses the project images and preserves guest file changes. The VNC service listens only on loopback; the launcher selects free VNC and QMP ports for each session.
 
 ```powershell
-& 'C:\path\to\vncviewer64.exe' '127.0.0.1::5901'
+# Optional isolated session:
+./tools/run-desktop.ps1 -Snapshot
 ```
 
-For a Linux desktop or WSLg session with a working display, use `make run-gui GUI_DISPLAY=gtk` or `make run-gui GUI_DISPLAY=sdl`. Both GUI targets build/update the WUFS and swap images using the same `disk-image` prerequisite as `make run`; normal guest file writes persist. Do not edit the disk images on the host while QEMU is using them. Stop the VNC run with **Ctrl+C** in its WSL terminal.
+For a Linux desktop or WSLg session with a working display, use `make run-gui GUI_DISPLAY=gtk` or `make run-gui GUI_DISPLAY=sdl`. The advanced manual WSL1 path remains `make run-gui-vnc` followed by a Windows VNC viewer connected to `127.0.0.1::5901`. GUI Make targets update the selected disk images before QEMU starts; do not edit images on the host while QEMU is using them. `make run` remains the text-mode UART workflow.
 
 ## Getting Started
 

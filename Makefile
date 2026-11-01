@@ -12,7 +12,7 @@ ARCH_FLAGS := --target=riscv64-unknown-elf -march=rv64imac_zicsr_zifencei -mabi=
 CFLAGS := $(ARCH_FLAGS) -std=c11 -O2 -g -Wall -Wextra -Werror -ffreestanding -fno-builtin -fno-stack-protector -fno-pic -fno-pie -Iinclude -MMD -MP
 LDFLAGS := $(ARCH_FLAGS) -fuse-ld=lld -nostdlib -static -Wl,--build-id=none
 
-.PHONY: all run run-gui run-gui-vnc disk-image clean
+.PHONY: all run run-gui run-gui-vnc run-gui-vnc-session disk-image clean
 all: $(TARGET)
 
 build:
@@ -84,22 +84,34 @@ $(TARGET): $(OBJECTS) kernel/linker.ld
 build/kernel-disk.elf: $(TARGET)
 	$(OBJCOPY) --strip-debug $< $@
 
+DISK_IMAGE ?= build/wuwaos.img
+SWAP_IMAGE ?= build/wuwaos-swap.img
+
 disk-image: build/kernel-disk.elf tools/make_disk.py tools/make_swap.py | build
-	python3 tools/make_disk.py --image build/wuwaos.img --kernel build/kernel-disk.elf
-	python3 tools/make_swap.py --image build/wuwaos-swap.img
+	python3 tools/make_disk.py --image $(DISK_IMAGE) --kernel build/kernel-disk.elf
+	python3 tools/make_swap.py --image $(SWAP_IMAGE)
 
 run: $(TARGET) disk-image
-	$(QEMU) -machine virt -smp 1 -m 128M -nographic -bios default -kernel $(TARGET) -global virtio-mmio.force-legacy=false -drive file=build/wuwaos.img,if=none,format=raw,id=wuwaos,cache=writeback -device virtio-blk-device,drive=wuwaos -drive file=build/wuwaos-swap.img,if=none,format=raw,id=swap,cache=writeback -device virtio-blk-device,drive=swap
+	$(QEMU) -machine virt -smp 1 -m 128M -nographic -bios default -kernel $(TARGET) -global virtio-mmio.force-legacy=false -drive file=$(DISK_IMAGE),if=none,format=raw,id=wuwaos,cache=writeback -device virtio-blk-device,drive=wuwaos -drive file=$(SWAP_IMAGE),if=none,format=raw,id=swap,cache=writeback -device virtio-blk-device,drive=swap
 
 run-gui: $(TARGET) disk-image
-	$(QEMU) -machine virt -smp 1 -m 128M -display $(GUI_DISPLAY) -bios default -kernel $(TARGET) -global virtio-mmio.force-legacy=false -device virtio-gpu-device -device virtio-tablet-device -drive file=build/wuwaos.img,if=none,format=raw,id=wuwaos,cache=writeback -device virtio-blk-device,drive=wuwaos -drive file=build/wuwaos-swap.img,if=none,format=raw,id=swap,cache=writeback -device virtio-blk-device,drive=swap
+	$(QEMU) -machine virt -smp 1 -m 128M -display $(GUI_DISPLAY) -bios default -kernel $(TARGET) -global virtio-mmio.force-legacy=false -device virtio-gpu-device -device virtio-tablet-device -drive file=$(DISK_IMAGE),if=none,format=raw,id=wuwaos,cache=writeback -device virtio-blk-device,drive=wuwaos -drive file=$(SWAP_IMAGE),if=none,format=raw,id=swap,cache=writeback -device virtio-blk-device,drive=swap
+
+GUI_QEMU_COMMAND = $(QEMU) -name $(GUI_VM_NAME) $(if $(GUI_PIDFILE),-pidfile $(GUI_PIDFILE)) -machine virt -smp 1 -m 128M -display none -bios default -kernel $(TARGET) -global virtio-mmio.force-legacy=false -device virtio-gpu-device -device virtio-tablet-device -vnc 127.0.0.1:$(GUI_VNC_DISPLAY) -qmp tcp:127.0.0.1:$(GUI_QMP_PORT),server=on,wait=off -monitor none -serial $(GUI_SERIAL) -drive file=$(DISK_IMAGE),if=none,format=raw,id=wuwaos,cache=writeback -device virtio-blk-device,drive=wuwaos -drive file=$(SWAP_IMAGE),if=none,format=raw,id=swap,cache=writeback -device virtio-blk-device,drive=swap
 
 run-gui-vnc: $(TARGET) disk-image
-	$(QEMU) -machine virt -smp 1 -m 128M -display none -bios default -kernel $(TARGET) -global virtio-mmio.force-legacy=false -device virtio-gpu-device -device virtio-tablet-device -vnc 127.0.0.1:$(GUI_VNC_DISPLAY) -qmp tcp:127.0.0.1:$(GUI_QMP_PORT),server=on,wait=off -monitor none -serial stdio -drive file=build/wuwaos.img,if=none,format=raw,id=wuwaos,cache=writeback -device virtio-blk-device,drive=wuwaos -drive file=build/wuwaos-swap.img,if=none,format=raw,id=swap,cache=writeback -device virtio-blk-device,drive=swap
+	$(GUI_QEMU_COMMAND)
+
+# Launcher entry after it has built the kernel and selected/prepared its images.
+run-gui-vnc-session: $(TARGET)
+	$(GUI_QEMU_COMMAND)
 
 GUI_DISPLAY ?= gtk
 GUI_VNC_DISPLAY ?= 1
 GUI_QMP_PORT ?= 4451
+GUI_VM_NAME ?= wuwaos
+GUI_SERIAL ?= stdio
+GUI_PIDFILE ?=
 
 clean:
 	rm -f build/*.o build/*.d build/kernel.elf build/kernel-disk.elf build/kernel.map build/user.elf build/user.bin build/app.elf build/app.bin build/fan.elf build/fan.bin build/workstate.elf build/workstate.bin
