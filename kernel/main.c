@@ -8,6 +8,7 @@
 #include "timer.h"
 #include "gpu.h"
 #include "desktop.h"
+#include "input.h"
 
 void kernel_main(unsigned long hart_id, const void *fdt) {
     (void)hart_id;
@@ -19,12 +20,17 @@ void kernel_main(unsigned long hart_id, const void *fdt) {
     for (unsigned int i = 0; i < block_mmio_count(); ++i) vm_map_mmio(block_mmio_base(i));
     const int gpu_found = gpu_probe(fdt) == 0;
     if (gpu_found) vm_map_mmio(gpu_mmio_base());
+    const int input_found = input_probe(fdt) == 0;
+    if (input_found) vm_map_mmio(input_mmio_base());
     vm_init(fdt);
-    if (gpu_found && gpu_init() == 0) desktop_draw();
+    const int desktop_ready = gpu_found && gpu_init() == 0;
+    if (desktop_ready) desktop_draw();
+    const int tablet_ready = input_found && input_init() == 0;
     if (block_ready && fs_init() < 0) {
         console_puts("[fs] Disk present but WUFS could not be mounted\n");
     }
     timer_init();
     process_init();
+    if (desktop_ready && tablet_ready) desktop_start_cursor();
     process_start();
 }

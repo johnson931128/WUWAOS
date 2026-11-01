@@ -261,7 +261,7 @@ int gpu_init(void) {
     }
     gpu.registers[VIRTIO_QUEUE_SEL / 4] = 0;
     const uint32_t maximum = gpu.registers[VIRTIO_QUEUE_NUM_MAX / 4];
-    if (maximum == 0) { console_puts("[gpu] Control queue unavailable\n"); return -1; }
+    if (maximum < 2) { console_puts("[gpu] Control queue must hold two descriptors\n"); return -1; }
     gpu.queue_length = maximum < QUEUE_SIZE ? (uint16_t)maximum : QUEUE_SIZE;
     gpu.registers[VIRTIO_QUEUE_NUM / 4] = gpu.queue_length;
     write_address(VIRTIO_QUEUE_DESC_LOW, (uintptr_t)gpu.descriptors);

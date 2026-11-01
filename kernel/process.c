@@ -1,4 +1,5 @@
 #include "process.h"
+#include "desktop.h"
 #include "console.h"
 #include "syscall_numbers.h"
 #include "vm.h"
@@ -604,6 +605,7 @@ long process_pipeline(uintptr_t result_address) {
 TrapFrame *process_resume(void) {
     vm_use_kernel();
     io_poll();
+    desktop_poll();
     if (process_current()->state != PROCESS_RUNNING) suspend_current();
     vm_enable(process_current()->page_table);
     return process_current()->frame;
@@ -616,6 +618,7 @@ static _Noreturn void scheduler_loop(void) {
         current_index = -1;
         const int timed_waiting = wake_timed();
         io_poll();
+        desktop_poll();
         for (int i = 0; i < PROCESS_LIMIT; ++i) {
             if (processes[i].state == PROCESS_ZOMBIE && processes[i].parent_pid == 0) {
                 reap(&processes[i]);
