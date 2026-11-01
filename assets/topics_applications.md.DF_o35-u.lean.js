@@ -1,4 +1,4 @@
-import{_ as o,C as c,o as l,c as r,a3 as t,E as a}from"./chunks/framework.BZCmpA0A.js";const f=JSON.parse('{"title":"10 · Shell 與 fan 編輯器","description":"","frontmatter":{},"headers":[],"relativePath":"topics/applications.md","filePath":"topics/applications.md","lastUpdated":1793504879000}'),s={name:"topics/applications.md"};function n(h,e,i,p,m,b){const d=c("MermaidDiagram");return l(),r("div",null,[e[0]||(e[0]=t("",10)),a(d,{source:`flowchart TD
+import{_ as o,C as c,o as l,c as r,a3 as t,E as a}from"./chunks/framework.BZCmpA0A.js";const f=JSON.parse('{"title":"10 · Shell 與 fan 編輯器","description":"","frontmatter":{},"headers":[],"relativePath":"topics/applications.md","filePath":"topics/applications.md","lastUpdated":1793506580000}'),s={name:"topics/applications.md"};function n(h,e,i,p,m,b){const d=c("MermaidDiagram");return l(),r("div",null,[e[0]||(e[0]=t("",10)),a(d,{source:`flowchart TD
   A[鍵盤輸入 cat note.txt 後按 Enter] --> B[QEMU UART 序列埠收到字元]
   B --> C[核心 I/O 收集一行並交給 shell 的 read]
   C --> D[shell tokenize 切出 cat 與 note.txt]
