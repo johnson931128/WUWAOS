@@ -18,9 +18,9 @@ WUWAOS is a small operating system written in **C and RISC-V assembly** that boo
 | Synchronization and IPC | Custom mutexes and semaphores, sleep/wakeup, per-process file descriptors, and multi-stage pipes |
 | Virtual memory | Sv39 three-level page tables, demand paging, FIFO page replacement, and swap |
 | File system | VirtIO block device and the custom WUFS file system, with persistent files, shared open-file offsets, and shell redirection |
-| User interface | A shell, the `fan` text editor, the `workstate` monitor, and the `demo sync` synchronization demo |
+| User interface | UART shell, `fan` text editor and `workstate` monitor; optional 1280×720 kernel-rendered desktop with a movable pointer on VirtIO GPU/tablet |
 
-WUWAOS focuses on fundamental operating system mechanisms and is not Linux-compatible. QEMU currently loads the kernel using `-kernel`. A restricted static RV64 ELF loader can run compatible WUWAOS programs from WUFS; general ELF/Linux compatibility, command-line arguments for external ELF programs, compiling C inside WUWAOS, networking, and a graphical desktop are not yet supported. See the [documentation](https://johnson931128.github.io/WUWAOS/) and [Spec 21](docs/SPEC-21-native-compilation.md) for limitations and future plans.
+WUWAOS focuses on fundamental operating system mechanisms and is not Linux-compatible. QEMU currently loads the kernel using `-kernel`. A restricted static RV64 ELF loader can run compatible WUWAOS programs from WUFS; general ELF/Linux compatibility, command-line arguments for external ELF programs, compiling C inside WUWAOS, networking, a graphical shell, and window management are not supported. The optional graphical mode draws a static desktop in the kernel; the existing shell continues over UART. See the [documentation](https://johnson931128.github.io/WUWAOS/) and [Spec 21](docs/SPEC-21-native-compilation.md) for limitations and future plans.
 
 ## Demo Video
 
@@ -35,6 +35,26 @@ The video follows a live QEMU session through the shell, processes, synchronizat
 ![WUWAOS booting in QEMU](docs/images/wuwaos-boot.png)
 
 *An actual QEMU session in PowerShell. The screenshot is from an earlier version; the current shell prompt shows the working directory, for example `wuwaos/>`.*
+
+## Graphical Desktop
+
+When QEMU has a VirtIO GPU and tablet, WUWAOS draws a 1280×720 pale-blue background, a centered `WUWAOS` wordmark, and a movable white pointer with a dark outline. This is a small kernel-rendered desktop surface; it does not include a graphical shell, desktop server, windows, keyboard UI, or file manager.
+
+![WUWAOS native QEMU desktop with its guest-rendered pointer](docs/images/wuwaos-desktop.png)
+
+On Windows with WSL1, use the loopback VNC target. It listens only on `127.0.0.1`:
+
+```powershell
+wsl -d Ubuntu -- bash -lc 'cd /mnt/c/programing/WUWAOS && make run-gui-vnc'
+```
+
+In a second PowerShell window, start the Windows TigerVNC viewer and connect to port 5901. Install or download the official [TigerVNC Windows viewer](https://github.com/TigerVNC/tigervnc/releases) first; do not add the viewer executable to this repository.
+
+```powershell
+& 'C:\path\to\vncviewer64.exe' '127.0.0.1::5901'
+```
+
+For a Linux desktop or WSLg session with a working display, use `make run-gui GUI_DISPLAY=gtk` or `make run-gui GUI_DISPLAY=sdl`. Both GUI targets build/update the WUFS and swap images using the same `disk-image` prerequisite as `make run`; normal guest file writes persist. Do not edit the disk images on the host while QEMU is using them. Stop the VNC run with **Ctrl+C** in its WSL terminal.
 
 ## Getting Started
 

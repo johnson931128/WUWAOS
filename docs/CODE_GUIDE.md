@@ -8,7 +8,8 @@
 ```text
 QEMU → OpenSBI（機器模式韌體）
   → kernel/entry.S：準備監督模式核心的執行環境
-  → kernel/main.c：安裝例外入口、展開開機字樣、核心映射、PID 1
+  → kernel/main.c：安裝例外入口、UART 開機字樣、FDT 探測、核心映射、PID 1
+  → 有 GPU/tablet：建立 1280×720 framebuffer、繪製 desktop、排程器輪詢絕對座標游標
   → process_start → swtch → scheduler_loop → swtch → first_run → user_enter → sret
   → user/entry.S → user_main(0) → shell_main
       → 顯示 wuwaos>，以 read 等待輸入
@@ -52,6 +53,9 @@ CPU 執行記憶體中的機器碼，不知道來源檔名。OpenSBI 負責早�
 | user/sync_demo.c / sync_demo.h | shell 的同步示範：父子行程、等待狀態與資源回收 |
 | kernel/io.c / io.h | 行輸入／raw console、FD/OFD、WUFS file descriptor、pipe ring 與 pending I/O |
 | kernel/block.c / block.h | FDT 裝置探索、VirtIO-MMIO 區塊讀寫佇列 |
+| kernel/gpu.c / gpu.h | FDT VirtIO GPU 探測、modern control queue、2D 資源／framebuffer／scanout／dirty rectangle 傳輸 |
+| kernel/input.c / input.h | FDT VirtIO tablet 探測、絕對軸設定查詢、event queue 與 SYN_REPORT 座標縮放 |
+| kernel/desktop.c / desktop.h | 淡藍桌布、WUWAOS 5×7 字形放大、白黑箭頭、背景復原與游標 dirty rectangle |
 | kernel/fs.c / fs.h | WUFS 區塊配置、inode、目錄與路徑操作 |
 | kernel/memory.c | freestanding（無標準執行環境）建置所需的 byte-wise memset／memcpy |
 | kernel/page.c / page.h | 4 KiB 實體頁面空閒串列、配置／回收、配置 bitmap 與頁數查詢 |
@@ -94,7 +98,7 @@ la 是載入位址的偽指令；__ 開頭符號由 linker（連結器）決定�
 
 ## 4. main.c 與 console.c
 
-kernel_main 依序 trap_init、boot_splash、輸出啟動文字、block_init_from_fdt、vm_init(fdt)、fs_init（有磁碟時）、timer_init、process_init、process_start。先安裝例外入口，動畫期間仍關閉計時器中斷。timer_init 查詢 OpenSBI TIME、清除舊事件並開啟 STIE；首次派發設定 50 ms deadline，sret 返回使用者模式後允許搶占。
+kernel_main 先 trap_init、boot_splash、輸出啟動文字與 block_init_from_fdt；再從 FDT 探測 GPU/tablet，將找到的 VirtIO MMIO 頁登記給 vm_init。之後掛載檔案系統、初始化 GPU 及桌面、啟用 tablet queue、timer_init、process_init、process_start。沒有圖形裝置時，桌面初始化略過，原本的 UART shell 流程不變。timer_init 查詢 OpenSBI TIME、清除舊事件並開啟 STIE；首次派發設定 50 ms deadline，sret 返回使用者模式後允許搶占。
 UART 位址固定 0x10000000，LSR（線路狀態暫存器）offset 5：bit 5 可寫入字元，bit 0 有收到的字元。
 
 - console_putc 輪詢可寫狀態，再寫 offset 0；換行前補 CR（回車）。
@@ -113,6 +117,16 @@ ANSI（終端控制碼）ESC[2J 清屏、ESC[H 回到起點重繪，ESC[?25l/h �
 clock.h 的 clock_ticks 共用 rdtime（讀取硬體時間計數器指令），pause_ms 以 clock_ms_ticks 換算每格 32 ms、最後 200 ms，預定延遲合計約 1.32 秒，另加序列輸出時間。動畫發生在 timer_init 前，沒有在動畫中開啟計時器中斷。現行字形驗收見 [Spec 13](./SPEC-13-block-splash.md)，共用時鐘重構見 Spec 15。
 此處沒有啟用 timer interrupt（計時器中斷），也不新增延遲 syscall；忙等只發生於開機期間。尚未從 DTB（硬體描述資料）解析時基，限目前 QEMU virt 平台。
 不支援 ANSI 的輸出環境可能顯示控制碼；小於 80 欄可能換行影響動畫，非本次驗收範圍。
+
+### VirtIO GPU 桌面：gpu.c / desktop.c / input.c
+
+`gpu_probe` 與 `input_probe` 解析 FDT 的 `virtio,mmio` 節點，再讀取裝置 magic、版本 2 與 Device ID（GPU 16、input 18）；MMIO 位址從節點 `reg` 取得，不依賴固定 slot。`vm_map_mmio` 將裝置暫存器頁以 supervisor-only（僅監督模式）映射到核心頁表。VirtIO GPU 使用 split virtqueue（分離式佇列）control queue 0，控制命令以 request descriptor 接 response descriptor；單核心同步等待 used index 前進，最長 5000 ms，逾時後停機避免重用仍可能被 DMA 的記憶體。queue 至少需要兩個 descriptor。
+
+GPU 以 B8G8R8X8_UNORM 建立 1280×720 2D resource。`page_alloc_contiguous` 從核心可用實體頁串列找一段連續 900 頁（3,686,400 bytes），作為永久 framebuffer backing；它不在 VM 使用者分頁預算內，也不會被 swap。完成 RESOURCE_CREATE_2D、RESOURCE_ATTACH_BACKING、SET_SCANOUT 後，TRANSFER_TO_HOST_2D 將矩形像素交給裝置，RESOURCE_FLUSH 讓它顯示。每個呈現操作串行完成，因此沒有多個 GPU 命令同時引用暫存 request。
+
+`desktop.c` 清成 RGB #B8DCF5，再以 5×7 位元字形放大畫出置中白色 `WUWAOS`。16×16 游標移動時，先從備份陣列還原舊矩形，再保存新位置底下的像素、繪製黑色外框和白色填色，最後只呈現兩個位置聯集的矩形；此處理會保留被游標遮住的字樣像素。絕對 X/Y 由 tablet config 查詢 min/max，縮放到 0…1279／0…719，並夾到游標可見範圍。
+
+`input_poll` 消化 VirtIO input event queue，累積 ABS_X／ABS_Y，到 SYN_REPORT 才交出一個完整座標組；回收的 event descriptor 重新放回 available ring。`process_resume` 和 `scheduler_loop` 在 UART `io_poll` 後呼叫 `desktop_poll`，因此使用者行程繼續由原有 RR scheduler 執行。這個階段是 kernel framebuffer renderer，沒有圖形 user process、window manager、terminal window、keyboard GUI 或檔案管理器；詳見 [Spec 28](./SPEC-28-native-desktop.md)。
 
 ## 5. trap.S / trap.c / trap.h：硬體事件到 C
 
@@ -140,7 +154,7 @@ trap_handler 保存目前行程的 frame，僅在 SPP=0、scause=8 時分派使�
 
 ## 6. vm.c / vm.h：按需分頁、FIFO 與位址空間
 
-Sv39 將虛擬位址拆成 L2／L1／L0 三個 9-bit 索引與 12-bit 頁內位移；每張表有 512 個 8-byte PTE，對齊 4 KiB。kernel_root 共用 supervisor-only 的核心／RAM／UART／兩顆 VirtIO 裝置映射，使用者不能存取這些映射。
+Sv39 將虛擬位址拆成 L2／L1／L0 三個 9-bit 索引與 12-bit 頁內位移；每張表有 512 個 8-byte PTE，對齊 4 KiB。kernel_root 共用 supervisor-only 的核心／RAM／UART，以及由 FDT 探測到的 VirtIO block/GPU/input 裝置映射，使用者不能存取這些映射。
 
 | 使用者範圍 | 權限與 backing（重建來源） |
 | --- | --- |
@@ -167,7 +181,7 @@ FIFO 單輪選擇最多掃描 17×262 個 metadata；複製／換入換出 O(頁
 
 ### page.c：底層實體頁面配置
 
-目前限 QEMU virt／128 MiB。以 `__kernel_end` 到 FDT 起點間整頁初始化 FreePage 空閒串列，排除韌體、核心、固定核心堆疊與 FDT／頂端保留 RAM。配置取串列頭並清零 4096 bytes，回收檢查對齊／範圍／allocated bitmap 後放回串列頭；串列操作 O(1)。它只配置空閒實體頁，缺頁與 victim 決策屬於 vm.c。
+目前限 QEMU virt／128 MiB。以 `__kernel_end` 到 FDT 起點間整頁初始化 FreePage 空閒串列，排除韌體、核心、固定核心堆疊與 FDT／頂端保留 RAM。一般配置取串列頭並清零 4096 bytes，回收檢查對齊／範圍／allocated bitmap 後放回串列頭；串列操作 O(1)。`page_alloc_contiguous` 順著空閒串列尋找連續頁段，GPU framebuffer 使用 900 頁；找不到完整連續區段則回傳失敗而不拆散部分頁。這是 pinned 核心裝置 backing，不納入使用者需求分頁或置換。缺頁與 victim 決策屬於 vm.c。
 
 ps 的 free／total 是底層配置池頁數；vmstat 的 resident／limit 是使用者常駐頁政策，兩者不同。pcb 顯示個別空間 resident／swapped／heap_bytes／faults。使用者頁可以已換出但仍保留 swap slot，常駐頁也可以保留 backing slot；slot 在 heap 縮小或行程回收時歸還。
 
@@ -363,7 +377,7 @@ NOLOAD 不攜帶初始化內容但保留記憶體，KEEP 保護入口，ALIGN �
 
 user/linker.ld 的入口固定 0x400000，code／唯讀資料最多 16 KiB，data／BSS 從 0x404000 開始最多 4 KiB；ASSERT（連結期限制）防止超出。stack 由核心映射，不在 user.bin 中。
 Makefile 將 entry.S、api.c、print.c、demo.c、sync_demo.c、shell.c、shell_exec.c 連結為 user.elf；app.c 連結為 app.elf；fan.c 連結為 fan.elf；workstate_entry.c 與 workstate.c 連結為 workstate.elf。四者各自有 user_main，不互相連結。shell API 與新 parser 使用 `-Oz` 以維持固定 code 區；所有映像仍受 user/linker.ld 16 KiB code／4 KiB data ASSERT。llvm-objcopy 轉成四份 `.bin`，kernel/user_image.S 的 incbin 嵌入唯讀資料，vm 依程式 ID 複製映像。不是 ELF parser（執行檔解析器）。
-`make run` 先呼叫 tools/make_disk.py 建立或更新 `build/wuwaos.img`，再以 `-drive` 與 `virtio-blk-device` 接上 QEMU。Python 工具用相同 WUFS metadata layout 建立空卷、Linux 風格目錄與 `/boot/kernel.elf`；辨識已格式化映像後只更新 kernel inode，保留其他檔案。`make clean` 特意保留磁碟映像。
+`make run` 與 `run-gui`／`run-gui-vnc` 都會先呼叫 `disk-image` target 建立或更新 `build/wuwaos.img`，並接上 WUFS 與 swap VirtIO block devices；圖形 target 與文字 target 採相同資料持續保存語意。`run-gui` 預設 `GUI_DISPLAY=gtk`，可覆寫為 `sdl`；`run-gui-vnc` 預設只在 `127.0.0.1:5901` 提供畫面，QMP debug control 只在 `127.0.0.1:4451` 提供控制，兩個 port 均可用 Make 變數調整。Windows WSL1 可用 TigerVNC viewer 連線 `127.0.0.1::5901`。`make clean` 特意保留磁碟映像。
 
 磁碟副本使用 llvm-objcopy --strip-debug 產生的 build/kernel-disk.elf，移除除錯段以避免超過 WUFS 單檔容量；完整 build/kernel.elf 保留給 QEMU／GDB。clean 刪除兩份 ELF，映像與使用者檔案保留。
 binary 以 0x400000 為起點，若有初始化 .data，會保留到 0x404000 的位址間距；vm 將前 16 KiB 放 code，其後放 data。BSS 不攜帶映像內容，page_alloc 配置零頁保證其初值。
@@ -375,7 +389,7 @@ all 建置、run 啟動、clean 清理 build 產物。更改 flags（編譯選�
 
 ## 13. 驗證與閱讀練習
 
-早期行程驗收與 QEMU monitor 證據在 SPEC.md；VirtIO／WUFS 磁碟重啟持久性在 SPEC-06；FIFO 與 Ready 行程移除驗收在 SPEC-07；動態頁面／三級表的初期驗收在 SPEC-08，fan 互動操作在 SPEC-09，現行按需分頁／Swap／回收及失敗路徑在 SPEC-10；一般 FD／管道驗收見 SPEC-27。ps／pcb 讀取真實 PCB 與就緒佇列；`writer | reader` 示範需超過 256-byte ring capacity 才能觀察阻塞。
+早期行程驗收與 QEMU monitor 證據在 SPEC.md；VirtIO／WUFS 磁碟重啟持久性在 SPEC-06；FIFO 與 Ready 行程移除驗收在 SPEC-07；動態頁面／三級表的初期驗收在 SPEC-08，fan 互動操作在 SPEC-09，現行按需分頁／Swap／回收及失敗路徑在 SPEC-10；一般 FD／管道驗收見 SPEC-27；VirtIO GPU/tablet、桌面畫素與游標移動見 SPEC-28。ps／pcb 讀取真實 PCB 與就緒佇列；`writer | reader` 示範需超過 256-byte ring capacity 才能觀察阻塞。
 未完成 runtime 驗證的邊界不可等同已測試；沒有新增未經同意的測試程式碼。
 可先照 README 操作 worker，對照 saved sepc（保存指令位置）說明恢復後從哪裡繼續；再追蹤 writer 滿管道時的 buffer 位址如何留在 PCB。
 
@@ -385,5 +399,7 @@ all 建置、run 啟動、clean 清理 build 產物。更改 flags（編譯選�
 
 - [RISC-V Supervisor 規格：特權暫存器與 Sv39](https://docs.riscv.org/reference/isa/priv/supervisor.html)
 - [QEMU virt 與 OpenSBI](https://www.qemu.org/docs/master/system/riscv/virt.html)
+- [QEMU VirtIO GPU 裝置](https://www.qemu.org/docs/master/system/devices/virtio/virtio-gpu.html)
+- [OASIS VirtIO 1.2 規格：GPU 與 input 裝置](https://docs.oasis-open.org/virtio/virtio/v1.2/virtio-v1.2.html)
 - [LLVM RISC-V target](https://llvm.org/docs/RISCVUsage.html)
 - [Linker script](https://www.sourceware.org/binutils/docs/ld/Scripts.html)

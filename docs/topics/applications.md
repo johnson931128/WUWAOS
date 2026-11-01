@@ -95,7 +95,7 @@ flowchart LR
 
 ## 一個終端上的全螢幕介面
 
-畫面經 UART 輸出 ANSI 游標定位、清行與色彩控制碼，需至少 80×24 終端。它是 TUI（文字使用者介面），沒有 framebuffer（像素畫面緩衝區）或圖形視窗系統。
+Shell、fan 與 workstate 的互動畫面經 UART 輸出 ANSI 游標定位、清行與色彩控制碼，需至少 80×24 終端。這些是 TUI（文字使用者介面）；QEMU 另有可選的核心圖形桌面，仍未提供圖形視窗系統或圖形 shell。參考[開機流程中的 VirtIO 桌面](./boot.md#virtio-圖形桌面)與 [Spec 28](../SPEC-28-native-desktop.md)。
 
 編輯器持有 raw console，shell 等待子行程，不會同時讀走你的按鍵；背景行程輸出仍可能干擾畫面，尚無完整前景工作隔離。
 
