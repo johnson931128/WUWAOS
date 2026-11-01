@@ -28,20 +28,7 @@ try {
     [System.IO.File]::WriteAllText((Join-Path $distPath '.nojekyll'), '')
     New-Item -ItemType Directory -Path (Join-Path $repoRoot 'build') -Force | Out-Null
 
-    # Save only the documentation source. Pending OS source is never staged here.
-    $sourceBranch = 'codex/documentation'
-    $sourceRemote = Invoke-DocsGit @('ls-remote', '--heads', 'origin', "refs/heads/$sourceBranch")
-    $sourceRef = if ($sourceRemote) { "refs/heads/$sourceBranch" } else { 'refs/heads/main' }
-    Invoke-DocsGit @('fetch', 'origin', $sourceRef) | Out-Null
-    $sourceParent = Invoke-DocsGit @('rev-parse', 'FETCH_HEAD')
-    $env:GIT_INDEX_FILE = $indexPath
-    Invoke-DocsGit @('read-tree', $sourceParent) | Out-Null
-    Invoke-DocsGit @('add', '--', '.gitignore', 'README.md', 'docs', 'package.json', 'package-lock.json', 'tools/publish-docs.ps1') | Out-Null
-    $sourceTree = Invoke-DocsGit @('write-tree')
-    $sourceCommit = Invoke-DocsGit @('commit-tree', $sourceTree, '-p', $sourceParent, '-m', 'Publish documentation source and GitHub Pages configuration')
-    Invoke-DocsGit @('push', 'origin', "${sourceCommit}:refs/heads/$sourceBranch")
-
-    # The same isolated index now records only static output. No checkout or force push.
+    # Record only generated static output. No source branch writes, checkout, or force push.
     $remoteBranch = Invoke-DocsGit @('ls-remote', '--heads', 'origin', 'refs/heads/gh-pages')
     $parentArguments = @()
     if ($remoteBranch) {
@@ -57,7 +44,6 @@ try {
     # No force push: a concurrent publication must be reviewed and rebuilt.
     Invoke-DocsGit @('push', 'origin', "${commit}:refs/heads/gh-pages")
     Write-Output "Published static commit: $commit"
-    Write-Output "Documentation source commit: $sourceCommit"
     Write-Output 'GitHub Pages URL: https://johnson931128.github.io/WUWAOS/'
 }
 finally {

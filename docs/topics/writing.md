@@ -6,7 +6,7 @@
 
 主機需要 Node.js 與 npm。本次文件工具為 VitePress 1.6.4；請以 repository 的 lockfile 安裝相同依賴。
 
-網站來源在 repository 的 `codex/documentation` 分支。若要另外建立文件專用工作目錄，可使用 `git clone --branch codex/documentation --single-branch git@github.com:johnson931128/WUWAOS.git WUWAOS-docs`，之後進入該目錄再執行本章命令；main 的 OS 工作目錄不必為此切換分支。
+網站與 OS 原始碼都在 repository 的 `main` 分支。若要另外建立工作目錄，可使用 `git clone --branch main --single-branch git@github.com:johnson931128/WUWAOS.git WUWAOS-docs`，之後進入該目錄再執行本章命令。
 
 `package.json` 另固定 Vite 為 6.4.5，避開 VitePress 預設 Vite 5 依賴的已知開發伺服器問題；升級時也要重新確認建置、預覽與依賴檢查。
 
@@ -63,7 +63,7 @@ preview 預設為 `http://127.0.0.1:4173/`，顯示建置後的靜態網站。�
 powershell -File tools/publish-docs.ps1
 ```
 
-工具先把文件、網站設定與發布腳本保存到 johnson931128/WUWAOS 的 codex/documentation 分支，再把靜態產物發布到 gh-pages，不接受網頁訪客傳入來源或目的地。使用獨立 Git index（暫存索引）與明確的文件路徑清單，不切換 main、不提交 OS 原始碼、不更動既有暫存內容，也不 force push。
+先將文件與網站設定的來源變更提交並推送到 `main`，再執行發布工具。工具只把建置後的靜態網站發布到 `gh-pages`，不會替使用者提交來源變更或推送其他分支，也不接受網頁訪客傳入來源或目的地。工具使用獨立 Git index（暫存索引），不切換分支、不更動既有暫存內容，也不 force push。
 
 ## Google 搜尋
 
