@@ -64,6 +64,35 @@ uintptr_t page_alloc(void) {
     return address;
 }
 
+uintptr_t page_alloc_contiguous(size_t pages) {
+    if (pages == 0) return 0;
+    FreePage **link = &free_head;
+    while (*link != 0) {
+        FreePage *first = *link;
+        FreePage *last = first;
+        size_t count = 1;
+        while (count < pages && last->next != 0 &&
+               (uintptr_t)last->next == (uintptr_t)last + PAGE_SIZE) {
+            last = last->next;
+            ++count;
+        }
+        if (count == pages) {
+            *link = last->next;
+            free_count -= pages;
+            const uintptr_t address = (uintptr_t)first;
+            for (size_t i = 0; i < pages; ++i) {
+                const size_t index = (address - RAM_BASE) / PAGE_SIZE + i;
+                allocated[index / 8] |= (uint8_t)(1U << (index % 8));
+                volatile uint8_t *bytes = (volatile uint8_t *)(address + i * PAGE_SIZE);
+                for (size_t byte = 0; byte < PAGE_SIZE; ++byte) bytes[byte] = 0;
+            }
+            return address;
+        }
+        link = &first->next;
+    }
+    return 0;
+}
+
 void page_free(uintptr_t address) {
     if ((address & (PAGE_SIZE - 1)) != 0 || address < pool_start || address >= pool_end) {
         page_panic("Invalid page free");

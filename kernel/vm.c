@@ -36,7 +36,7 @@ typedef struct {
 
 /* Metadata only; physical user memory is never preallocated here. */
 static VmSpace spaces[PROCESS_LIMIT + 1];
-static uintptr_t kernel_root, mmio[2];
+static uintptr_t kernel_root, mmio[16];
 static size_t mmio_count, resident, frame_limit = VM_DEFAULT_FRAMES;
 static uint64_t next_arrival;
 static struct {
@@ -258,7 +258,7 @@ int vm_handle_fault(uintptr_t root, uintptr_t address, unsigned long cause, uint
 void vm_map_mmio(uintptr_t base) {
     if (base == 0 || base == UART_BASE) return;
     for (size_t i = 0; i < mmio_count; ++i) if (mmio[i] == base) return;
-    if (mmio_count == 2) vm_panic("Too many block MMIO pages");
+    if (mmio_count == sizeof(mmio) / sizeof(mmio[0])) vm_panic("Too many VirtIO MMIO pages");
     mmio[mmio_count++] = base;
 }
 
@@ -287,7 +287,7 @@ void vm_init(const void *fdt) {
     }
     if (vm_map(kernel_root, UART_BASE, UART_BASE, PTE_R | PTE_W) < 0) vm_panic("Cannot map UART");
     for (size_t i = 0; i < mmio_count; ++i) {
-        if (vm_map(kernel_root, mmio[i], mmio[i], PTE_R | PTE_W) < 0) vm_panic("Cannot map block MMIO");
+        if (vm_map(kernel_root, mmio[i], mmio[i], PTE_R | PTE_W) < 0) vm_panic("Cannot map VirtIO MMIO");
     }
     vm_use_kernel();
     swap_init();

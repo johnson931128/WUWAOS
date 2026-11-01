@@ -2,7 +2,7 @@ CC := clang
 QEMU := qemu-system-riscv64
 OBJCOPY := llvm-objcopy
 TARGET := build/kernel.elf
-KERNEL_SOURCES := main console trap sbi timer page swap vm process scheduler sync workstate syscall elf io splash block fs path memory
+KERNEL_SOURCES := main console trap sbi timer page swap vm process scheduler sync workstate syscall elf io splash block gpu fs path memory
 OBJECTS := build/entry.o build/trap_entry.o build/swtch.o build/user_image.o $(addprefix build/kernel_,$(addsuffix .o,$(KERNEL_SOURCES)))
 USER_OBJECTS := build/user_entry.o build/user_api.o build/user_print.o build/user_demo.o build/user_sync_demo.o build/user_shell.o build/user_shell_exec.o
 APP_OBJECTS := build/user_entry.o build/user_api.o build/user_print.o build/user_app.o
@@ -12,7 +12,7 @@ ARCH_FLAGS := --target=riscv64-unknown-elf -march=rv64imac_zicsr_zifencei -mabi=
 CFLAGS := $(ARCH_FLAGS) -std=c11 -O2 -g -Wall -Wextra -Werror -ffreestanding -fno-builtin -fno-stack-protector -fno-pic -fno-pie -Iinclude -MMD -MP
 LDFLAGS := $(ARCH_FLAGS) -fuse-ld=lld -nostdlib -static -Wl,--build-id=none
 
-.PHONY: all run disk-image clean
+.PHONY: all run run-gui disk-image clean
 all: $(TARGET)
 
 build:
@@ -90,6 +90,12 @@ disk-image: build/kernel-disk.elf tools/make_disk.py tools/make_swap.py | build
 
 run: $(TARGET) disk-image
 	$(QEMU) -machine virt -smp 1 -m 128M -nographic -bios default -kernel $(TARGET) -global virtio-mmio.force-legacy=false -drive file=build/wuwaos.img,if=none,format=raw,id=wuwaos,cache=writeback -device virtio-blk-device,drive=wuwaos -drive file=build/wuwaos-swap.img,if=none,format=raw,id=swap,cache=writeback -device virtio-blk-device,drive=swap
+
+run-gui: $(TARGET) disk-image
+run-gui: $(TARGET)
+	$(QEMU) -machine virt -smp 1 -m 128M -display $(GUI_DISPLAY) -bios default -kernel $(TARGET) -global virtio-mmio.force-legacy=false -device virtio-gpu-device -device virtio-tablet-device -drive file=build/wuwaos.img,if=none,format=raw,id=wuwaos,cache=writeback -device virtio-blk-device,drive=wuwaos -drive file=build/wuwaos-swap.img,if=none,format=raw,id=swap,cache=writeback -device virtio-blk-device,drive=swap
+
+GUI_DISPLAY ?= gtk
 
 clean:
 	rm -f build/*.o build/*.d build/kernel.elf build/kernel-disk.elf build/kernel.map build/user.elf build/user.bin build/app.elf build/app.bin build/fan.elf build/fan.bin build/workstate.elf build/workstate.bin
