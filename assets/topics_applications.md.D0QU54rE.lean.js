@@ -1,4 +1,4 @@
-import{_ as o,C as c,o as l,c as r,a3 as t,E as a}from"./chunks/framework.BZCmpA0A.js";const f=JSON.parse('{"title":"10 · Shell 與 fan 編輯器","description":"","frontmatter":{},"headers":[],"relativePath":"topics/applications.md","filePath":"topics/applications.md","lastUpdated":1793506580000}'),s={name:"topics/applications.md"};function n(h,e,i,p,m,b){const d=c("MermaidDiagram");return l(),r("div",null,[e[0]||(e[0]=t("",10)),a(d,{source:`flowchart TD
+import{_ as o,C as c,o as l,c as r,a3 as t,E as a}from"./chunks/framework.BZCmpA0A.js";const u=JSON.parse('{"title":"10 · Shell 與 fan 編輯器","description":"","frontmatter":{},"headers":[],"relativePath":"topics/applications.md","filePath":"topics/applications.md","lastUpdated":1793510684000}'),s={name:"topics/applications.md"};function n(h,e,i,p,m,b){const d=c("MermaidDiagram");return l(),r("div",null,[e[0]||(e[0]=t("",10)),a(d,{source:`flowchart TD
   A[鍵盤輸入 cat note.txt 後按 Enter] --> B[QEMU UART 序列埠收到字元]
   B --> C[核心 I/O 收集一行並交給 shell 的 read]
   C --> D[shell tokenize 切出 cat 與 note.txt]
@@ -12,4 +12,4 @@ import{_ as o,C as c,o as l,c as r,a3 as t,E as a}from"./chunks/framework.BZCmpA
   A[主機上的 C 和組合語言] --> B[WSL 中的 Clang 與連結器]
   B --> C[RISC-V 核心 ELF 和使用者映像]
   C --> D[QEMU 載入核心並模擬 RISC-V CPU]
-`}),e[2]||(e[2]=t("",18))])}const S=o(s,[["render",n]]);export{f as __pageData,S as default};
+`}),e[2]||(e[2]=t("",18))])}const S=o(s,[["render",n]]);export{u as __pageData,S as default};
