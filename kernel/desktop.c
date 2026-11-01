@@ -102,6 +102,7 @@ void desktop_start_cursor(void) {
 }
 
 void desktop_poll(void) {
+    if (!cursor_visible) return;
     uint32_t x, y;
     if (input_poll(&x, &y) > 0) move_cursor(x, y);
 }

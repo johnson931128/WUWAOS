@@ -91,11 +91,11 @@ disk-image: build/kernel-disk.elf tools/make_disk.py tools/make_swap.py | build
 run: $(TARGET) disk-image
 	$(QEMU) -machine virt -smp 1 -m 128M -nographic -bios default -kernel $(TARGET) -global virtio-mmio.force-legacy=false -drive file=build/wuwaos.img,if=none,format=raw,id=wuwaos,cache=writeback -device virtio-blk-device,drive=wuwaos -drive file=build/wuwaos-swap.img,if=none,format=raw,id=swap,cache=writeback -device virtio-blk-device,drive=swap
 
-run-gui: $(TARGET)
-	$(QEMU) -machine virt -smp 1 -m 128M -display $(GUI_DISPLAY) -bios default -kernel $(TARGET) -global virtio-mmio.force-legacy=false -device virtio-gpu-device -device virtio-tablet-device -snapshot -drive file=build/wuwaos.img,if=none,format=raw,id=wuwaos,cache=writeback -device virtio-blk-device,drive=wuwaos -drive file=build/wuwaos-swap.img,if=none,format=raw,id=swap,cache=writeback -device virtio-blk-device,drive=swap
+run-gui: $(TARGET) disk-image
+	$(QEMU) -machine virt -smp 1 -m 128M -display $(GUI_DISPLAY) -bios default -kernel $(TARGET) -global virtio-mmio.force-legacy=false -device virtio-gpu-device -device virtio-tablet-device -drive file=build/wuwaos.img,if=none,format=raw,id=wuwaos,cache=writeback -device virtio-blk-device,drive=wuwaos -drive file=build/wuwaos-swap.img,if=none,format=raw,id=swap,cache=writeback -device virtio-blk-device,drive=swap
 
-run-gui-vnc: $(TARGET)
-	$(QEMU) -machine virt -smp 1 -m 128M -display none -bios default -kernel $(TARGET) -global virtio-mmio.force-legacy=false -device virtio-gpu-device -device virtio-tablet-device -snapshot -vnc 127.0.0.1:$(GUI_VNC_DISPLAY) -qmp tcp:127.0.0.1:$(GUI_QMP_PORT),server=on,wait=off -monitor none -serial stdio -drive file=build/wuwaos.img,if=none,format=raw,id=wuwaos,cache=writeback -device virtio-blk-device,drive=wuwaos -drive file=build/wuwaos-swap.img,if=none,format=raw,id=swap,cache=writeback -device virtio-blk-device,drive=swap
+run-gui-vnc: $(TARGET) disk-image
+	$(QEMU) -machine virt -smp 1 -m 128M -display none -bios default -kernel $(TARGET) -global virtio-mmio.force-legacy=false -device virtio-gpu-device -device virtio-tablet-device -vnc 127.0.0.1:$(GUI_VNC_DISPLAY) -qmp tcp:127.0.0.1:$(GUI_QMP_PORT),server=on,wait=off -monitor none -serial stdio -drive file=build/wuwaos.img,if=none,format=raw,id=wuwaos,cache=writeback -device virtio-blk-device,drive=wuwaos -drive file=build/wuwaos-swap.img,if=none,format=raw,id=swap,cache=writeback -device virtio-blk-device,drive=swap
 
 GUI_DISPLAY ?= gtk
 GUI_VNC_DISPLAY ?= 1
