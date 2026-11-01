@@ -10,6 +10,7 @@
 #include "fs.h"
 #include "path.h"
 #include "sync.h"
+#include "elf.h"
 #include <limits.h>
 
 static Process processes[PROCESS_LIMIT];
@@ -204,6 +205,8 @@ long process_fork(void) {
     return pid;
 }
 
+static long process_install_image(Process *process, uintptr_t root, long program, uintptr_t entry, uintptr_t stack);
+
 long process_exec(long program, const char *argument) {
     if (program < PROGRAM_WORKER || program > PROGRAM_FAN ||
         (program == PROGRAM_FAN && (argument == 0 || argument[0] != '/'))) {
@@ -220,6 +223,17 @@ long process_exec(long program, const char *argument) {
         const int error = user_copy_to(root, stack, argument, length + 1);
         if (error < 0) { vm_destroy(root); return error; }
     }
+    return process_install_image(process, root, program, USER_ENTRY, stack);
+}
+
+long process_exec_path(const char *path) {
+    uintptr_t root, entry;
+    long result = elf_load(path, &root, &entry);
+    if (result < 0) return result;
+    return process_install_image(process_current(), root, PROGRAM_ELF, entry, USER_STACK_TOP);
+}
+
+static long process_install_image(Process *process, uintptr_t root, long program, uintptr_t entry, uintptr_t stack) {
     sync_process_cleanup(process); /* New image must not inherit held mutexes. */
     (void)io_console_mode(0); /* Successful exec resets raw input ownership. */
     const uintptr_t old_root = process->page_table;
@@ -229,9 +243,9 @@ long process_exec(long program, const char *argument) {
         bytes[i] = 0;
     }
     process->frame->registers[2] = stack;
-    process->frame->registers[10] = (uint64_t)program;
+    process->frame->registers[10] = program == PROGRAM_ELF ? 0 : (uint64_t)program;
     process->frame->registers[11] = program == PROGRAM_FAN ? stack : 0;
-    process->frame->sepc = USER_ENTRY;
+    process->frame->sepc = entry;
     process->frame->sstatus = status;
     process->program = program;
     process->page_table = root;
@@ -245,7 +259,8 @@ long process_exec(long program, const char *argument) {
     vm_destroy(old_root);
     console_puts("[exec] PID=");
     console_number(process->pid);
-    console_puts(" retained; loaded app image, program=");
+    console_puts(program == PROGRAM_ELF ? " retained; loaded WUFS ELF, program=" :
+                 " retained; loaded app image, program=");
     console_number(program);
     console_putc('\n');
     return 0;
@@ -457,7 +472,7 @@ void process_complete_io(Process *process, long result) {
 }
 
 static const char *program_name(long program) {
-    static const char *names[] = { "shell", "worker", "quick", "writer", "reader", "counter", "fan" };
+    static const char *names[] = { "shell", "worker", "quick", "writer", "reader", "counter", "fan", "elf" };
     return names[program];
 }
 

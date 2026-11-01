@@ -29,6 +29,7 @@
 | 23 | [同步工具互動示範](./SPEC-23-sync-demo.md)，實際行程與等待狀態 |
 | 24 | [功能示範影片](./SPEC-24-demo-video.md)，QEMU 實際操作與影片驗證 |
 | 25 | [行程容量擴充](./SPEC-25-process-capacity.md)，16 個行程、資源回收與 workstate 分頁 |
+| 26 | [WUFS 路徑式 ELF 載入](./SPEC-26-elf-exec.md)，受限靜態 RV64 使用者程式 |
 
 ## 如何判斷是否驗證過
 

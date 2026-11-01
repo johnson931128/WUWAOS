@@ -15,6 +15,8 @@
 void vm_init(const void *fdt);
 void vm_map_mmio(uintptr_t base);
 uintptr_t vm_create(long program);
+int vm_elf_allow(uintptr_t root, uintptr_t address, size_t length);
+int vm_elf_write(uintptr_t root, uintptr_t address, const void *buffer, size_t length);
 int vm_clone(uintptr_t destination, uintptr_t source);
 void vm_destroy(uintptr_t root);
 void vm_use_kernel(void);

@@ -57,6 +57,7 @@ long kill(long pid) { return syscall3(SYS_KILL, pid, 0, 0); }
 long pipeline(long pids[2]) { return syscall3(SYS_PIPELINE, (long)pids, 0, 0); }
 long trace(long enabled) { return syscall3(SYS_TRACE, enabled, 0, 0); }
 long fork(void) { return syscall3(SYS_FORK, 0, 0, 0); }
+long exec_path(const char *path) { return syscall3(SYS_EXEC_PATH, (long)path, 0, 0); }
 long exec(long program) { return syscall3(SYS_EXEC, program, 0, 0); }
 long exec_arg(long program, const char *argument) {
     return syscall3(SYS_EXEC, program, (long)argument, 0);

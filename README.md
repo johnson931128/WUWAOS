@@ -14,13 +14,13 @@ WUWAOS is a small operating system written in **C and RISC-V assembly** that boo
 | Area | Current implementation |
 | --- | --- |
 | Platform | QEMU `virt`, RISC-V 64-bit, one CPU core, and 128 MiB RAM; OpenSBI starts the kernel |
-| Processes and scheduling | Up to 16 processes, process control blocks, fork, exec for built-in programs, wait, exit, and timer-driven round-robin scheduling |
+| Processes and scheduling | Up to 16 processes, process control blocks, fork, built-in and path-based exec, wait, exit, and timer-driven round-robin scheduling |
 | Synchronization and IPC | Custom mutexes and semaphores, sleep/wakeup, and a built-in `writer \| reader` pipe |
 | Virtual memory | Sv39 three-level page tables, demand paging, FIFO page replacement, and swap |
 | File system | VirtIO block device and the custom WUFS file system, with persistent files and directories |
 | User interface | A shell, the `fan` text editor, the `workstate` monitor, and the `demo sync` synchronization demo |
 
-WUWAOS focuses on fundamental operating system mechanisms and is not Linux-compatible. QEMU currently loads the kernel using `-kernel`. Loading general ELF executables from disk, compiling C inside WUWAOS, networking, and a graphical desktop are not yet supported. See the [documentation](https://johnson931128.github.io/WUWAOS/) and [Spec 21](docs/SPEC-21-native-compilation.md) for limitations and future plans.
+WUWAOS focuses on fundamental operating system mechanisms and is not Linux-compatible. QEMU currently loads the kernel using `-kernel`. A restricted static RV64 ELF loader can run compatible WUWAOS programs from WUFS; general ELF/Linux compatibility, compiling C inside WUWAOS, networking, and a graphical desktop are not yet supported. See the [documentation](https://johnson931128.github.io/WUWAOS/) and [Spec 21](docs/SPEC-21-native-compilation.md) for limitations and future plans.
 
 ## Demo Video
 
@@ -49,6 +49,18 @@ wsl -d Ubuntu -- bash -lc 'cd /mnt/c/programing/WUWAOS && make run'
 `make run` uses Clang in WSL to cross-compile the RISC-V program and then starts QEMU. Once the `wuwaos/>` prompt appears, enter `help` to see the available commands. Try `demo sync` to observe a parent and child process using synchronization primitives.
 
 To exit QEMU, press **Ctrl+A**, release the keys, and then press **X**. The `exit` command ends only the shell. The WUFS disk image is stored at `build/wuwaos.img`; its files persist across restarts, and `make clean` does not delete the disk image.
+
+## Running a WUFS ELF Program
+
+With QEMU stopped, build the existing shell ELF and install it into the WUFS image from WSL:
+
+```powershell
+wsl -d Ubuntu -- bash -lc 'cd /mnt/c/programing/WUWAOS && make build/kernel-disk.elf && python3 tools/make_disk.py --image build/wuwaos.img --kernel build/kernel-disk.elf --install build/user.elf /bin/shell.elf'
+```
+
+Start WUWAOS with `make run`, then enter `run /bin/shell.elf`. This opens another WUWAOS shell as a child; `exit` returns to its parent. The installer refuses to overwrite existing files. Never modify the image from the host while QEMU is using it.
+
+This first loader accepts a restricted static ELF64 RV64 layout and the WUWAOS syscall ABI; it has no arguments, dynamic linker, or Linux compatibility. See [Spec 26](docs/SPEC-26-elf-exec.md) for the supported layout and validation.
 
 ## Documentation
 

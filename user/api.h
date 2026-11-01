@@ -25,6 +25,7 @@ long pipeline(long pids[2]);
 long trace(long enabled);
 long fork(void);
 long exec(long program);
+long exec_path(const char *path);
 long exec_arg(long program, const char *argument);
 long console_mode(long raw);
 long sbrk(long increment);

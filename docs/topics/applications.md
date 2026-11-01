@@ -45,7 +45,7 @@ flowchart TD
 4. 硬體依 `stvec`（監督模式例外入口位址暫存器）轉到例外入口；核心保存行程狀態後，`syscall_dispatch`（系統呼叫分派器）依編號選擇檔案讀取。核心使用該行程 PCB 的 CWD（目前工作目錄），將 `note.txt` 視為 `/home/user/note.txt`，再逐層查找 WUFS。
 5. 核心將資料和結果交回 shell，shell 透過輸出 syscall 印出；`sepc`（例外返回指令位址暫存器）跳過剛執行的 `ecall`，最後 `sret`（返回使用者模式指令）恢復執行。若找不到檔案則顯示錯誤。
 
-`cd` 呼叫 chdir 改變本行程 PCB 的目錄，`pwd` 呼叫 getcwd 取得目錄；`cls` 輸出終端控制序列，`fan` 則 fork 子行程再 exec 對應內建映像。一個命令可以呼叫多次 syscall；目前沒有 PATH 搜尋或一般外部 ELF 程式載入。
+`cd` 呼叫 chdir 改變本行程 PCB 的目錄，`pwd` 呼叫 getcwd 取得目錄；`cls` 輸出終端控制序列，`fan` 則 fork 子行程再 exec 對應內建映像。一個命令可以呼叫多次 syscall；`run <path>` 也可從 WUFS 執行符合限制的靜態 RV64 ELF；目前沒有 PATH 搜尋或任意 Linux ELF 相容。
 
 ## 目錄操作
 
@@ -77,7 +77,13 @@ flowchart LR
   C --> D[QEMU 載入核心並模擬 RISC-V CPU]
 ```
 
-`fan` 可以寫 `.c` 檔，但 WUWAOS 現在還沒有系統內的 C 編譯器，也沒有從磁碟載入一般 ELF 程式的功能。未來先讓系統執行主機編譯好的外部程式，再依所選編譯工具補齊檔案介面、執行環境與工具鏈；詳細需求與階段記錄在 [Spec 21](../SPEC-21-native-compilation.md)。這些是長期目標，尚未實作。
+`fan` 可以寫 `.c` 檔，但 WUWAOS 尚無系統內 C 編譯器。現已支援從 WUFS 執行符合固定布局的靜態 RV64 ELF；尚需補齊工具鏈與相關檔案介面，才可能在 WUWAOS 內編譯。設計與驗證見 [Spec 26](../SPEC-26-elf-exec.md)，長期規劃見 [Spec 21](../SPEC-21-native-compilation.md)。
+
+## 從 WUFS 載入 ELF
+
+在 QEMU 關閉時，主機可以使用 `tools/make_disk.py --install` 把既有相容的 ELF 匯入 WUFS，之後在 shell 使用 `run /bin/shell.elf`（路徑依安裝位置決定）。相對路徑也支援。父 shell 等待執行完成並回收子行程；目前無程式參數或 PATH 搜尋。
+
+載入器先檢查 ELF 標頭與每個載入段，建立新的頁表並複製檔案內容，全部成功後才切換行程。執行期間可正常換頁，即使原檔之後刪除，行程仍使用自己的內容。只支援特定 RV64 靜態格式與固定地址，並非一般 Linux 相容環境；操作步驟及限制見 [Spec 26](../SPEC-26-elf-exec.md)。
 
 ## fan 的文字資料結構
 

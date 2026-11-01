@@ -124,19 +124,17 @@ static void run_program(const char *name) {
     const long program = equal(name, "worker") ? PROGRAM_WORKER :
                          equal(name, "quick") ? PROGRAM_QUICK :
                          equal(name, "counter") ? PROGRAM_COUNTER : -1;
-    if (program < 0) {
-        user_puts("Usage: run worker|quick|counter\n");
-        return;
-    }
+    const int external = program < 0;
     const long child = fork();
     if (child == 0) {
         user_puts("[run child] fork returned 0; PID=");
         user_number(getpid());
         user_puts("; calling exec\n");
-        result_line("exec error: ", exec(program));
+        result_line("exec error: ", external ? exec_path(name) : exec(program));
         exit(127);
     }
     result_line("[run parent] child PID/result=", child);
+    if (external && child > 0) wait_child(child);
 }
 
 static void run_fan(const char *path) {
@@ -284,6 +282,7 @@ static void help(void) {
               "run worker                      Fork/exec worker; wakeup 7, then wait.\n"
               "run quick                       Fork/exec quick; wait <pid> to collect.\n"
               "run counter                     Fork/exec counter; wakeup 9, then wait.\n"
+              "run <path>                      Execute a WUFS ELF file in foreground.\n"
               "yield                           Let the next ready process run.\n"
               "sync mutex create|lock <id>|unlock <id>  Manage a mutex.\n"
               "sync sem create <n>|wait <id>|post <id> Manage a semaphore.\n"

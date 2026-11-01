@@ -35,6 +35,7 @@
 #define SYS_GETCWD 31
 #define SYS_FS_REMOVE_TREE 32
 #define SYS_SYNC 33
+#define SYS_EXEC_PATH 34
 
 #define PROGRAM_WORKER 1
 #define PROGRAM_QUICK 2
@@ -42,6 +43,7 @@
 #define PROGRAM_READER 4
 #define PROGRAM_COUNTER 5
 #define PROGRAM_FAN 6
+#define PROGRAM_ELF 7
 
 #define ERR_NO_CHILD (-10L)
 #define ERR_NO_SLOT (-11L)

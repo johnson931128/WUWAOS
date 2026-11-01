@@ -48,6 +48,7 @@ CPU 執行記憶體中的機器碼，不知道來源檔名。OpenSBI 負責早�
 | user/workstate.c / workstate.h | shell 內即時全螢幕、區間比率計算、定時休眠與 q 退出 |
 | kernel/scheduler.c / scheduler.h | 單向鏈結 FIFO 就緒佇列、入列／取隊首／移除與順序查閱 |
 | kernel/sync.c / sync.h、include/sync_ops.h | 自製 mutex／semaphore、等待佇列與行程離開清理；詳見 Spec 22 |
+| kernel/elf.c / elf.h | 驗證並載入受限 RV64 ELF 段，準備私有 VM；見 Spec 26 |
 | user/sync_demo.c / sync_demo.h | shell 的同步示範：父子行程、等待狀態與資源回收 |
 | kernel/io.c / io.h | 行輸入／raw console、固定管道、pending I/O（尚未完成的輸入輸出） |
 | kernel/block.c / block.h | FDT 裝置探索、VirtIO-MMIO 區塊讀寫佇列 |
@@ -161,7 +162,7 @@ Sv39 將虛擬位址拆成 L2／L1／L0 三個 9-bit 索引與 12-bit 頁內位�
 - vm_destroy 先釋放補充表中所有使用者實體頁與 swap slots，再遞迴回收私有分頁表，跳過共用核心分支。拒絕銷毀 satp 正在使用的根表。exec 成功切換後才銷毀舊空間；Zombie 保留資源直到 wait／孤兒回收。
 - user_readable／user_writable 驗證合法範圍與權限，不要求常駐。user_copy_from／user_copy_to 逐頁載入後立即複製，不保留可能被下一次配置淘汰的實體指標；失敗明確回傳。user_read_byte／user_write_byte／user_write_long 是短資料包裝。
 
-FIFO 選擇在最壞情況掃描 5×262 個 metadata；複製／換入換出 O(頁面 bytes)，單次轉譯固定三級。swap full 或失效候選者需繼續掃描其他頁，成本可能更高。沒有 COW、mmap、LRU、多 hart 或非同步磁碟 I/O。完整設計與實際限制見 SPEC-10。
+FIFO 單輪選擇最多掃描 17×262 個 metadata；複製／換入換出 O(頁面 bytes)，單次轉譯固定三級。swap full 或失效候選者需繼續掃描其他頁，成本可能更高。沒有 COW、mmap、LRU、多 hart 或非同步磁碟 I/O。完整設計與實際限制見 SPEC-10。
 
 ### page.c：底層實體頁面配置
 
@@ -287,7 +288,7 @@ WUFS 在 LBA 0 存 superblock，接著 inode bitmap、block bitmap、固定 inod
 
 `tools/make_disk.py` 在首次使用時建立 WUFS 目錄與 `/boot/kernel.elf`；每次 make run 只替換這個 inode 的資料區，其他目錄項目和使用者檔案會保留。核心本身也能在空白磁碟格式化並建立目錄。`/boot/kernel.elf` 是一般核心 ELF 檔案副本；QEMU 目前仍以 `-kernel` 載入另一份 ELF，磁碟檔案沒有參與開機。
 
-目前路徑型 syscall 是教學用介面，不是 POSIX VFS：沒有 `open/close`、檔案 descriptor table、cwd（目前目錄）、相對路徑或通用 `read/write` 檔案 FD。shell 的 `write` 只接一個文字 token，`cat` 顯示前 2048 bytes；核心複製可跨合法使用者頁面，包含按需載入與 swap。磁碟資料寫入同步完成，未實作掉電交易／journal（寫入日誌）與損毀復原。
+目前路徑型 syscall 是教學用介面，不是 POSIX VFS：已有各行程 cwd（目前目錄）與相對路徑，但沒有 `open/close`、檔案 descriptor table 或通用 `read/write` 檔案 FD。shell 的 `write` 只接一個文字 token，`cat` 顯示前 2048 bytes；核心複製可跨合法使用者頁面，包含按需載入與 swap。磁碟資料寫入同步完成，未實作掉電交易／journal（寫入日誌）與損毀復原。
 
 ## 10. syscall.c、共用編號與使用者 API
 
@@ -320,6 +321,7 @@ WUWAOS 自訂 ABI（呼叫約定）：a7（呼叫編號暫存器）、a0–a2（
 | 29 | fs_copy(source, destination) | 複製一般檔案，完整建立新 inode 後發布 |
 | 32 | fs_remove_tree(path) | 先檢查目錄樹及行程工作目錄，再由子向父移除並回收；shell 負責確認 |
 | 33 | sync(operation, argument) | 自製 mutex／semaphore 建立、操作與銷毀；使用者 API 封裝 |
+| 34 | exec_path(path) | 從 WUFS 載入受限靜態 RV64 ELF，成功後取代目前行程映像 |
 
 syscall_dispatch 用 switch 分派；結果填 frame->a0。阻塞服務保留核心呼叫堆疊、切到排程器，恢復後正常回傳真正結果，再走相同的 a0 回寫路徑，不先存 placeholder。
 exec 成功時 dispatcher 立即返回，不能把正常返回值 0 再寫進 frame->a0，否則會破壞新程式所需的初始角色參數。失敗才按一般規則回傳錯誤。

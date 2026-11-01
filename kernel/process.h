@@ -58,6 +58,7 @@ long process_chdir(const char *path);
 long process_spawn(long program);
 long process_fork(void);
 long process_exec(long program, const char *argument);
+long process_exec_path(const char *path);
 long process_yield(void);
 void process_preempt(void);
 long process_sleep(long channel);

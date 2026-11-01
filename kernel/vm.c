@@ -30,6 +30,7 @@ typedef struct {
     uintptr_t root, heap_end;
     long program;
     size_t faults;
+    unsigned int elf_pages;
     VmPage pages[SPACE_PAGES];
 } VmSpace;
 
@@ -100,7 +101,9 @@ static uintptr_t page_address(size_t index) {
 static int page_index(const VmSpace *space, uintptr_t address) {
     if (space == 0) return -1;
     if (address >= USER_ENTRY && address < USER_DATA + PAGE_SIZE) {
-        return (int)((address - USER_ENTRY) / PAGE_SIZE);
+        const int index = (int)((address - USER_ENTRY) / PAGE_SIZE);
+        if (space->program == PROGRAM_ELF && !(space->elf_pages & (1U << index))) return -1;
+        return index;
     }
     if (address >= USER_STACK && address < USER_STACK_TOP) return FIXED_PAGES - 1;
     /* Hardware mappings expose the rounded last page, as with a conventional brk. */
@@ -175,6 +178,7 @@ static int obtain_frame(uintptr_t *result) {
 }
 
 static void image_for(long program, const unsigned char **start, size_t *length) {
+    if (program == PROGRAM_ELF) { *start = 0; *length = 0; return; }
     *start = program == 0 ? __user_image_start :
         program == PROGRAM_FAN ? __fan_image_start : __app_image_start;
     const unsigned char *end = program == 0 ? __user_image_end :
@@ -358,6 +362,7 @@ int vm_clone(uintptr_t destination, uintptr_t source) {
     VmSpace *to = find_space(destination), *from = find_space(source);
     if (to == 0 || from == 0) return ERR_ADDRESS;
     to->heap_end = from->heap_end;
+    to->elf_pages = from->elf_pages;
     for (size_t i = 0; i < SPACE_PAGES; ++i) {
         VmPage *page = &from->pages[i];
         if (page->physical) {
@@ -379,6 +384,41 @@ int vm_clone(uintptr_t destination, uintptr_t source) {
             to->pages[i].slot = slot;
             ++stats.copies;
         }
+    }
+    return 0;
+}
+
+/* Install only validated ELF pages; private bytes are marked dirty so eviction
+   preserves them in swap even if the original file is changed or removed. */
+int vm_elf_allow(uintptr_t root, uintptr_t address, size_t length) {
+    VmSpace *space = find_space(root);
+    if (!space || space->program != PROGRAM_ELF || !length || address < USER_ENTRY ||
+        address >= USER_DATA + PAGE_SIZE || length > USER_DATA + PAGE_SIZE - address) return ERR_ADDRESS;
+    size_t first = (address - USER_ENTRY) / PAGE_SIZE;
+    size_t last = (address + length - 1 - USER_ENTRY) / PAGE_SIZE;
+    for (size_t i = first; i <= last; ++i) {
+        if (space->elf_pages & (1U << i)) return ERR_INVALID;
+        space->elf_pages |= 1U << i;
+    }
+    return 0;
+}
+
+int vm_elf_write(uintptr_t root, uintptr_t address, const void *buffer, size_t length) {
+    VmSpace *space = find_space(root);
+    if (!space || space->program != PROGRAM_ELF) return ERR_ADDRESS;
+    size_t copied = 0;
+    while (copied < length) {
+        int index = page_index(space, address + copied);
+        if (index < 0 || (size_t)index >= FIXED_PAGES - 1) return ERR_ADDRESS;
+        uintptr_t physical;
+        int result = resident_page(space, (size_t)index, 1, &physical);
+        if (result < 0) return result;
+        size_t offset = (address + copied) & (PAGE_SIZE - 1);
+        size_t amount = PAGE_SIZE - offset;
+        if (amount > length - copied) amount = length - copied;
+        for (size_t i = 0; i < amount; ++i)
+            ((unsigned char *)physical)[offset + i] = ((const unsigned char *)buffer)[copied + i];
+        copied += amount;
     }
     return 0;
 }

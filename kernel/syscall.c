@@ -86,6 +86,14 @@ void syscall_dispatch(TrapFrame *frame) {
     case SYS_FORK:
         result = process_fork();
         break;
+    case SYS_EXEC_PATH: {
+        char path[FS_PATH_MAX];
+        result = copy_fs_path(process_current()->page_table, frame->registers[10], path);
+        if (result < 0) break;
+        result = process_exec_path(path);
+        if (result == 0) return;
+        break;
+    }
     case SYS_EXEC: {
         char argument[FS_PATH_MAX];
         const long program = (long)frame->registers[10];

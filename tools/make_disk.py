@@ -164,6 +164,26 @@ class WufsImage:
             current = match
         return current
 
+    def install_file(self, destination, data):
+        if not destination.startswith("/") or destination.endswith("/"):
+            raise ValueError("destination must be an absolute file path")
+        parent_path, name = destination.rsplit("/", 1)
+        if name in ("", ".", "..") or len(name.encode()) >= NAME_SIZE:
+            raise ValueError("invalid WUFS filename")
+        parent = self.find(parent_path or "/")
+        if self.read_inode(parent)[0] != 1:
+            raise ValueError("destination parent is not a directory")
+        entries = self.read_dir(parent)
+        if any(existing == name for existing, _ in entries):
+            raise FileExistsError(destination)
+        if len(data) > (DIRECT + INDIRECT * 128) * SECTOR:
+            raise ValueError("file exceeds WUFS maximum size")
+        inode = self.alloc_inode()
+        self.write_inode(inode, 2, 0, [], [])
+        self.write_data(inode, data)
+        entries.append((name, inode))
+        self.write_dir(parent, entries)
+
     def add_kernel(self, kernel):
         try:
             inode_number = self.find("/boot/kernel.elf")
@@ -181,6 +201,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--image", required=True, type=pathlib.Path)
     parser.add_argument("--kernel", required=True, type=pathlib.Path)
+    parser.add_argument("--install", nargs=2, action="append", default=[],
+                        metavar=("HOST_FILE", "WUFS_PATH"),
+                        help="install a new file; destination must not exist")
     args = parser.parse_args()
     if args.image.exists():
         image = bytearray(args.image.read_bytes())
@@ -193,7 +216,14 @@ def main():
         fs = WufsImage.format()
     kernel = args.kernel.read_bytes()
     fs.add_kernel(kernel)
+    for source, destination in args.install:
+        try:
+            fs.install_file(destination, pathlib.Path(source).read_bytes())
+        except (OSError, RuntimeError, ValueError) as error:
+            parser.error(f"cannot install {source} -> {destination}: {error}")
     args.image.write_bytes(fs.image)
+    for source, destination in args.install:
+        print(f"Installed {source} -> {destination}")
     print(f"WUFS disk ready: {args.image} ({len(fs.image)} bytes), /boot/kernel.elf ({len(kernel)} bytes)")
 
 

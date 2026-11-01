@@ -33,7 +33,7 @@ WUWAOS 是以 C 與 RISC-V 組合語言撰寫、真正運行於 QEMU 虛擬電�
 | 操作 | Shell、固定 writer \| reader 管道、fan 全螢幕文字編輯器 |
 | 監測 | workstate 全螢幕；每秒更新行程、CPU 派發時間、RSS／Swap 與整體 RAM |
 
-這是現有功能的實作紀錄，不是承諾與 Linux 相容。沒有一般磁碟 ELF 載入器、通用檔案描述號、網路或圖形桌面。
+這是現有功能的實作紀錄，不是承諾與 Linux 相容。支援受限靜態 RV64 ELF 從 WUFS 載入；尚無通用 ELF／Linux 相容、通用檔案描述號、網路或圖形桌面。
 
 ## 這份文件如何組織
 

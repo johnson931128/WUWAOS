@@ -660,6 +660,15 @@ discard:
     return error;
 }
 
+long fs_size(const char *path) {
+    uint32_t number;
+    int error = path_lookup(path, &number);
+    if (error < 0) return error;
+    Inode inode;
+    if (inode_read(number, &inode) < 0) return -5;
+    return inode.type == FS_TYPE_FILE ? (long)inode.size : -21;
+}
+
 long fs_read(const char *path, size_t offset, void *buffer, size_t length) {
     uint32_t number;
     const int found = path_lookup(path, &number);
