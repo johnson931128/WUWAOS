@@ -7,6 +7,7 @@
 #include "fs.h"
 #include "timer.h"
 #include "gpu.h"
+#include "desktop.h"
 
 void kernel_main(unsigned long hart_id, const void *fdt) {
     (void)hart_id;
@@ -19,7 +20,7 @@ void kernel_main(unsigned long hart_id, const void *fdt) {
     const int gpu_found = gpu_probe(fdt) == 0;
     if (gpu_found) vm_map_mmio(gpu_mmio_base());
     vm_init(fdt);
-    if (gpu_found) (void)gpu_init();
+    if (gpu_found && gpu_init() == 0) desktop_draw();
     if (block_ready && fs_init() < 0) {
         console_puts("[fs] Disk present but WUFS could not be mounted\n");
     }
