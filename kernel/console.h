@@ -6,6 +6,7 @@ void console_puts(const char *text);
 void console_hex(unsigned long value);
 void console_number(long value);
 int console_getc(void);
+void console_set_route_pid(long pid);
 _Noreturn void kernel_idle(void);
 
 #endif

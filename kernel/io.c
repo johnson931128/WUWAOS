@@ -3,6 +3,7 @@
 #include "fs.h"
 #include "syscall_numbers.h"
 #include "vm.h"
+#include "desktop.h"
 #include <limits.h>
 
 #define OFD_LIMIT 16
@@ -32,8 +33,8 @@ typedef struct {
 
 static OpenFile open_files[OFD_LIMIT];
 static Pipe pipes[PIPE_LIMIT];
-static int skip_lf;
-static long raw_owner;
+static int skip_lf_uart, skip_lf_gui;
+static long raw_owner_uart, raw_owner_gui;
 
 static int fd_value(Process *process, long fd) {
     if (fd < 0 || fd >= PROCESS_FD_LIMIT) return -99;
@@ -74,7 +75,10 @@ static void close_slot(Process *process, int fd) {
     const int value = process->fd_table[fd];
     process->fd_table[fd] = -99;
     if (value >= 0) ofd_release(value);
-    if (fd == 0 && raw_owner == process->pid) raw_owner = 0;
+    if (fd == 0) {
+        if (raw_owner_uart == process->pid) raw_owner_uart = 0;
+        if (raw_owner_gui == process->pid) raw_owner_gui = 0;
+    }
 }
 
 int io_inode_is_open(uint32_t inode) {
@@ -92,7 +96,8 @@ void io_inherit(Process *child, const Process *parent) {
 }
 
 void io_close_process(Process *process) {
-    if (raw_owner == process->pid) raw_owner = 0;
+    if (raw_owner_uart == process->pid) raw_owner_uart = 0;
+    if (raw_owner_gui == process->pid) raw_owner_gui = 0;
     for (int fd = 0; fd < PROCESS_FD_LIMIT; ++fd) close_slot(process, fd);
 }
 
@@ -195,15 +200,21 @@ long io_dup(long oldfd) {
 long io_is_console(long fd) {
     const int value = fd_value(process_current(), fd);
     if (value == -99) return ERR_BAD_FD;
-    return value == CONSOLE_OUT || value == CONSOLE_ERR;
+    return value == CONSOLE_OUT || value == CONSOLE_ERR ||
+        value == IO_GUI_CONSOLE_OUT || value == IO_GUI_CONSOLE_ERR;
 }
 
 long io_console_poll(void) {
-    if (raw_owner != process_current()->pid) return ERR_BUSY;
+    Process *process = process_current();
+    const int input = fd_value(process, 0);
+    const int graphical = input == IO_GUI_CONSOLE_IN;
+    if ((!graphical && input != CONSOLE_IN) ||
+        (graphical ? raw_owner_gui : raw_owner_uart) != process->pid) return ERR_BUSY;
     int character;
-    while ((character = console_getc()) >= 0) {
-        if (character == '\n' && skip_lf) { skip_lf = 0; continue; }
-        skip_lf = 0;
+    while ((character = graphical ? desktop_terminal_read_byte() : console_getc()) >= 0) {
+        int *skip_lf = graphical ? &skip_lf_gui : &skip_lf_uart;
+        if (character == '\n' && *skip_lf) { *skip_lf = 0; continue; }
+        *skip_lf = 0;
         return character + 1;
     }
     return 0;
@@ -212,11 +223,20 @@ long io_console_poll(void) {
 long io_console_mode(long raw) {
     Process *process = process_current();
     if (raw != 0 && raw != 1) return ERR_INVALID;
-    if (raw_owner != 0 && raw_owner != process->pid) return ERR_BUSY;
     const int input = fd_value(process, 0);
-    if (raw && input != CONSOLE_IN) return ERR_INVALID;
-    raw_owner = raw ? process->pid : 0;
+    long *owner;
+    if (input == CONSOLE_IN) owner = &raw_owner_uart;
+    else if (input == IO_GUI_CONSOLE_IN) owner = &raw_owner_gui;
+    else return raw ? ERR_INVALID : 0;
+    if (*owner != 0 && *owner != process->pid) return ERR_BUSY;
+    *owner = raw ? process->pid : 0;
     return 0;
+}
+
+long io_console_route_pid(void) {
+    Process *process = process_current();
+    return fd_value(process, 0) == IO_GUI_CONSOLE_IN &&
+        fd_value(process, 1) == IO_GUI_CONSOLE_OUT ? process->pid : 0;
 }
 
 static long pipe_read(Process *process, OpenFile *ofd, uintptr_t buffer, size_t length) {
@@ -252,20 +272,24 @@ long io_read(long fd, uintptr_t buffer, size_t length) {
     Process *process = process_current();
     const int value = fd_value(process, fd);
     OpenFile *ofd = get_ofd(value);
-    if (value == -99 || (value == CONSOLE_OUT || value == CONSOLE_ERR) || (ofd && !ofd->readable) ||
+    if (value == -99 || value == CONSOLE_OUT || value == CONSOLE_ERR ||
+        value == IO_GUI_CONSOLE_OUT || value == IO_GUI_CONSOLE_ERR || (ofd && !ofd->readable) ||
         length > LONG_MAX) return ERR_BAD_FD;
     if (!user_writable(process->page_table, buffer, length)) return ERR_ADDRESS;
     if (length == 0) return 0;
-    if (value == CONSOLE_IN) {
-        if (raw_owner != 0) {
-            if (raw_owner != process->pid) return ERR_BUSY;
+    if (value == CONSOLE_IN || value == IO_GUI_CONSOLE_IN) {
+        const long owner = value == IO_GUI_CONSOLE_IN ? raw_owner_gui : raw_owner_uart;
+        if (owner != 0) {
+            if (owner != process->pid) return ERR_BUSY;
             if (length > 128) return ERR_INVALID;
             process->io_fd = (int)fd;
-            return process_block_io(IO_CONSOLE_RAW, (int)fd, buffer, length);
+            return process_block_io(value == IO_GUI_CONSOLE_IN ? IO_GUI_CONSOLE_RAW : IO_CONSOLE_RAW,
+                                    (int)fd, buffer, length);
         }
         if (length < 2 || length > 128) return ERR_INVALID;
         process->io_fd = (int)fd;
-        return process_block_io(IO_CONSOLE_READ, (int)fd, buffer, length);
+        return process_block_io(value == IO_GUI_CONSOLE_IN ? IO_GUI_CONSOLE_READ : IO_CONSOLE_READ,
+                                (int)fd, buffer, length);
     }
     if (ofd && ofd->type == OFD_PIPE_READ) {
         const long result = pipe_read(process, ofd, buffer, length);
@@ -289,10 +313,19 @@ long io_write(long fd, uintptr_t buffer, size_t length) {
     Process *process = process_current();
     const int value = fd_value(process, fd);
     OpenFile *ofd = get_ofd(value);
-    if (value == -99 || value == CONSOLE_IN || (ofd && !ofd->writable) || length > LONG_MAX) return ERR_BAD_FD;
+    if (value == -99 || value == CONSOLE_IN || value == IO_GUI_CONSOLE_IN ||
+        (ofd && !ofd->writable) || length > LONG_MAX) return ERR_BAD_FD;
     if (!user_readable(process->page_table, buffer, length)) return ERR_ADDRESS;
     if (length == 0) return 0;
-    if (value == CONSOLE_OUT || value == CONSOLE_ERR) {
+    if (value == CONSOLE_OUT || value == CONSOLE_ERR ||
+        value == IO_GUI_CONSOLE_OUT || value == IO_GUI_CONSOLE_ERR) {
+        unsigned char staging[256];
+        if (value == IO_GUI_CONSOLE_OUT || value == IO_GUI_CONSOLE_ERR) {
+            if (length > sizeof(staging)) length = sizeof(staging);
+            const int error = user_copy_from(process->page_table, staging, buffer, length);
+            if (error < 0) return error;
+            return desktop_terminal_write(staging, length);
+        }
         unsigned char byte;
         for (size_t i = 0; i < length; ++i) {
             const int error = user_read_byte(process->page_table, buffer + i, &byte);
@@ -324,41 +357,55 @@ long io_write(long fd, uintptr_t buffer, size_t length) {
     return ERR_INVALID;
 }
 
-static long console_read_line(Process *process) {
+static int console_input_byte(int graphical) {
+    return graphical ? desktop_terminal_read_byte() : console_getc();
+}
+
+static void console_echo(int graphical, unsigned char byte) {
+    if (graphical) desktop_terminal_echo_byte(byte);
+    else console_putc((char)byte);
+}
+
+static long console_read_line(Process *process, int graphical) {
+    int *skip_lf = graphical ? &skip_lf_gui : &skip_lf_uart;
     int character;
-    while ((character = console_getc()) >= 0) {
-        if (character == '\n' && skip_lf) { skip_lf = 0; continue; }
+    while ((character = console_input_byte(graphical)) >= 0) {
+        if (character == '\n' && *skip_lf) { *skip_lf = 0; continue; }
         if (character == 4) {
-            skip_lf = 0;
+            *skip_lf = 0;
             return process->io_overflow ? ERR_INVALID : (long)process->io_count;
         }
-        skip_lf = character == '\r';
+        *skip_lf = character == '\r';
         if (character == '\r' || character == '\n') {
-            console_putc('\n');
+            console_echo(graphical, '\n');
             if (process->io_overflow) return ERR_INVALID;
             const int error = user_write_byte(process->page_table, process->io_buffer + process->io_count, '\n');
             if (error < 0) return error;
             return (long)++process->io_count;
         }
         if (character == 8 || character == 127) {
-            if (process->io_count > 0) { --process->io_count; console_puts("\b \b"); }
+            if (process->io_count > 0) {
+                --process->io_count;
+                console_echo(graphical, '\b'); console_echo(graphical, ' '); console_echo(graphical, '\b');
+            }
         } else if (character == '\t' || (character >= 32 && character <= 126)) {
             if (process->io_count < process->io_length - 1 && !process->io_overflow) {
                 const int error = user_write_byte(process->page_table, process->io_buffer + process->io_count,
                                                   (unsigned char)character);
                 if (error < 0) return error;
-                ++process->io_count; console_putc((char)character);
+                ++process->io_count; console_echo(graphical, (unsigned char)character);
             } else process->io_overflow = 1;
         }
     }
     return IO_PENDING;
 }
 
-static long console_read_raw(Process *process) {
+static long console_read_raw(Process *process, int graphical) {
+    int *skip_lf = graphical ? &skip_lf_gui : &skip_lf_uart;
     int character;
-    while ((character = console_getc()) >= 0) {
-        if (character == '\n' && skip_lf) { skip_lf = 0; continue; }
-        skip_lf = 0;
+    while ((character = console_input_byte(graphical)) >= 0) {
+        if (character == '\n' && *skip_lf) { *skip_lf = 0; continue; }
+        *skip_lf = 0;
         const int error = user_write_byte(process->page_table, process->io_buffer, (unsigned char)character);
         return error < 0 ? error : 1;
     }
@@ -375,10 +422,23 @@ void io_poll(void) {
             const int value = fd_value(process, process->io_fd);
             OpenFile *ofd = get_ofd(value);
             long result = IO_PENDING;
-            if ((process->io_operation == IO_CONSOLE_READ || process->io_operation == IO_CONSOLE_RAW) &&
-                (value != CONSOLE_IN || (raw_owner != 0 && raw_owner != process->pid))) result = ERR_BUSY;
-            else if (process->io_operation == IO_CONSOLE_READ) result = console_read_line(process);
-            else if (process->io_operation == IO_CONSOLE_RAW) result = console_read_raw(process);
+            const int graphical = value == IO_GUI_CONSOLE_IN;
+            const int console_reading = process->io_operation == IO_CONSOLE_READ ||
+                process->io_operation == IO_CONSOLE_RAW || process->io_operation == IO_GUI_CONSOLE_READ ||
+                process->io_operation == IO_GUI_CONSOLE_RAW;
+            const long raw_owner = graphical ? raw_owner_gui : raw_owner_uart;
+            if (console_reading && (value != CONSOLE_IN && value != IO_GUI_CONSOLE_IN)) result = ERR_BUSY;
+            else if (console_reading && raw_owner != 0 && raw_owner != process->pid) result = ERR_BUSY;
+            else if (process->io_operation == IO_CONSOLE_READ && graphical) result = ERR_BUSY;
+            else if (process->io_operation == IO_GUI_CONSOLE_READ && !graphical) result = ERR_BUSY;
+            else if (process->io_operation == IO_CONSOLE_RAW && graphical) result = ERR_BUSY;
+            else if (process->io_operation == IO_GUI_CONSOLE_RAW && !graphical) result = ERR_BUSY;
+            else if ((process->io_operation == IO_CONSOLE_RAW || process->io_operation == IO_GUI_CONSOLE_RAW) &&
+                     raw_owner != process->pid) result = ERR_BUSY;
+            else if (process->io_operation == IO_CONSOLE_READ || process->io_operation == IO_GUI_CONSOLE_READ)
+                result = console_read_line(process, graphical);
+            else if (process->io_operation == IO_CONSOLE_RAW || process->io_operation == IO_GUI_CONSOLE_RAW)
+                result = console_read_raw(process, graphical);
             else if (process->io_operation == IO_PIPE_READ && ofd && ofd->type == OFD_PIPE_READ)
                 result = pipe_read(process, ofd, process->io_buffer, process->io_length);
             else if (process->io_operation == IO_PIPE_WRITE && ofd && ofd->type == OFD_PIPE_WRITE)
@@ -393,7 +453,8 @@ int io_console_waiting(void) {
     for (int i = 0; i < PROCESS_LIMIT; ++i) {
         const Process *process = process_slot(i);
         if (process->state == PROCESS_WAITING &&
-            (process->io_operation == IO_CONSOLE_READ || process->io_operation == IO_CONSOLE_RAW)) return 1;
+            (process->io_operation == IO_CONSOLE_READ || process->io_operation == IO_CONSOLE_RAW ||
+             process->io_operation == IO_GUI_CONSOLE_READ || process->io_operation == IO_GUI_CONSOLE_RAW)) return 1;
     }
     return 0;
 }

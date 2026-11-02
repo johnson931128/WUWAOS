@@ -12,7 +12,8 @@ typedef enum {
 } ProcessState;
 
 typedef enum { WAIT_NONE, WAIT_CHANNEL, WAIT_CHILD, WAIT_IO, WAIT_TIMER, WAIT_SYNC } WaitReason;
-typedef enum { IO_NONE, IO_CONSOLE_READ, IO_CONSOLE_RAW, IO_PIPE_READ, IO_PIPE_WRITE } IoOperation;
+typedef enum { IO_NONE, IO_CONSOLE_READ, IO_CONSOLE_RAW, IO_PIPE_READ, IO_PIPE_WRITE,
+               IO_GUI_CONSOLE_READ, IO_GUI_CONSOLE_RAW } IoOperation;
 
 #define PROCESS_FD_LIMIT 8
 
@@ -49,15 +50,18 @@ typedef struct ProcessControlBlock {
     size_t io_count;
     int io_overflow;
     long io_result;
+    int gui_terminal_leader;
 } Process;
 
 Process *process_current(void);
+Process *process_current_or_null(void);
 Process *process_slot(int slot);
 void process_init(void);
 _Noreturn void process_start(void);
 TrapFrame *process_resume(void);
 long process_chdir(const char *path);
 long process_spawn(long program);
+long process_start_gui_terminal(void);
 long process_fork(void);
 long process_exec(long program, const char *argument);
 long process_exec_path(const char *path);

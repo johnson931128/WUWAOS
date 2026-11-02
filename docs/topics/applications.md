@@ -6,7 +6,7 @@
 
 ## Shell 如何執行命令
 
-`user/shell.c` 讀入最多 126 個字元，切成最多 4 個 token（以空白分隔的單位），再比對命令。解析為 O(L)，L 是輸入長度；目前沒有引號、腳本與一般背景工作控制。
+管理命令 fallback 由 `user/shell.c` 讀入最多 126 個字元，切成最多 4 個 token（以空白分隔的單位）再比對命令。通用 `echo`／`cat`／`ls`／`pwd` pipeline 由 `user/shell_exec.c` 另行解析，最多 3 個 stage、每 stage 8 個參數，支援引號與檔案重導向。整行解析為 O(L)，L 是輸入長度；目前沒有腳本與一般背景工作控制。
 
 在提示字元輸入 `help`，每行會列出一個命令及其參數，右側對齊用途說明；行程、檔案與記憶體操作用空白行分隔。`<path>` 可是相對或絕對路徑，`<page>` 從 0 起算。格式與驗收見 [Spec 14](../SPEC-14-shell-help.md)。
 
@@ -20,7 +20,7 @@
 | fan 路徑 | fork → exec fan 並傳入路徑 → 父 shell 等待 |
 | vmstat／mem | 查詢與操作使用者記憶體 |
 
-命令和 syscall 沒有一對一關係。以 fan 為例，一次編輯操作可能多次讀取按鍵、輸出控制碼，最後才寫入檔案。
+命令和 syscall 沒有一對一關係。以 fan 為例，一次編輯操作可能多次讀取按鍵、輸出控制碼，最後才寫入檔案。圖形桌面 Terminal 也啟動同一份 shell image，只是將 FD 0/1/2 綁到 GUI TTY；fan 與 workstate 不必改成圖形程式，就能在該視窗以 raw byte 模式運作。
 
 ## 命令是如何被「吃進去」的？
 
@@ -28,7 +28,7 @@
 
 ```mermaid
 flowchart TD
-  A[鍵盤輸入 cat note.txt 後按 Enter] --> B[QEMU UART 序列埠收到字元]
+  A[鍵盤輸入 cat note.txt 後按 Enter] --> B[QEMU UART 或 GUI TTY 收到字元]
   B --> C[核心 I/O 收集一行並交給 shell 的 read]
   C --> D[shell tokenize 切出 cat 與 note.txt]
   D --> E[command 依名稱和參數數量選擇 cat]
@@ -39,7 +39,7 @@ flowchart TD
   I --> J[讀取內容回傳 shell，經 write 輸出]
 ```
 
-1. UART（序列埠）接收終端字元；核心 I/O 完成一行後，shell 的 `read` 拿到文字。
+1. UART（序列埠）或 GUI TTY 接收終端字元；核心 I/O 完成一行後，shell 的 `read` 拿到文字。
 2. shell 先由 `shell_exec.c` 解析可串接命令、引用文字、管線與檔案重導向；其他管理命令再由 `tokenize`／`command` 分派。這些都是 WUWAOS 使用者程式，不代表每個命令都是 syscall。
 3. `cat` 使用通用 open/read/write 描述號介面。API 將 syscall 編號放入 `a7`（系統呼叫編號暫存器），參數放入 `a0` 等暫存器，執行 `ecall`（進入核心的指令）。
 4. 硬體依 `stvec`（監督模式例外入口位址暫存器）轉到例外入口；核心保存行程狀態後，`syscall_dispatch`（系統呼叫分派器）依編號選擇檔案讀取。核心使用該行程 PCB 的 CWD（目前工作目錄），將 `note.txt` 視為 `/home/user/note.txt`，再逐層查找 WUFS。
@@ -95,7 +95,7 @@ flowchart LR
 
 ## 一個終端上的全螢幕介面
 
-Shell、fan 與 workstate 的互動畫面經 UART 輸出 ANSI 游標定位、清行與色彩控制碼，需至少 80×24 終端。這些是 TUI（文字使用者介面）；QEMU 另有可選的核心圖形桌面，仍未提供圖形視窗系統或圖形 shell。參考[開機流程中的 VirtIO 桌面](./boot.md#virtio-圖形桌面)與 [Spec 28](../SPEC-28-native-desktop.md)。
+Shell、fan 與 workstate 的互動畫面經 UART 或 GUI TTY 輸出 ANSI 游標定位、清行與色彩控制碼。GUI 終端是至少 80×24 的 kernel-rendered cell surface；不等於 POSIX PTY 或完整視窗系統。參考[開機流程中的桌面 Terminal](./boot.md#桌面-terminal-與-gui-shell)、[Spec 28](../SPEC-28-native-desktop.md) 與 [Spec 30](../SPEC-30-graphical-terminal.md)。
 
 編輯器持有 raw console，shell 等待子行程，不會同時讀走你的按鍵；背景行程輸出仍可能干擾畫面，尚無完整前景工作隔離。
 

@@ -18,9 +18,9 @@ WUWAOS is a small operating system written in **C and RISC-V assembly** that boo
 | Synchronization and IPC | Custom mutexes and semaphores, sleep/wakeup, per-process file descriptors, and multi-stage pipes |
 | Virtual memory | Sv39 three-level page tables, demand paging, FIFO page replacement, and swap |
 | File system | VirtIO block device and the custom WUFS file system, with persistent files, shared open-file offsets, and shell redirection |
-| User interface | UART shell, `fan` text editor and `workstate` monitor; optional 1280×720 kernel-rendered desktop with a movable pointer on VirtIO GPU/tablet |
+| User interface | UART shell, `fan` text editor and `workstate` monitor; optional VirtIO GPU/tablet desktop with a fixed Terminal window and keyboard-operated shell |
 
-WUWAOS focuses on fundamental operating system mechanisms and is not Linux-compatible. QEMU currently loads the kernel using `-kernel`. A restricted static RV64 ELF loader can run compatible WUWAOS programs from WUFS; general ELF/Linux compatibility, command-line arguments for external ELF programs, compiling C inside WUWAOS, networking, a graphical shell, and window management are not supported. The optional graphical mode draws a static desktop in the kernel; the existing shell continues over UART. See the [documentation](https://johnson931128.github.io/WUWAOS/) and [Spec 21](docs/SPEC-21-native-compilation.md) for limitations and future plans.
+WUWAOS focuses on fundamental operating system mechanisms and is not Linux-compatible. QEMU currently loads the kernel using `-kernel`. A restricted static RV64 ELF loader can run compatible WUWAOS programs from WUFS; general ELF/Linux compatibility, command-line arguments for external ELF programs, compiling C inside WUWAOS, networking, general window management, and a file manager are not supported. The graphical desktop provides one fixed-size Terminal window connected to the existing shell; `make run` remains the UART workflow. See the [documentation](https://johnson931128.github.io/WUWAOS/) and [Spec 21](docs/SPEC-21-native-compilation.md) for limitations and future plans.
 
 ## Demo Video
 
@@ -38,9 +38,11 @@ The video follows a live QEMU session through the shell, processes, synchronizat
 
 ## Graphical Desktop
 
-When QEMU has a VirtIO GPU and tablet, WUWAOS draws a 1280×720 pale-blue background, a centered `WUWAOS` wordmark, and a movable white pointer with a dark outline. This is a small kernel-rendered desktop surface; it does not include a graphical shell, desktop server, windows, keyboard UI, or file manager.
+When QEMU has a VirtIO GPU, tablet, and keyboard, WUWAOS draws a 1280×720 desktop with a Terminal icon. Click the icon to open a fixed-size window connected to the existing WUWAOS shell. The guest kernel handles keyboard input, line editing, ANSI screen updates, and window rendering; closing the window hides the session, while `exit` ends the shell. The original UART shell remains available in `make run`.
 
-![WUWAOS native QEMU desktop with its guest-rendered pointer](docs/images/wuwaos-desktop.png)
+![WUWAOS guest-rendered desktop Terminal showing shell commands](docs/images/wuwaos-terminal.png)
+
+The Terminal accepts US keyboard input including Shift, Enter, Backspace, Tab, Ctrl+D, and arrow keys. It supports a fixed 100×30 character area and a subset of ANSI cursor, erase, color, alternate-screen, and visibility controls. It is a small kernel TTY, not a POSIX PTY. It has no resize, drag, clipboard, job control, or Ctrl+C support. [Graphical Terminal design and QEMU evidence](docs/SPEC-30-graphical-terminal.md) · [workstate screenshot](docs/images/wuwaos-terminal-workstate.png).
 
 On Windows with WSL1, start the desktop and its native viewer with one PowerShell command. The launcher builds the OS, runs QEMU in the background, and closes that QEMU session when the viewer closes:
 

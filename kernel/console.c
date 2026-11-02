@@ -1,10 +1,21 @@
 #include "console.h"
+#include "desktop.h"
+#include "process.h"
 
 #define UART_BASE 0x10000000UL
 #define UART_LINE_STATUS 5
 #define UART_TRANSMIT_READY (1U << 5)
 
+static long route_pid;
+
+void console_set_route_pid(long pid) { route_pid = pid; }
+
 void console_putc(char character) {
+    Process *process = process_current_or_null();
+    if (route_pid != 0 && process && process->pid == route_pid) {
+        desktop_terminal_echo_byte((unsigned char)character);
+        return;
+    }
     volatile unsigned char *uart = (volatile unsigned char *)UART_BASE;
     if (character == '\n') {
         console_putc('\r');

@@ -1,6 +1,6 @@
 # 08 · 輸入輸出與 Pipe
 
-檔案系統處理名稱、目錄和資料放置；I/O system（輸入輸出系統）處理如何跟裝置交換資料。WUWAOS 先提供 UART 終端、行程間管道與 VirtIO 區塊磁碟這幾條路徑。
+檔案系統處理名稱、目錄和資料放置；I/O system（輸入輸出系統）處理如何跟裝置交換資料。WUWAOS 提供 UART 終端、可選 GUI TTY、行程間管道與 VirtIO 區塊磁碟這幾條路徑。
 
 ## UART 終端
 
@@ -11,6 +11,12 @@
 canonical line input 接受 Ctrl+D（ASCII EOT）作為 EOF：空行時 read 回 0；已有字元時先回傳目前字元，不附加換行，下次 read 再按 Ctrl+D 才回 EOF。這讓 `cat` 可由終端輸入文字並以 Ctrl+D 結束；raw mode 將 Ctrl+D 當一般輸入 byte。
 
 raw console 同時只能有一個持有者；行程退出、被終止或成功 exec 時釋放。它是自訂介面，不是完整 POSIX termios。
+
+## 圖形桌面 Terminal
+
+有 VirtIO GPU、tablet 與 keyboard 時，kernel 桌面提供一個固定大小 Terminal 視窗。圖示開啟後建立另一個 shell process，其 FD 0/1/2 綁獨立 GUI console endpoint；UART shell 仍保留。GUI canonical line、raw byte 與 UART 各有自己的輸入佇列、CR/LF 狀態及 raw owner，避免 `fan` 或 `workstate` 讀取 GUI 按鍵時搶走 UART 輸入。Shell `ps`、`pcb`、`vmstat` 的核心列印只在對應 syscall 執行期間暫時路由至 GUI；開機與裝置診斷仍寫 UART。
+
+這是本專案自訂的單一 TTY，不是 PTY master/slave ABI。圖示關閉只隱藏並保留 shell；`exit` 或空行 Ctrl+D 結束 shell。設計與 QEMU 驗收見 [Spec 30](../SPEC-30-graphical-terminal.md)。
 
 ## 等待時資料放在哪裡
 

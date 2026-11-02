@@ -11,7 +11,7 @@ WUWAOS 是以 C 與 RISC-V 組合語言撰寫、真正運行於 QEMU 虛擬電�
 | 想理解什麼 | 從這裡開始 |
 | --- | --- |
 | entry.S 怎麼進入 C，最後顯示提示字元？ | [開機流程](./topics/boot.md) |
-| QEMU 如何進入圖形桌面並移動游標？ | [開機流程](./topics/boot.md#virtio-圖形桌面) |
+| 桌面圖示如何開啟 GUI shell？ | [開機流程](./topics/boot.md#桌面-terminal-與-gui-shell) |
 | 使用者程式怎麼請核心幫忙？ | [例外與系統呼叫](./topics/traps.md) |
 | 行程如何建立、排程、結束與回收？ | [行程管理](./topics/processes.md) → [計時器與 RR 排程](./topics/scheduling.md) |
 | CPU 如何找到資料，缺頁時發生什麼？ | [Sv39](./topics/memory.md) → [按需分頁與交換](./topics/paging.md) |
@@ -32,10 +32,10 @@ WUWAOS 是以 C 與 RISC-V 組合語言撰寫、真正運行於 QEMU 虛擬電�
 | 記憶體 | Sv39 三級頁表、4 KiB 頁、按需分頁、FIFO 置換、獨立 Swap |
 | 磁碟 | VirtIO 區塊 I/O、自訂 WUFS、重新啟動後保留檔案 |
 | 操作 | Shell FD/OFD、三階段管道、檔案重導向、fan 全螢幕文字編輯器 |
-| 圖形輸出 | 可選 VirtIO GPU/tablet；1280×720 kernel wallpaper 與游標，Shell 仍走 UART |
+| 圖形輸出 | 可選 VirtIO GPU/tablet/keyboard；1280×720 桌面含固定 Terminal 視窗與獨立 GUI shell TTY |
 | 監測 | workstate 全螢幕；每秒更新行程、CPU 派發時間、RSS／Swap 與整體 RAM |
 
-這是現有功能的實作紀錄，不是承諾與 Linux 相容。支援受限靜態 RV64 ELF 從 WUFS 載入；尚無通用 ELF／Linux 相容、網路、圖形 shell、視窗管理或檔案管理器。圖形模式目前只由核心繪製靜態桌面及滑鼠游標；詳見 [Spec 28](./SPEC-28-native-desktop.md)。
+這是現有功能的實作紀錄，不是承諾與 Linux 相容。支援受限靜態 RV64 ELF 從 WUFS 載入；尚無通用 ELF／Linux 相容、網路、一般視窗管理或檔案管理器。圖形模式提供一個固定大小的 Terminal 視窗，透過獨立 GUI TTY 接到既有 shell；UART shell 保留於 `make run`。Terminal 的能力與限制見 [Spec 30](./SPEC-30-graphical-terminal.md)，桌面與游標見 [Spec 28](./SPEC-28-native-desktop.md)。
 
 ## 這份文件如何組織
 

@@ -9,11 +9,11 @@
 QEMU → OpenSBI（機器模式韌體）
   → kernel/entry.S：準備監督模式核心的執行環境
   → kernel/main.c：安裝例外入口、UART 開機字樣、FDT 探測、核心映射、PID 1
-  → 有 GPU/tablet：建立 1280×720 framebuffer、繪製 desktop、排程器輪詢絕對座標游標
+  → 有 GPU/tablet/keyboard：建立 framebuffer、繪製桌面 Terminal 圖示、排程器輪詢輸入事件
   → process_start → swtch → scheduler_loop → swtch → first_run → user_enter → sret
   → user/entry.S → user_main(0) → shell_main
       → 顯示 wuwaos>，以 read 等待輸入
-      → kernel/io.c 輪詢 UART，完成一行並喚醒 shell
+      → kernel/io.c 輪詢 UART 或獨立 GUI TTY，完成一行並喚醒 shell
       → user/shell.c 解析指令
       → user/api.c 的 ecall → kernel/trap.S → trap.c → syscall.c
           ├─ process.c → scheduler.c：PCB 狀態／生命週期 → FIFO 就緒佇列
@@ -33,7 +33,7 @@ CPU 執行記憶體中的機器碼，不知道來源檔名。OpenSBI 負責早�
 | kernel/entry.S | 核心初始入口、stack（堆疊）、BSS（零初始化資料） |
 | kernel/main.c | 串接核心初始化與第一個行程 |
 | kernel/splash.c / splash.h | WUWAOS 文字圖案、中央向兩側展開、開機短暫延遲 |
-| kernel/console.c / console.h | UART（序列埠）輪詢、字元／數字輸出、非阻塞字元輸入、核心等待 |
+| kernel/console.c / console.h | UART（序列埠）輪詢、字元／數字輸出、核心診斷與非阻塞輸入 |
 | kernel/trap.S | 切換堆疊、保存／還原暫存器、返回使用者模式 |
 | kernel/trap.c / trap.h | 共同例外入口設定、TrapFrame（保存狀態結構）、原因分派 |
 | kernel/context.h | KernelContext：112-byte RV64 核心上下文與 C／組合語言配置契約 |
@@ -51,16 +51,17 @@ CPU 執行記憶體中的機器碼，不知道來源檔名。OpenSBI 負責早�
 | kernel/sync.c / sync.h、include/sync_ops.h | 自製 mutex／semaphore、等待佇列與行程離開清理；詳見 Spec 22 |
 | kernel/elf.c / elf.h | 驗證並載入受限 RV64 ELF 段，準備私有 VM；見 Spec 26 |
 | user/sync_demo.c / sync_demo.h | shell 的同步示範：父子行程、等待狀態與資源回收 |
-| kernel/io.c / io.h | 行輸入／raw console、FD/OFD、WUFS file descriptor、pipe ring 與 pending I/O |
+| kernel/io.c / io.h | UART/GUI canonical 與 raw console、FD/OFD、WUFS file descriptor、pipe ring 與 pending I/O |
 | kernel/block.c / block.h | FDT 裝置探索、VirtIO-MMIO 區塊讀寫佇列 |
 | kernel/gpu.c / gpu.h | FDT VirtIO GPU 探測、modern control queue、2D 資源／framebuffer／scanout／dirty rectangle 傳輸 |
-| kernel/input.c / input.h | FDT VirtIO tablet 探測、絕對軸設定查詢、event queue 與 SYN_REPORT 座標縮放 |
-| kernel/desktop.c / desktop.h | 淡藍桌布、WUWAOS 5×7 字形放大、白黑箭頭、背景復原與游標 dirty rectangle |
+| kernel/input.c / input.h | 依 FDT 探測 VirtIO tablet/keyboard、event queue、SYN_REPORT pointer 與按鍵事件 |
+| kernel/desktop.c / desktop.h | 桌布、Terminal 圖示與視窗、8×16 字型、ANSI VT cell buffer、游標與 dirty rendering |
+| kernel/font8x8_basic.h | ASCII 0x20–0x7e 的 8×8 bitmap 字型資料 |
 | kernel/fs.c / fs.h | WUFS 區塊配置、inode、目錄與路徑操作 |
 | kernel/memory.c | freestanding（無標準執行環境）建置所需的 byte-wise memset／memcpy |
 | kernel/page.c / page.h | 4 KiB 實體頁面空閒串列、配置／回收、配置 bitmap 與頁數查詢 |
 | kernel/swap.c / swap.h | 獨立交換區標頭、slot bitmap、4 KiB 換入／換出讀寫 |
-| kernel/syscall.c / syscall.h | 自訂 syscall ABI 分派；新增 open／close／dup／dup2／pipe／console 查詢 |
+| kernel/syscall.c / syscall.h | 自訂 syscall ABI 分派；console 查詢 syscall 的輸出暫時路由到目前 shell TTY |
 | kernel/user_image.S | 把 user.bin、app.bin、fan.bin 與 workstate.bin 四份獨立映像嵌入核心唯讀資料 |
 | kernel/linker.ld | 核心入口、記憶體區段與權限邊界 |
 | include/syscall_numbers.h | 共用系統呼叫編號、內建程式角色、錯誤碼 |
@@ -98,7 +99,7 @@ la 是載入位址的偽指令；__ 開頭符號由 linker（連結器）決定�
 
 ## 4. main.c 與 console.c
 
-kernel_main 先 trap_init、boot_splash、輸出啟動文字與 block_init_from_fdt；再從 FDT 探測 GPU/tablet，將找到的 VirtIO MMIO 頁登記給 vm_init。之後掛載檔案系統、初始化 GPU 及桌面、啟用 tablet queue、timer_init、process_init、process_start。沒有圖形裝置時，桌面初始化略過，原本的 UART shell 流程不變。timer_init 查詢 OpenSBI TIME、清除舊事件並開啟 STIE；首次派發設定 50 ms deadline，sret 返回使用者模式後允許搶占。
+kernel_main 先 trap_init、boot_splash、輸出啟動文字與 block_init_from_fdt；再從 FDT 探測 GPU、tablet 與 keyboard，將找到的 VirtIO MMIO 頁登記給 vm_init。GPU 初始化後啟用 input queue，再畫桌面圖示，避免 keyboard 尚未 ready 時漏掉 Terminal icon。沒有三種圖形／輸入裝置時，原本的 UART shell 流程不變。timer_init 查詢 OpenSBI TIME、清除舊事件並開啟 STIE；首次派發設定 50 ms deadline，sret 返回使用者模式後允許搶占。
 UART 位址固定 0x10000000，LSR（線路狀態暫存器）offset 5：bit 5 可寫入字元，bit 0 有收到的字元。
 
 - console_putc 輪詢可寫狀態，再寫 offset 0；換行前補 CR（回車）。
@@ -126,7 +127,9 @@ GPU 以 B8G8R8X8_UNORM 建立 1280×720 2D resource。`page_alloc_contiguous` �
 
 `desktop.c` 清成 RGB #B8DCF5，再以 5×7 位元字形放大畫出置中白色 `WUWAOS`。16×16 游標移動時，先從備份陣列還原舊矩形，再保存新位置底下的像素、繪製黑色外框和白色填色，最後只呈現兩個位置聯集的矩形；此處理會保留被游標遮住的字樣像素。絕對 X/Y 由 tablet config 查詢 min/max，縮放到 0…1279／0…719，並夾到游標可見範圍。
 
-`input_poll` 消化 VirtIO input event queue，累積 ABS_X／ABS_Y，到 SYN_REPORT 才交出一個完整座標組；回收的 event descriptor 重新放回 available ring。`process_resume` 和 `scheduler_loop` 在 UART `io_poll` 後呼叫 `desktop_poll`，因此使用者行程繼續由原有 RR scheduler 執行。這個階段是 kernel framebuffer renderer，沒有圖形 user process、window manager、terminal window、keyboard GUI 或檔案管理器；詳見 [Spec 28](./SPEC-28-native-desktop.md)。
+`input_poll` 消化 tablet/keyboard event queue，累積 ABS_X／ABS_Y，到 SYN_REPORT 才交出完整 pointer 座標；keyboard 按鍵事件進入同一個 kernel event queue。`desktop_poll` 對桌面圖示、關閉按鈕與 Terminal window 做 hit-test；Terminal 透過 `process_start_gui_terminal` 建立父 PID 為 0 的 shell，將 FD 0/1/2 綁到獨立 GUI TTY endpoint。窗口關閉只隱藏畫面；shell `exit` 後沿用 parent=0 Zombie reaper 路徑回收，下一次點擊再建立 shell。
+
+GUI canonical input 在 Enter 時提交一行，Backspace 編輯目前行，空行 Ctrl-D 產生 EOF；`fan`、`workstate` 使用 raw byte 輸入。GUI 與 UART 各自有輸入 queue、raw owner 與 CR/LF 狀態。shell fd 1/2 直接寫 GUI TTY；`ps`、`pcb`、`vmstat` 這些核心內建查詢只在 syscall 執行其列印函式期間暫時路由到該 shell TTY，boot/driver/scheduler diagnostics 與一般核心 console 輸出仍走 UART。終端支援 ASCII、基本 SGR 與反白、CSI 游標移動/清除、alternate screen 與游標顯示狀態；它不是 POSIX PTY，沒有 resize、drag、clipboard、job control 或 Ctrl+C。詳細邊界及 QEMU 操作證據見 [Spec 30](./SPEC-30-graphical-terminal.md)。
 
 ## 5. trap.S / trap.c / trap.h：硬體事件到 C
 

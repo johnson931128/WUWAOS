@@ -34,7 +34,6 @@ static int copy_fs_path(uintptr_t root, uintptr_t address, char output[FS_PATH_M
 
 void syscall_dispatch(TrapFrame *frame) {
     const uint64_t number = frame->registers[17];
-
     long result;
     switch (number) {
     case SYS_WRITE:
@@ -69,10 +68,14 @@ void syscall_dispatch(TrapFrame *frame) {
         result = io_read((long)frame->registers[10], frame->registers[11], frame->registers[12]);
         break;
     case SYS_PS:
+        console_set_route_pid(io_console_route_pid());
         result = process_list();
+        console_set_route_pid(0);
         break;
     case SYS_PCB:
+        console_set_route_pid(io_console_route_pid());
         result = process_inspect((long)frame->registers[10]);
+        console_set_route_pid(0);
         break;
     case SYS_KILL:
         result = process_kill((long)frame->registers[10]);
@@ -135,7 +138,9 @@ void syscall_dispatch(TrapFrame *frame) {
         result = vm_sbrk(process_current()->page_table, (long)frame->registers[10]);
         break;
     case SYS_VMSTAT:
+        console_set_route_pid(io_console_route_pid());
         result = vm_control((long)frame->registers[10]);
+        console_set_route_pid(0);
         break;
     case SYS_WORKSTATE:
         result = workstate_snapshot(frame->registers[10], frame->registers[11]);

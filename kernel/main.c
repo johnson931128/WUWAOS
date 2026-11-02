@@ -21,11 +21,15 @@ void kernel_main(unsigned long hart_id, const void *fdt) {
     const int gpu_found = gpu_probe(fdt) == 0;
     if (gpu_found) vm_map_mmio(gpu_mmio_base());
     const int input_found = input_probe(fdt) == 0;
-    if (input_found) vm_map_mmio(input_mmio_base());
+    if (input_found) {
+        for (unsigned int i = 0; i < input_device_count(); ++i) {
+            if (input_mmio_base(i)) vm_map_mmio(input_mmio_base(i));
+        }
+    }
     vm_init(fdt);
     const int desktop_ready = gpu_found && gpu_init() == 0;
-    if (desktop_ready) desktop_draw();
     const int tablet_ready = input_found && input_init() == 0;
+    if (desktop_ready) desktop_draw();
     if (block_ready && fs_init() < 0) {
         console_puts("[fs] Disk present but WUFS could not be mounted\n");
     }
