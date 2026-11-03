@@ -56,7 +56,8 @@ CPU 執行記憶體中的機器碼，不知道來源檔名。OpenSBI 負責早�
 | kernel/gpu.c / gpu.h | FDT VirtIO GPU 探測、modern control queue、2D 資源／framebuffer／scanout／dirty rectangle 傳輸 |
 | kernel/input.c / input.h | 依 FDT 探測 VirtIO tablet/keyboard、event queue、SYN_REPORT pointer 與按鍵事件 |
 | kernel/desktop.c / desktop.h | 桌布、Terminal 圖示與視窗、8×16 字型、ANSI VT cell buffer、游標與 dirty rendering |
-| kernel/font8x8_basic.h | ASCII 0x20–0x7e 的 8×8 bitmap 字型資料 |
+| kernel/font_terminal.h | WUWAOS Terminal 字型：由 Cascadia Mono 衍生的 ASCII 8×16 灰階字形，每像素 4-bit 覆蓋率 |
+| tools/make_desktop_font.ps1 | 在 Windows 將官方 Cascadia Mono Regular 字型轉成內建字形資料；一般 OS 建置不必執行 |
 | kernel/fs.c / fs.h | WUFS 區塊配置、inode、目錄與路徑操作 |
 | kernel/memory.c | freestanding（無標準執行環境）建置所需的 byte-wise memset／memcpy |
 | kernel/page.c / page.h | 4 KiB 實體頁面空閒串列、配置／回收、配置 bitmap 與頁數查詢 |

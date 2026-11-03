@@ -2,7 +2,7 @@
 #include "gpu.h"
 #include "input.h"
 #include "process.h"
-#include "font8x8_basic.h"
+#include "font_terminal.h"
 #include <stdint.h>
 
 #define LOGO_SCALE 12U
@@ -22,8 +22,8 @@
 #define CURSOR_HEIGHT 16U
 #define TERMINAL_COLUMNS 100U
 #define TERMINAL_ROWS 30U
-#define CELL_WIDTH 8U
-#define CELL_HEIGHT 16U
+#define CELL_WIDTH TERMINAL_FONT_WIDTH
+#define CELL_HEIGHT TERMINAL_FONT_HEIGHT
 #define WINDOW_X ((GPU_WIDTH - (TERMINAL_COLUMNS * CELL_WIDTH + 16U)) / 2U)
 #define WINDOW_Y 88U
 #define WINDOW_WIDTH (TERMINAL_COLUMNS * CELL_WIDTH + 16U)
@@ -135,15 +135,29 @@ static void paint_wallpaper_rect(uint32_t *framebuffer, unsigned int x, unsigned
             framebuffer[(y + row) * GPU_WIDTH + x + column] = background_pixel(x + column, y + row);
 }
 
+static uint32_t blend_glyph_pixel(uint32_t foreground, uint32_t background, unsigned int coverage) {
+    uint32_t pixel = 0;
+    for (unsigned int shift = 0; shift < 24U; shift += 8U) {
+        const unsigned int fg = (foreground >> shift) & 0xffU;
+        const unsigned int bg = (background >> shift) & 0xffU;
+        pixel |= ((fg * coverage + bg * (15U - coverage) + 7U) / 15U) << shift;
+    }
+    return pixel;
+}
+
 static void draw_glyph(uint32_t *framebuffer, unsigned int x, unsigned int y, unsigned char character,
                        uint32_t foreground, uint32_t background) {
     if (character < 0x20U || character > 0x7eU) character = '?';
-    const unsigned char *rows = (const unsigned char *)font8x8_basic[character];
+    const uint8_t *glyph = terminal_font[character - 0x20U];
+    uint32_t colors[16];
+    for (unsigned int coverage = 0; coverage < 16U; ++coverage)
+        colors[coverage] = blend_glyph_pixel(foreground, background, coverage);
     for (unsigned int row = 0; row < CELL_HEIGHT; ++row) {
-        const unsigned int font_row = row / 2U;
         for (unsigned int column = 0; column < CELL_WIDTH; ++column) {
-            const int set = (rows[font_row] & (1U << column)) != 0;
-            framebuffer[(y + row) * GPU_WIDTH + x + column] = set ? foreground : background;
+            const unsigned int sample = row * CELL_WIDTH + column;
+            const unsigned int packed = glyph[sample / 2U];
+            const unsigned int coverage = (sample & 1U) ? (packed & 15U) : (packed >> 4U);
+            framebuffer[(y + row) * GPU_WIDTH + x + column] = colors[coverage];
         }
     }
 }
