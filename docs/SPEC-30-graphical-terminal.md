@@ -59,3 +59,13 @@ GUI shell fd 1/2 → kernel TTY output ring → ANSI VT parser
 - 已分別驗證 snapshot GUI 與無圖形裝置的 UART shell；未在同一個 VM 同時向 GUI raw app 與 UART shell 送輸入，因此兩端同時工作的隔離未動態驗證。
 - 不支援功能如上列範圍；未逐一動態驗證不支援/錯誤 ANSI CSI、queue 滿載、行輸入容量滿載、process table/memory 耗盡與 VirtIO 裝置故障。
 - 輸入字元限 US ASCII；沒有 composition、Unicode、剪貼簿、視窗拖曳/縮放、背景工作控制或 Ctrl+C。Terminal 標題列的 X 只隱藏視窗；使用 launcher 時關閉 VNC viewer 會停止整個 QEMU session。結束 shell 請使用 `exit` 或空行 Ctrl-D。
+
+## 移除視窗硬陰影
+
+日期：2026-11-05。狀態：原始碼已修改，編譯及 QEMU 互動驗收待記錄。
+
+原視窗繪製會先在右移 6、下移 8 像素的位置畫深色實心矩形，再繪製視窗本體，因此右側與下側看起來多出一層邊。這是 guest 的繪製邏輯，不是半透明或模糊陰影。
+
+目前原始碼已移除這個矩形，並將開窗、關窗、焦點切換、終端輸出與滑鼠重繪使用的區域統一為視窗本體寬高。驗收時需確認右／下深色邊消失，以及滑鼠跨越邊界、關閉與重新顯示視窗後沒有殘影。
+
+本節不覆寫上面的歷史 QEMU 驗收結果。既有截圖與 portable v1 ZIP 仍保留先前的視窗外觀，網站更新不代表本次核心修正已驗收或重新發布。

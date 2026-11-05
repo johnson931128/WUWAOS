@@ -210,6 +210,11 @@ def main():
         if image[:8] == MAGIC:
             fs = WufsImage(image)
         else:
+            # The launcher runs this tool before the guest kernel can inspect
+            # the disk. Apply the same preservation rule here: missing magic
+            # does not authorize overwriting data, even if sector 0 is zeroed.
+            if any(image):
+                parser.error("unknown or damaged filesystem on nonblank image; left unchanged")
             fs = WufsImage.format()
     else:
         args.image.parent.mkdir(parents=True, exist_ok=True)

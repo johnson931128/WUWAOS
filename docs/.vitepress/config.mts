@@ -49,7 +49,7 @@ export default defineConfig({
     sidebar: [
       { text: 'WUWAOS', items: [{ text: '00 · 專案總覽', link: '/' }, { text: 'Windows 免安裝環境', link: '/portable-windows' }] },
       { text: '從硬體到應用程式', items: chapters.map(([text, slug], i) => ({ text: `${String(i + 1).padStart(2, '0')} · ${text}`, link: `/topics/${slug}` })) },
-      { text: '規格與參考', items: [{ text: '原始規格與驗收紀錄', link: '/history' }, { text: '完整程式碼導覽', link: '/CODE_GUIDE' }] },
+      { text: '規格與參考', items: [{ text: '原始規格與驗收紀錄', link: '/history' }, { text: '磁碟保護與驗證', link: '/SPEC-31-filesystem-initialization-guard' }, { text: '完整程式碼導覽', link: '/CODE_GUIDE' }] },
     ],
     outline: { level: [2, 3], label: '本頁內容' },
     search: { provider: 'local', options: { locales: { root: { translations: { button: { buttonText: '搜尋文件', buttonAriaLabel: '搜尋文件' }, modal: { noResultsText: '找不到相關內容', resetButtonTitle: '清除搜尋', footer: { selectText: '選取', navigateText: '切換', closeText: '關閉' } } } } } } },

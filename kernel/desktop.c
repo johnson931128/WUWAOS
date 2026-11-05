@@ -27,8 +27,6 @@
 #define WINDOW_X ((GPU_WIDTH - (TERMINAL_COLUMNS * CELL_WIDTH + 16U)) / 2U)
 #define WINDOW_Y 88U
 #define WINDOW_WIDTH (TERMINAL_COLUMNS * CELL_WIDTH + 16U)
-#define WINDOW_DAMAGE_WIDTH (WINDOW_WIDTH + 6U)
-#define WINDOW_DAMAGE_HEIGHT (WINDOW_HEIGHT + 8U)
 #define TITLE_HEIGHT 28U
 #define WINDOW_HEIGHT (TERMINAL_ROWS * CELL_HEIGHT + 16U + TITLE_HEIGHT)
 #define BODY_X (WINDOW_X + 8U)
@@ -352,7 +350,6 @@ static void terminal_feed(unsigned char byte) {
 
 static void draw_terminal_window(uint32_t *framebuffer) {
     const unsigned int x = WINDOW_X, y = WINDOW_Y;
-    fill_rect(framebuffer, x + 6U, y + 8U, WINDOW_WIDTH, WINDOW_HEIGHT, 0x00435b70U);
     fill_rect(framebuffer, x, y, WINDOW_WIDTH, WINDOW_HEIGHT, 0x00e0e9efU);
     fill_rect(framebuffer, x + 2U, y + 2U, WINDOW_WIDTH - 4U, WINDOW_HEIGHT - 4U, 0x0014212dU);
     fill_rect(framebuffer, x + 2U, y + 2U, WINDOW_WIDTH - 4U, TITLE_HEIGHT, 0x002b4256U);
@@ -458,7 +455,7 @@ static void show_terminal(void) {
     }
     terminal_visible = 1;
     terminal_focused = 1;
-    mark_dirty(WINDOW_X, WINDOW_Y, WINDOW_DAMAGE_WIDTH, WINDOW_DAMAGE_HEIGHT);
+    mark_dirty(WINDOW_X, WINDOW_Y, WINDOW_WIDTH, WINDOW_HEIGHT);
 }
 
 static unsigned char shifted_ascii(unsigned char character) {
@@ -533,13 +530,13 @@ static void handle_message(const InputMessage *message) {
             mouse_left_down = 1;
             if (terminal_visible && hit_close(pointer_x, pointer_y)) {
                 terminal_visible = 0; terminal_focused = 0;
-                mark_dirty(WINDOW_X, WINDOW_Y, WINDOW_DAMAGE_WIDTH, WINDOW_DAMAGE_HEIGHT);
+                mark_dirty(WINDOW_X, WINDOW_Y, WINDOW_WIDTH, WINDOW_HEIGHT);
             } else if (hit_icon(pointer_x, pointer_y)) show_terminal();
             else if (hit_window(pointer_x, pointer_y)) {
-                if (!terminal_focused) mark_dirty(WINDOW_X, WINDOW_Y, WINDOW_DAMAGE_WIDTH, WINDOW_DAMAGE_HEIGHT);
+                if (!terminal_focused) mark_dirty(WINDOW_X, WINDOW_Y, WINDOW_WIDTH, WINDOW_HEIGHT);
                 terminal_focused = 1;
             } else if (terminal_visible) {
-                if (terminal_focused) mark_dirty(WINDOW_X, WINDOW_Y, WINDOW_DAMAGE_WIDTH, WINDOW_DAMAGE_HEIGHT);
+                if (terminal_focused) mark_dirty(WINDOW_X, WINDOW_Y, WINDOW_WIDTH, WINDOW_HEIGHT);
                 terminal_focused = 0;
             }
         } else mouse_left_down = 0;
@@ -557,11 +554,11 @@ void desktop_poll(void) {
     }
     if (!dirty) return;
     restore_pointer();
-    if (dirty_left < WINDOW_X + WINDOW_DAMAGE_WIDTH && dirty_right > WINDOW_X &&
-        dirty_top < WINDOW_Y + WINDOW_DAMAGE_HEIGHT && dirty_bottom > WINDOW_Y) {
-        paint_wallpaper_rect(gpu_framebuffer(), WINDOW_X, WINDOW_Y, WINDOW_DAMAGE_WIDTH, WINDOW_DAMAGE_HEIGHT);
+    if (dirty_left < WINDOW_X + WINDOW_WIDTH && dirty_right > WINDOW_X &&
+        dirty_top < WINDOW_Y + WINDOW_HEIGHT && dirty_bottom > WINDOW_Y) {
+        paint_wallpaper_rect(gpu_framebuffer(), WINDOW_X, WINDOW_Y, WINDOW_WIDTH, WINDOW_HEIGHT);
         if (terminal_visible) draw_terminal_window(gpu_framebuffer());
-        mark_dirty(WINDOW_X, WINDOW_Y, WINDOW_DAMAGE_WIDTH, WINDOW_DAMAGE_HEIGHT);
+        mark_dirty(WINDOW_X, WINDOW_Y, WINDOW_WIDTH, WINDOW_HEIGHT);
     }
     cursor_x = pointer_x; cursor_y = pointer_y;
     if (cursor_visible) {
@@ -584,7 +581,7 @@ int desktop_terminal_read_byte(void) {
 
 static void drain_output(void) {
     while (output_read != output_write) terminal_feed(output_bytes[output_read++ % OUTPUT_CAPACITY]);
-    if (terminal_visible) mark_dirty(WINDOW_X, WINDOW_Y, WINDOW_DAMAGE_WIDTH, WINDOW_DAMAGE_HEIGHT);
+    if (terminal_visible) mark_dirty(WINDOW_X, WINDOW_Y, WINDOW_WIDTH, WINDOW_HEIGHT);
 }
 
 long desktop_terminal_write(const unsigned char *bytes, size_t length) {
@@ -598,4 +595,4 @@ long desktop_terminal_write(const unsigned char *bytes, size_t length) {
     return (long)copied;
 }
 
-void desktop_terminal_echo_byte(unsigned char byte) { terminal_feed(byte); if (terminal_visible) mark_dirty(WINDOW_X, WINDOW_Y, WINDOW_DAMAGE_WIDTH, WINDOW_DAMAGE_HEIGHT); }
+void desktop_terminal_echo_byte(unsigned char byte) { terminal_feed(byte); if (terminal_visible) mark_dirty(WINDOW_X, WINDOW_Y, WINDOW_WIDTH, WINDOW_HEIGHT); }

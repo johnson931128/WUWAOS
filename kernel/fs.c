@@ -52,6 +52,25 @@ static int read_sector(uint32_t sector, void *buffer) {
     return block_read(sector, buffer);
 }
 
+/*
+ * Read-only blank-media check: 1 = every byte is zero, 0 = data found,
+ * -1 = a sector could not be read. An I/O error is never evidence of blankness.
+ * Checking only sector 0 would miss files behind a cleared/corrupt superblock.
+ * The full scan is needed only before automatic formatting; valid WUFS mounts
+ * skip it. Cost is O(sectors * FS_SECTOR_SIZE) with one sector of stack storage.
+ * Boot-time caller must keep the device free of writers through formatting.
+ */
+static int disk_is_blank(uint32_t sectors) {
+    uint8_t buffer[FS_SECTOR_SIZE];
+    for (uint32_t sector = 0; sector < sectors; ++sector) {
+        if (read_sector(sector, buffer) < 0) return -1;
+        for (uint32_t byte = 0; byte < FS_SECTOR_SIZE; ++byte) {
+            if (buffer[byte] != 0) return 0;
+        }
+    }
+    return 1;
+}
+
 static int write_sector(uint32_t sector, const void *buffer) {
     return block_write(sector, buffer);
 }
@@ -382,14 +401,43 @@ static int format_filesystem(uint32_t sectors) {
 }
 
 int fs_init(void) {
+    /* A failed initialization must not retain a previous mounted state. */
+    mounted = 0;
     uint8_t sector[FS_SECTOR_SIZE] = {0};
     const uint32_t sectors = block_sector_count();
-    if (sectors == 0 || read_sector(0, sector) < 0) return -1;
+    if (sectors == 0) return -1;
+    if (read_sector(0, sector) < 0) {
+        console_puts("[fs] Cannot read filesystem header; disk left unchanged\n");
+        return -1;
+    }
     int valid = 1;
     for (uint32_t i = 0; i < sizeof(FS_MAGIC) - 1; ++i) valid &= sector[i] == (uint8_t)FS_MAGIC[i];
     if (!valid) {
+        /*
+         * Missing magic can mean an unsupported format or damaged WUFS, not
+         * empty media. No disk writes are allowed until blankness is proven.
+         * block_sector_count() saturates at UINT32_MAX; at that limit a scan
+         * could cover only a prefix of a larger device, so refuse auto-format.
+         */
+        if (sectors == UINT32_MAX) {
+            console_puts("[fs] Cannot verify full disk capacity; refusing automatic format\n");
+            return -1;
+        }
+        const int blank = disk_is_blank(sectors);
+        if (blank < 0) {
+            console_puts("[fs] Blank-disk check failed: read error; disk left unchanged\n");
+            return -1;
+        }
+        if (!blank) {
+            console_puts("[fs] Unknown or damaged filesystem on nonblank disk; refusing format\n");
+            return -1;
+        }
         console_puts("[fs] Initializing blank disk as WUFS\n");
-        if (format_filesystem(sectors) < 0) return -1;
+        if (format_filesystem(sectors) < 0) {
+            /* The formatter may have enabled inode access before failing. */
+            mounted = 0;
+            return -1;
+        }
         mounted = 1;
         (void)fs_mkdir("/bin");
         (void)fs_mkdir("/boot");

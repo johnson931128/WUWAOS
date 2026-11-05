@@ -58,7 +58,7 @@ CPU 執行記憶體中的機器碼，不知道來源檔名。OpenSBI 負責早�
 | kernel/desktop.c / desktop.h | 桌布、Terminal 圖示與視窗、8×16 字型、ANSI VT cell buffer、游標與 dirty rendering |
 | kernel/font_terminal.h | WUWAOS Terminal 字型：由 Cascadia Mono 衍生的 ASCII 8×16 灰階字形，每像素 4-bit 覆蓋率 |
 | tools/make_desktop_font.ps1 | 在 Windows 將官方 Cascadia Mono Regular 字型轉成內建字形資料；一般 OS 建置不必執行 |
-| kernel/fs.c / fs.h | WUFS 區塊配置、inode、目錄與路徑操作 |
+| kernel/fs.c / fs.h | WUFS 區塊配置、inode、目錄與路徑操作；非空白磁碟拒絕自動格式化 |
 | kernel/memory.c | freestanding（無標準執行環境）建置所需的 byte-wise memset／memcpy |
 | kernel/page.c / page.h | 4 KiB 實體頁面空閒串列、配置／回收、配置 bitmap 與頁數查詢 |
 | kernel/swap.c / swap.h | 獨立交換區標頭、slot bitmap、4 KiB 換入／換出讀寫 |
@@ -66,7 +66,7 @@ CPU 執行記憶體中的機器碼，不知道來源檔名。OpenSBI 負責早�
 | kernel/user_image.S | 把 user.bin、app.bin、fan.bin 與 workstate.bin 四份獨立映像嵌入核心唯讀資料 |
 | kernel/linker.ld | 核心入口、記憶體區段與權限邊界 |
 | include/syscall_numbers.h | 共用系統呼叫編號、內建程式角色、錯誤碼 |
-| include/process_limits.h | 行程與位址空間共用的上限 4 |
+| include/process_limits.h | 行程與位址空間共用的上限 16 |
 | include/vm_limits.h | heap 起點、頁面大小、heap 頁數與常駐頁預算 |
 | user/entry.S | 使用者入口，將核心給的角色與可選路徑交給 user_main，返回後 exit |
 | user/api.c / api.h | 使用者系統呼叫包裝函式 |
@@ -76,12 +76,15 @@ CPU 執行記憶體中的機器碼，不知道來源檔名。OpenSBI 負責早�
 | user/app.c | 獨立 app 映像的 user_main，分派 worker、quick、writer、reader、counter |
 | user/fan.c | 獨立文字編輯器映像、緩衝區編輯、按鍵解碼、TUI、儲存與退出確認 |
 | user/print.c / print.h | 三種映像共用的字串／數字輸出與短寫處理 |
-| tools/make_disk.py | 建立／更新 WUFS 磁碟映像中的 kernel.elf，保留其他檔案 |
+| tools/make_disk.py | 建立／更新 WUFS 磁碟映像中的 kernel.elf，保留其他檔案；拒絕覆寫未知非空白映像 |
 | tools/make_swap.py | 建立有格式標記的獨立交換磁碟，可調整 slot 數，拒絕重格式化既有檔案 |
+| Start-WUWAOS.cmd、tools/portable-entry.sh | 使用隨附 Windows 環境，自動編譯後啟動 CLI／GUI，或準備建置產物 |
+| Test-FsDisk.cmd、tools/test_fs_disk.py | 固定磁碟驗證入口，自動編譯、建立獨立案例、互動啟動與前後 SHA-256 比對 |
+| tools/package-portable.py | 將原始碼與已安裝工具打包，排除個人資料、既有磁碟與快取，產生版本清單與校驗檔 |
 | user/linker.ld | 使用者映像固定布局與大小限制 |
 | Makefile | 交叉編譯、連結、映像嵌入、持久 QEMU 磁碟與啟動；GUI image/serial/name/pidfile 可由 launcher 覆寫 |
 
-AGENTS.md 是協作規則，README.md 是操作說明，docs/ 下為規格與紀錄，.gitignore 排除 build/。標頭定義型別與契約，不是額外可執行程式。沒有新增測試框架或負面測試程式。
+AGENTS.md 是協作規則，README.md 是操作說明，docs/ 下為規格與紀錄，.gitignore 排除 build/。標頭定義型別與契約，不是額外可執行程式。磁碟驗證工具使用隨附 Python 與 QEMU，不需要額外測試框架；操作及驗收狀態見 [Spec 31](./SPEC-31-filesystem-initialization-guard.md)。
 
 ## 3. entry.S：為什麼先組合語言，再執行 C？
 
@@ -127,6 +130,8 @@ clock.h 的 clock_ticks 共用 rdtime（讀取硬體時間計數器指令），p
 GPU 以 B8G8R8X8_UNORM 建立 1280×720 2D resource。`page_alloc_contiguous` 從核心可用實體頁串列找一段連續 900 頁（3,686,400 bytes），作為永久 framebuffer backing；它不在 VM 使用者分頁預算內，也不會被 swap。完成 RESOURCE_CREATE_2D、RESOURCE_ATTACH_BACKING、SET_SCANOUT 後，TRANSFER_TO_HOST_2D 將矩形像素交給裝置，RESOURCE_FLUSH 讓它顯示。每個呈現操作串行完成，因此沒有多個 GPU 命令同時引用暫存 request。
 
 `desktop.c` 清成 RGB #B8DCF5，再以 5×7 位元字形放大畫出置中白色 `WUWAOS`。16×16 游標移動時，先從備份陣列還原舊矩形，再保存新位置底下的像素、繪製黑色外框和白色填色，最後只呈現兩個位置聯集的矩形；此處理會保留被游標遮住的字樣像素。絕對 X/Y 由 tablet config 查詢 min/max，縮放到 0…1279／0…719，並夾到游標可見範圍。
+
+目前原始碼移除了視窗右移 6、下移 8 像素的實心陰影，視窗繪製、背景還原與 dirty rectangle 都以本體寬高為界。這項後續調整的編譯及互動驗收尚待記錄；既有圖片及 portable v1 仍保留先前外觀，見 [Spec 30 後續調整](./SPEC-30-graphical-terminal.md#移除視窗硬陰影)。
 
 `input_poll` 消化 tablet/keyboard event queue，累積 ABS_X／ABS_Y，到 SYN_REPORT 才交出完整 pointer 座標；keyboard 按鍵事件進入同一個 kernel event queue。`desktop_poll` 對桌面圖示、關閉按鈕與 Terminal window 做 hit-test；Terminal 透過 `process_start_gui_terminal` 建立父 PID 為 0 的 shell，將 FD 0/1/2 綁到獨立 GUI TTY endpoint。窗口關閉只隱藏畫面；shell `exit` 後沿用 parent=0 Zombie reaper 路徑回收，下一次點擊再建立 shell。
 
@@ -305,7 +310,11 @@ WUFS 在 LBA 0 存 superblock，接著 inode bitmap、block bitmap、固定 inod
 
 `tools/make_disk.py` 在首次使用時建立 WUFS 目錄與 `/boot/kernel.elf`；每次 make run 只替換這個 inode 的資料區，其他目錄項目和使用者檔案會保留。核心本身也能在空白磁碟格式化並建立目錄。`/boot/kernel.elf` 是一般核心 ELF 檔案副本；QEMU 目前仍以 `-kernel` 載入另一份 ELF，磁碟檔案沒有參與開機。
 
-目前路徑型 syscall 是教學用介面，不是 POSIX VFS：已有各行程 cwd（目前目錄）與相對路徑，但沒有 `open/close`、檔案 descriptor table 或通用 `read/write` 檔案 FD。shell 的 `write` 只接一個文字 token，`cat` 顯示前 2048 bytes；核心複製可跨合法使用者頁面，包含按需載入與 swap。磁碟資料寫入同步完成，未實作掉電交易／journal（寫入日誌）與損毀復原。
+路徑型 syscall 與 Spec 27 的 FD/OFD 介面並存，已有各行程 cwd（目前目錄）、相對路徑及 `open/close/read/write` 檔案描述號；這仍不是完整 POSIX VFS。核心複製可跨合法使用者頁面，包含按需載入與 swap。磁碟資料寫入同步完成，未實作掉電交易／journal（寫入日誌）與損毀復原。
+
+`fs_init` 先清除掛載狀態。magic 不符時，`disk_is_blank` 使用 512-byte 緩衝區掃描整顆磁碟，回傳全零、非空白或讀取失敗；只有全零可進入 formatter。讀取失敗、非零資料及容量介面的飽和值都會拒絕自動格式化，格式化失敗也會清除掛載狀態。正常 magic 仍走既有 superblock 欄位驗證；這不是完整 fsck。
+
+主機的 `make_disk.py` 也檢查整個既有映像，拒絕覆寫 magic 不符且含非零資料的檔案，避免在 kernel 啟動前先清掉內容。固定入口 `.\Test-FsDisk.cmd` 不經 `disk-image` target，直接以新建磁碟啟動 kernel；詳見 [Spec 31](./SPEC-31-filesystem-initialization-guard.md)。本版編譯與 QEMU 驗收結果尚未記錄。
 
 ## 10. syscall.c、共用編號與使用者 API
 

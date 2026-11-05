@@ -45,6 +45,8 @@ When QEMU has a VirtIO GPU, tablet, and keyboard, WUWAOS draws a 1280×720 deskt
 
 ![WUWAOS guest-rendered desktop Terminal showing shell commands](docs/images/wuwaos-terminal.png)
 
+The current source removes the solid offset shadow along the window's right and bottom edges. The screenshot and portable v1 release show the earlier styling; acceptance checks for this source adjustment are pending.
+
 The Terminal accepts US keyboard input including Shift, Enter, Backspace, Tab, Ctrl+D, and arrow keys. It supports a fixed 100×30 character area and a subset of ANSI cursor, erase, color, alternate-screen, and visibility controls. It is a small kernel TTY, not a POSIX PTY. It has no resize, drag, clipboard, job control, or Ctrl+C support. [Graphical Terminal design and QEMU evidence](docs/SPEC-30-graphical-terminal.md) · [workstate screenshot](docs/images/wuwaos-terminal-workstate.png).
 
 With the Windows portable release, open the desktop from PowerShell using `./Start-WUWAOS.cmd gui`. QEMU runs natively on Windows; a VNC viewer is not needed. See the [portable guide](docs/portable-windows.md) for extraction and build instructions.
@@ -124,6 +126,23 @@ wsl -d Ubuntu -- bash -lc 'cd /mnt/c/programing/WUWAOS && make run'
 `make run` uses Clang in WSL to cross-compile the RISC-V program and then starts QEMU. Once the `wuwaos/>` prompt appears, enter `help` to see the available commands. Try `demo sync` to observe a parent and child process using synchronization primitives.
 
 To exit QEMU, press **Ctrl+A**, release the keys, and then press **X**. The `exit` command ends only the shell. The WUFS disk image is stored at `build/wuwaos.img`; its files persist across restarts, and `make clean` does not delete the disk image.
+
+## Filesystem Initialization Checks
+
+The current source protects unknown nonblank disks in both the kernel and the host image tool: a missing `WUFS0001` signature permits automatic initialization only after the media is confirmed to contain all zero bytes. These changes and the test entry below postdate portable v1; the existing release ZIP does not include them. Kernel build and QEMU acceptance results for this change have not yet been recorded.
+
+From a source checkout with the portable environment, run these fixed commands in PowerShell:
+
+```powershell
+.\Test-FsDisk.cmd valid
+.\Test-FsDisk.cmd blank
+.\Test-FsDisk.cmd damaged
+.\Test-FsDisk.cmd tail
+```
+
+Each invocation automatically builds the kernel and creates fresh test disks. Confirm the expected boot message, use read-only commands such as `help` or `ls`, then press **Ctrl+A**, release, and press **X**. The tool checks disk hashes after QEMU exits. `valid` should mount without disk changes; `blank` should gain a WUFS signature; `damaged` and `tail` should refuse formatting and retain identical hashes. The reported `PASS` concerns disk contents; boot messages still need manual confirmation.
+
+See [Spec 31](docs/SPEC-31-filesystem-initialization-guard.md) for the algorithm, exact expected messages, and remaining verification work.
 
 ## Running a WUFS ELF Program
 

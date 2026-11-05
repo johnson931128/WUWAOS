@@ -43,11 +43,13 @@ QEMU 裝上 modern VirtIO GPU 與 tablet 後，kernel 以 FDT 找到裝置 MMIO 
 
 ### 桌面 Terminal 與 GUI shell
 
+目前原始碼的視窗只繪製邊框與內容，已移除右移 6 像素、下移 8 像素的深色實心陰影；重繪與背景還原範圍同步改為視窗實際尺寸。這項後續修正尚待編譯與互動驗證；既有截圖及 portable v1 仍是先前外觀，詳見 [Spec 30 後續調整](../SPEC-30-graphical-terminal.md#移除視窗硬陰影)。
+
 點擊左上角 Terminal 圖示會建立固定大小視窗並啟動原本的 shell user image。VirtIO keyboard 事件轉成 US ASCII，送入獨立的 GUI canonical input；shell 輸出與 ANSI TUI 由 guest kernel 更新終端 cell buffer，再繪製到 framebuffer。關閉視窗只隱藏畫面，點圖示可接續同一個 shell；shell `exit` 後會回收，下次再點才建立新的 session。GUI 輸入／raw owner 與 UART 分開，`make run` 不帶圖形裝置時保留舊 UART shell。
 
 這是小型 kernel TTY，不是 POSIX PTY 或一般視窗系統。視窗固定大小，不能拖曳或縮放；沒有 clipboard、job control 或 Ctrl+C。`fan`、`workstate` 使用 raw keyboard input。設計、驗收影像與限制見 [Spec 30](../SPEC-30-graphical-terminal.md)；GPU 與游標架構仍見 [Spec 28](../SPEC-28-native-desktop.md)。
 
-WSLg/Linux 圖形工作階段可用 `make run-gui GUI_DISPLAY=gtk`（或 `sdl`）。Windows/WSL1 建議從 repo 根目錄以單一 PowerShell 指令啟動背景 QEMU 與原生 VNC viewer：
+Windows portable 環境可直接使用 `.\Start-WUWAOS.cmd gui`，QEMU 會開啟原生視窗，不需要另外的 VNC viewer。WSLg/Linux 圖形工作階段可用 `make run-gui GUI_DISPLAY=gtk`（或 `sdl`）。既有 Windows/WSL1 環境則可從 repo 根目錄以單一 PowerShell 指令啟動背景 QEMU 與原生 VNC viewer：
 
 ```powershell
 ./tools/run-desktop.ps1

@@ -16,7 +16,7 @@ README 的 [Windows portable release](https://github.com/johnson931128/WUWAOS#wi
 # 檢查隨附工具
 .\Start-WUWAOS.cmd check
 
-# 編譯核心並建立新的 WUFS 與 swap 映像
+# 編譯核心並準備映像；既有 WUFS 保留使用者檔案
 .\Start-WUWAOS.cmd build
 
 # 開啟圖形桌面；需要時會自動重新編譯
@@ -34,6 +34,23 @@ README 的 [Windows portable release](https://github.com/johnson931128/WUWAOS#wi
 包內不含原電腦的 WUFS／swap 映像、使用者目錄、下載快取、執行紀錄或套件簽章私鑰。第一次編譯會建立全新的磁碟映像。啟動入口不讀取個人 shell 設定，也不執行套件更新；一般編譯與開機不需要網路。
 
 此環境用於 Windows x64；macOS、Linux 和其他 CPU 平台請另行準備對應工具。
+
+## 檔案系統初始化驗證
+
+在專案根目錄執行下列固定入口，不需要先在 PowerShell 定義函式：
+
+```powershell
+.\Test-FsDisk.cmd valid
+.\Test-FsDisk.cmd blank
+.\Test-FsDisk.cmd damaged
+.\Test-FsDisk.cmd tail
+```
+
+每次執行都會自動編譯核心，並在 `build/fs-check-案例-隨機名稱` 建立全新測試磁碟和 swap，不使用平常的磁碟映像。工具直接啟動 QEMU，不經會預先建立 WUFS 的 `disk-image` target，且不使用會遮蔽磁碟寫入的 `-snapshot`。不必另外執行 `.\Start-WUWAOS.cmd build`。
+
+請對照工具印出的預期開機訊息，只使用 `help`／`ls` 等讀取操作；按 Ctrl+A，放開後按 X 結束 QEMU，工具才會比對前後 SHA-256。`valid` 應正常掛載且磁碟不變；`blank` 應初始化並產生 WUFS 標記；`damaged`（檔頭清零）和 `tail`（只在最後一個 byte 放資料）應拒絕格式化且磁碟完全不變。
+
+`PASS` 回報的是磁碟內容檢查，開機訊息仍需人工確認。測試映像會保留下來供檢查；每次都是新磁碟，因此空白案例可以重複執行。這個入口需要含上述工具的原始碼版本，舊的 portable v1 發行包沒有這個後續新增的命令。本版核心編譯與 QEMU 驗收尚待記錄；演算法、預期訊息及驗證邊界見 [Spec 31](./SPEC-31-filesystem-initialization-guard.md)。
 
 ## 授權與套件來源
 
