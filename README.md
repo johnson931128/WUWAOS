@@ -10,6 +10,8 @@ WUWAOS is a small operating system written in **C and RISC-V assembly** that boo
 
 [Documentation website](https://johnson931128.github.io/WUWAOS/) · [Windows portable guide](docs/portable-windows.md) · [Releases](https://github.com/johnson931128/WUWAOS/releases) · [Code and architecture guide](docs/CODE_GUIDE.md) · [Specifications and verification](docs/history.md)
 
+**Try WUWAOS on Windows:** [download the complete portable ZIP](https://github.com/johnson931128/WUWAOS/releases/download/portable-windows-v1/WUWAOS-portable-windows-x64.zip) (about 1.41 GiB), which includes the OS source and its build/run environment. Follow the [PowerShell setup commands](#windows-portable-release) below, then click the desktop's Terminal icon and try `help`, `demo sync`, or `workstate`.
+
 ## System Overview
 
 | Area | Current implementation |
@@ -68,7 +70,33 @@ For a Linux desktop or WSLg session with a working display, use `make run-gui GU
 
 The portable release bundles the WUWAOS source and a Windows x64 toolchain: MSYS2, Clang, LLD, LLVM, Make, Python, QEMU, and OpenSBI. It supports offline compilation and execution without an installer, administrator access, WSL, or changes to the system PATH.
 
-Download `WUWAOS-portable-windows-x64.zip` from [Releases](https://github.com/johnson931128/WUWAOS/releases) when a portable release is available. Extract the complete archive into a writable local directory; use a simple path such as `C:\WUWAOS`, avoiding spaces and special characters. Open PowerShell in the extracted project directory:
+The [Windows portable v1 release](https://github.com/johnson931128/WUWAOS/releases/tag/portable-windows-v1) is a complete source-and-environment bundle for Windows 10/11 x64. Download `WUWAOS-portable-windows-x64.zip`, rather than GitHub's automatically generated **Source code** ZIP. Allow about 8 GiB of free disk space for the download, extracted tools, and build outputs.
+
+**Environment setup from PowerShell:** paste the following commands to download the bundle, verify its SHA-256, extract it into a new `WUWAOS-play` folder under your user profile, and start the desktop. Extraction sets up all the bundled tools; no separate compiler, Python, QEMU, or MSYS2 installation is needed. Use a writable destination with a simple path, avoiding spaces and special characters; change `$destination` if needed. If that folder already exists, choose a new destination to keep existing sessions and files separate.
+
+```powershell
+$ErrorActionPreference = 'Stop'
+$release = 'https://github.com/johnson931128/WUWAOS/releases/download/portable-windows-v1'
+$destination = Join-Path $env:USERPROFILE 'WUWAOS-play'
+$name = 'WUWAOS-portable-windows-x64.zip'
+
+New-Item -ItemType Directory -Path $destination | Out-Null
+$archive = Join-Path $destination $name
+Invoke-WebRequest -UseBasicParsing -Uri "$release/$name" -OutFile $archive
+Invoke-WebRequest -UseBasicParsing -Uri "$release/$name.sha256" -OutFile "$archive.sha256"
+
+$expected = ((Get-Content -LiteralPath "$archive.sha256" -Raw) -split '\s+')[0]
+if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ine $expected) {
+    throw 'Download checksum mismatch. Download the ZIP again.'
+}
+tar.exe -xf $archive -C $destination
+if ($LASTEXITCODE -ne 0) { throw 'Archive extraction failed.' }
+
+Set-Location (Join-Path $destination 'WUWAOS-portable-windows-x64')
+.\Start-WUWAOS.cmd gui
+```
+
+For a manual download, extract the complete ZIP and open PowerShell in the extracted `WUWAOS-portable-windows-x64` project directory. These commands use the bundled environment:
 
 ```powershell
 .\Start-WUWAOS.cmd check   # Verify the bundled tools

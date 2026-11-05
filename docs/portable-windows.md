@@ -6,7 +6,9 @@
 
 ## 下載與使用
 
-到 GitHub 專案的 Releases 下載 `WUWAOS-portable-windows-x64.zip`，完整解壓後進入其中的 `WUWAOS-portable-windows-x64` 目錄。
+到 [Windows portable v1 Release](https://github.com/johnson931128/WUWAOS/releases/tag/portable-windows-v1) 下載 `WUWAOS-portable-windows-x64.zip`（約 1.41 GiB），完整解壓後進入其中的 `WUWAOS-portable-windows-x64` 目錄。請預留約 8 GiB 磁碟空間。
+
+README 的 [Windows portable release](https://github.com/johnson931128/WUWAOS#windows-portable-release) 章節提供可直接貼上執行的 PowerShell 指令，包含下載、SHA-256 校驗、解壓與啟動。環境設定就是解壓完整發行包，不需要再安裝編譯器、Python、QEMU 或 MSYS2。
 
 在 PowerShell 執行：
 
@@ -65,10 +67,10 @@ Get-FileHash .\WUWAOS-portable-windows-x64.zip -Algorithm SHA256
 
 把 ZIP、`.sha256` 和 `.manifest.json` 當作 GitHub Release 附件上傳。不要將整個 `build/portable` 加入 Git；原始碼 repository 只需要保留啟動入口、打包工具與說明。GitHub Release 的單一附件需小於 2 GiB。
 
-請在專案頁的 **Releases → Draft a new release** 選擇來源版本、上傳上述三個附件，再發布。若電腦已設定 GitHub CLI，也可以使用：
+發布後續版本時，請在專案頁的 **Releases → Draft a new release** 選擇新的版本 tag、上傳上述三個附件，再發布。若電腦已設定 GitHub CLI，也可以使用（範例採用下一個版本的 tag）：
 
 ```powershell
-gh release create portable-windows-v1 `
+gh release create portable-windows-v2 `
   .\build\releases\WUWAOS-portable-windows-x64.zip `
   .\build\releases\WUWAOS-portable-windows-x64.zip.sha256 `
   .\build\releases\WUWAOS-portable-windows-x64.manifest.json `
