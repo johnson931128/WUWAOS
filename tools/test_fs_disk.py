@@ -12,10 +12,10 @@ ROOT = Path(__file__).resolve().parent.parent
 PORTABLE = ROOT / 'build/portable/msys64'
 IMAGE_SIZE = 16 * 1024 * 1024
 SECTOR_SIZE = 512
-MAGIC = b'WUFS0001'
+MAGIC = b'WUFS0002'
 EXPECTED = {
     'valid': '[fs] Mounted existing WUFS volume',
-    'blank': '[fs] Initializing blank disk as WUFS',
+    'blank': '[fs] Initializing blank disk as WUFS0002',
     'damaged': '[fs] Unknown or damaged filesystem on nonblank disk; refusing format',
     'tail': '[fs] Unknown or damaged filesystem on nonblank disk; refusing format',
 }

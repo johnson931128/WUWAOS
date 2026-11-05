@@ -292,29 +292,29 @@ process_block_io 在核心函式內切走；完成時回寫換行與長度，pro
 
 kernel_main 從 OpenSBI 傳入 a1 的 FDT（硬體裝置樹），block_init_from_fdt 搜尋 `virtio,mmio` 節點與 reg（裝置暫存器位址），再檢查 magic、Version 2 與 Device ID 2（block）。virtio-mmio 有多個空插槽，所以逐一略過未接裝置與非 block 裝置，不假設磁碟固定在某個位址。`vm_map_mmio` 將找到的那一頁加入核心監督模式映射。
 
-現行驅動最多初始化兩顆 block 裝置，每顆 BlockDevice 各自保存 descriptor／available／used 佇列與完成計數；同步請求切換 active context，不共享佇列狀態。讀取 LBA 0 的 WUFS0001／WUSWAP01 標記區分檔案系統與交換區，交換磁碟先接或後接皆可。每顆找到的 MMIO 頁都加入核心映射；block_read/write 只走 WUFS 裝置，block_swap_read/write 只走交換裝置。
+現行驅動最多初始化兩顆 block 裝置，每顆 BlockDevice 各自保存 descriptor／available／used 佇列與完成計數；同步請求切換 active context，不共享佇列狀態。讀取 LBA 0 的 WUFS0001、WUFS0002／WUSWAP01 標記區分檔案系統與交換區，交換磁碟先接或後接皆可。每顆找到的 MMIO 頁都加入核心映射；block_read/write/flush 只走 WUFS 裝置，block_swap_read/write 只走交換裝置。
 
 swap.c 驗證 4 KiB slot 標頭與磁碟容量，以 bitmap 配置 1-based slot；0 表示不可用／已滿。每頁讀寫八個連續 512-byte 磁區。make_swap.py 預設建立 4095 slots／16 MiB，--slots 可調整，既有映像只驗證、不覆寫格式；slot bitmap 是本次開機的使用狀態，不保存重啟前行程。
 
-driver 協商 VERSION_1 feature，選 queue 0，建立一組 descriptor（描述項）鏈：request header → 512-byte data buffer → status byte。寫入 available ring，增加 index，敲 MMIO queue notify，輪詢 used index 等待完成。此版本一次只送一個請求，I/O 是同步輪詢；沒有中斷、佇列併發、DMA IOMMU 或 block cache。單筆正常操作 O(1)，檔案 N 個區塊則 O(N) 次同步讀寫。
+driver 協商 VERSION_1 與裝置提供的 FLUSH feature，選 queue 0，建立 request descriptor（描述項）與 status byte，寫入 available ring、通知裝置並同步輪詢 used index。一次只送一個請求；沒有中斷、佇列併發、DMA IOMMU 或 block cache。WUFS0002 commit 使用 VirtIO FLUSH 作持久性屏障；不提供 FLUSH 的裝置只能唯讀掛載乾淨的 WUFS0002。
 
 單次請求以 `block.h` 的 BLOCK_IO_TIMEOUT_MS 設定門檻（預設 5000 ms），公布 available.index 前讀 rdtime（硬體時間計數器）保存 start。未完成時計算 unsigned 的 now-start，依 QEMU virt 10 MHz 時基比較門檻；到期再讀一次完成索引，仍未完成才印出裝置／角色／讀寫／磁區／經過時間與佇列計數。診斷後關閉監督模式中斷並停在 kernel_idle，不返回、不回收或重用尚可能被裝置 DMA 存取的緩衝區。這是單筆請求的 fail-stop，不是整檔／整頁總逾時，也沒有取消、重試或裝置 reset；初始化設定代數與 UART 等其他輪詢不在範圍。設計與操作紀錄見 [Spec 12](./SPEC-12-block-timeout.md)。
 
-WUFS 在 LBA 0 存 superblock，接著 inode bitmap、block bitmap、固定 inode 表，最後才是資料區。inode 80 bytes，含類型、檔案長度、8 個直接區塊和 8 個單層索引區塊；每檔上限 (8 + 8×128)×512 = 528384 bytes。inode 表固定 128 個項目；16 MiB 磁碟有 32768 個 sector。bitmap 逐位標記 inode 與已用磁碟 sector。
+WUFS0002 在 LBA 0 存 superblock；LBA 1 是 journal header，LBA 2–10 是 1152 個 redo LBA 的表，LBA 11–1162 是各 512 bytes 的 payload；其後為 inode bitmap (1163)、block bitmap (1164–1171)、固定 inode 表 (1172–1191) 與資料區 (1192 起)。inode 80 bytes，含類型、檔案長度、8 個直接區塊和 8 個單層索引區塊；每檔上限 (8 + 8×128)×512 = 528384 bytes。inode 表固定 128 個項目；16 MiB 磁碟有 32768 個 sector。WUFS0001 保持舊版布局且唯讀掛載，不做原地升級。
 
-`inode_read`／`inode_write` 依 inode 的 byte offset 逐磁區複製，每段長度取磁區剩餘空間與 inode 剩餘長度的較小值。例如 inode 6 從區內位移 480 開始，必須先處理 32 bytes，再處理下一磁區的 48 bytes。寫入各段前先讀取原磁區，避免覆蓋相鄰 inode；這不是跨磁區的原子交易，第二段失敗仍可能留下部分更新。
+`inode_read`／`inode_write` 依 inode 的 byte offset 逐磁區複製，每段長度取磁區剩餘空間與 inode 剩餘長度的較小值。例如 inode 6 從區內位移 480 開始，先處理 32 bytes，再處理下一磁區的 48 bytes。交易內 write 會覆寫 RAM staging sector，並讓後續 read 看見新值；此時不寫 home LBA。
 
-目錄內容是順序 DirectoryEntry（24-byte 名稱 + 4-byte inode 編號），路徑查找從 root inode 逐層掃描目錄。C 層支援跨 sector 的目錄項目複製。`fs_list` 回傳目錄名稱，`fs_mkdir` 建立目錄及 `.`／`..`，`fs_touch` 建立空檔，`fs_read` 依位移讀資料，`fs_write` 釋放舊區塊後覆寫並更新 inode 長度。
+目錄內容是順序 DirectoryEntry（24-byte 名稱 + 4-byte inode 編號），路徑查找從 root inode 逐層掃描目錄。`fs_list` 回傳目錄名稱，`fs_mkdir` 建立目錄及 `.`／`..`，`fs_touch` 建立空檔，`fs_read` 依位移讀資料，`fs_write` 在一筆 transaction 中釋放舊區塊、寫入新檔案資料並更新 inode 長度。
 
-`fs_remove` 找出一般檔案的目錄項目，以尾項替補後縮短父目錄，再釋放目標的資料區塊、間接表及 inode。`fs_copy` 先建立未公開的新 inode，逐扇區複製所有 bytes，再發布新目錄項或替換舊項，最後釋放原目的檔；比較 inode 防止同檔複製。磁碟空間不足時不先清空既有目的檔；掉電或 I/O 錯誤沒有 journal 保證，發布失敗可能留下未回收空間。見 SPEC-18。
+`fs_remove`、`fs_remove_tree`、`fs_copy` 與建立／寫入／truncate 的公開修改入口均以一筆 transaction 包住；修改中的 metadata 與 data sectors 都進入同一 bounded redo log。`fs_copy` 建立新 inode、複製資料、替換或發布目錄項並釋放舊 inode，commit 前任何錯誤都丟棄 RAM staging。每筆最多 1152 個不同磁區，超過回 `-28`，home 磁碟仍未改寫。提交後 home checkpoint I/O 失敗會令本次開機 volume offline；重啟時先驗證完整 log，再 redo 全部 home sectors。
 
-`tools/make_disk.py` 在首次使用時建立 WUFS 目錄與 `/boot/kernel.elf`；每次 make run 只替換這個 inode 的資料區，其他目錄項目和使用者檔案會保留。核心本身也能在空白磁碟格式化並建立目錄。`/boot/kernel.elf` 是一般核心 ELF 檔案副本；QEMU 目前仍以 `-kernel` 載入另一份 ELF，磁碟檔案沒有參與開機。
+`tools/make_disk.py` 在首次使用時建立 WUFS0002 目錄與 `/boot/kernel.elf`；更新前先拒絕 pending/invalid journal，並驗證 layout、bitmap、inode、pointer 與目錄樹。它在同目錄暫存完整映像、flush/fsync 後 replace，保留其他使用者檔案。WUFS0001 只唯讀保留，不更新 kernel 副本；需用新 `DISK_IMAGE` 建立 V2。`/boot/kernel.elf` 是一般核心 ELF 檔案副本；QEMU 目前仍以 `-kernel` 載入另一份 ELF，磁碟檔案沒有參與開機。`kernel-disk.elf` 以 strip-all 減少儲存副本大小，實際啟動 `kernel.elf` 保留 debug symbols。
 
-路徑型 syscall 與 Spec 27 的 FD/OFD 介面並存，已有各行程 cwd（目前目錄）、相對路徑及 `open/close/read/write` 檔案描述號；這仍不是完整 POSIX VFS。核心複製可跨合法使用者頁面，包含按需載入與 swap。磁碟資料寫入同步完成，未實作掉電交易／journal（寫入日誌）與損毀復原。
+路徑型 syscall 與 Spec 27 的 FD/OFD 介面並存，已有各行程 cwd（目前目錄）、相對路徑及 `open/close/read/write` 檔案描述號；這仍不是完整 POSIX VFS。核心複製可跨合法使用者頁面，包含按需載入與 swap。每次 FD write 最多 512 bytes，分次呼叫各自交易；`O_TRUNC` 和後續 write 不是同一筆操作。fan 一次整檔 SYS_FS_WRITE 由單一 transaction 保護。VirtIO request timeout仍沿用 fail-stop 核心停止策略。
 
 `fs_init` 先清除掛載狀態。magic 不符時，`disk_is_blank` 使用 512-byte 緩衝區掃描整顆磁碟，回傳全零、非空白或讀取失敗；只有全零可進入 formatter。讀取失敗、非零資料及容量介面的飽和值都會拒絕自動格式化，格式化失敗也會清除掛載狀態。正常 magic 仍走既有 superblock 欄位驗證；這不是完整 fsck。
 
-主機的 `make_disk.py` 也檢查整個既有映像，拒絕覆寫 magic 不符且含非零資料的檔案，避免在 kernel 啟動前先清掉內容。固定入口 `.\Test-FsDisk.cmd` 不經 `disk-image` target，直接以新建磁碟啟動 kernel；詳見 [Spec 31](./SPEC-31-filesystem-initialization-guard.md)。使用者已於 2026-11-05 確認本項驗證完成，逐案例原始輸出尚未留存。
+主機的 `make_disk.py` 也檢查未知非空白映像、WUFS0002 pending journal 與 metadata 完整性；不會在 kernel 啟動前清除/覆寫它們。固定入口 `Test-FsDisk.cmd` 的初始化保護見 [Spec 31](./SPEC-31-filesystem-initialization-guard.md)；交易和故障驗收見 [Spec 32](./SPEC-32-wufs-redo-journal.md)。
 
 ## 10. syscall.c、共用編號與使用者 API
 

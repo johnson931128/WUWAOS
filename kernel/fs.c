@@ -3,9 +3,11 @@
 #include "console.h"
 #include "process.h"
 #include "io.h"
+#include "page.h"
 #include <stdint.h>
 
 #define FS_MAGIC "WUFS0001"
+#define FS_MAGIC_V2 "WUFS0002"
 #define FS_SECTOR_SIZE 512U
 #define FS_INODE_COUNT 128U
 #define FS_INODE_SIZE 80U
@@ -16,6 +18,13 @@
 #define FS_TYPE_DIRECTORY 1U
 #define FS_TYPE_FILE 2U
 #define FS_ROOT_INODE 0U
+#define FS_MAX_SECTORS 32768U
+#define FS_JOURNAL_START 1U
+#define FS_JOURNAL_HEADER_SECTORS 1U
+#define FS_JOURNAL_TARGET_SECTORS 9U
+#define FS_JOURNAL_CAPACITY 1152U
+#define FS_JOURNAL_DATA_START (FS_JOURNAL_START + FS_JOURNAL_HEADER_SECTORS + FS_JOURNAL_TARGET_SECTORS)
+#define FS_JOURNAL_SECTORS (FS_JOURNAL_HEADER_SECTORS + FS_JOURNAL_TARGET_SECTORS + FS_JOURNAL_CAPACITY)
 
 typedef struct {
     uint32_t sector_count;
@@ -47,9 +56,150 @@ _Static_assert(sizeof(DirectoryEntry) == FS_NAME_SIZE + sizeof(uint32_t), "WUFS 
 
 static Superblock superblock;
 static int mounted;
+static int read_only;
+static int offline;
+static uint32_t format_version;
+static uint32_t transaction_depth;
+static uint32_t transaction_count;
+static int transaction_error;
+static uint32_t transaction_target_storage[FS_JOURNAL_CAPACITY];
+#define transaction_targets transaction_target_storage
+static uint8_t *transaction_payload;
+
+static int raw_read_sector(uint32_t sector, void *buffer) { return block_read(sector, buffer); }
+static int raw_write_sector(uint32_t sector, const void *buffer) { return block_write(sector, buffer); }
+
+static int read_sector(uint32_t sector, void *buffer);
+static int write_sector(uint32_t sector, const void *buffer);
+
+static uint32_t crc32_update(uint32_t crc, const uint8_t *data, size_t length) {
+    for (size_t i = 0; i < length; ++i) {
+        crc ^= data[i];
+        for (unsigned int bit = 0; bit < 8; ++bit)
+            crc = (crc >> 1) ^ (0xedb88320U & (uint32_t)-(int32_t)(crc & 1U));
+    }
+    return crc;
+}
+
+static int bytes_equal(const void *left, const char *right, size_t length) {
+    const uint8_t *a = left;
+    for (size_t i = 0; i < length; ++i) if (a[i] != (uint8_t)right[i]) return 0;
+    return 1;
+}
+
+static int transaction_slot(uint32_t sector) {
+    for (uint32_t i = 0; i < transaction_count; ++i)
+        if (transaction_targets[i] == sector) return (int)i;
+    return -1;
+}
+
+static int transaction_begin(void) {
+    if (offline || !mounted) return -5;
+    if (read_only) return -30;
+    if (transaction_payload == 0) return -5;
+    if (transaction_depth++ == 0) {
+        transaction_count = 0;
+        transaction_error = 0;
+    }
+    return 0;
+}
+
+static int transaction_commit(void) {
+    uint8_t header[FS_SECTOR_SIZE] = {0};
+    uint8_t targets[FS_JOURNAL_TARGET_SECTORS * FS_SECTOR_SIZE] = {0};
+    uint32_t crc = 0xffffffffU;
+    if (transaction_error) return transaction_error;
+    if (transaction_count == 0) return 0;
+    /* Journal target table is always written in full, with unused entries zeroed. */
+    for (uint32_t i = 0; i < transaction_count; ++i)
+        ((uint32_t *)targets)[i] = transaction_targets[i];
+    for (uint32_t i = 0; i < FS_JOURNAL_TARGET_SECTORS; ++i)
+        if (raw_write_sector(FS_JOURNAL_START + 1U + i, targets + i * FS_SECTOR_SIZE) < 0) goto io_failure;
+    for (uint32_t i = 0; i < transaction_count; ++i)
+        if (raw_write_sector(FS_JOURNAL_DATA_START + i, transaction_payload + (size_t)i * FS_SECTOR_SIZE) < 0) goto io_failure;
+    if (block_flush() < 0) goto io_failure;
+    for (unsigned int i = 0; i < 8; ++i) header[i] = (uint8_t)"WUJNL002"[i];
+    ((uint32_t *)header)[2] = 2;
+    ((uint32_t *)header)[3] = transaction_count;
+    ((uint32_t *)header)[4] = 1;
+    crc = crc32_update(crc, header + 8, 12);
+    crc = crc32_update(crc, targets, sizeof(targets));
+    crc = crc32_update(crc, transaction_payload, (size_t)transaction_count * FS_SECTOR_SIZE);
+    ((uint32_t *)header)[5] = ~crc;
+    if (raw_write_sector(FS_JOURNAL_START, header) < 0 || block_flush() < 0) goto io_failure;
+    for (uint32_t i = 0; i < transaction_count; ++i)
+        if (raw_write_sector(transaction_targets[i], transaction_payload + (size_t)i * FS_SECTOR_SIZE) < 0) goto io_failure;
+    if (block_flush() < 0) goto io_failure;
+    for (unsigned int i = 0; i < FS_SECTOR_SIZE; ++i) header[i] = 0;
+    if (raw_write_sector(FS_JOURNAL_START, header) < 0 || block_flush() < 0) goto io_failure;
+    return 0;
+io_failure:
+    offline = 1;
+    mounted = 0;
+    console_puts("[fs] Transaction I/O failed; volume offline until restart/recovery\n");
+    return -5;
+}
+
+static int transaction_end(long operation_result) {
+    if (!transaction_depth) return -5;
+    if (--transaction_depth) return transaction_error ? transaction_error : (int)operation_result;
+    if (operation_result < 0 || transaction_error) return transaction_error ? transaction_error : (int)operation_result;
+    return transaction_commit();
+}
+
+static int journal_recover(uint32_t sectors) {
+    uint8_t header[FS_SECTOR_SIZE];
+    uint8_t table[FS_JOURNAL_TARGET_SECTORS * FS_SECTOR_SIZE];
+    if (raw_read_sector(FS_JOURNAL_START, header) < 0) return -1;
+    int all_zero = 1;
+    for (size_t i = 0; i < FS_SECTOR_SIZE; ++i) if (header[i]) { all_zero = 0; break; }
+    if (all_zero) return 0;
+    if (transaction_payload == 0 || !bytes_equal(header, "WUJNL002", 8) ||
+        ((uint32_t *)header)[2] != 2U || ((uint32_t *)header)[3] == 0 ||
+        ((uint32_t *)header)[3] > FS_JOURNAL_CAPACITY) return -1;
+    if (((uint32_t *)header)[4] != 1U) return -1;
+    for (size_t i = 24; i < FS_SECTOR_SIZE; ++i) if (header[i]) return -1;
+    const uint32_t count = ((uint32_t *)header)[3];
+    for (uint32_t i = 0; i < FS_JOURNAL_TARGET_SECTORS; ++i)
+        if (raw_read_sector(FS_JOURNAL_START + 1U + i, table + i * FS_SECTOR_SIZE) < 0) return -1;
+    for (uint32_t i = 0; i < count; ++i) {
+        const uint32_t target = ((uint32_t *)table)[i];
+        if (target < FS_JOURNAL_START + FS_JOURNAL_SECTORS || target >= sectors) return -1;
+        for (uint32_t j = 0; j < i; ++j) if (transaction_targets[j] == target) return -1;
+        transaction_targets[i] = target;
+        if (raw_read_sector(FS_JOURNAL_DATA_START + i,
+                            transaction_payload + (size_t)i * FS_SECTOR_SIZE) < 0) return -1;
+    }
+    for (uint32_t i = count; i < FS_JOURNAL_CAPACITY; ++i)
+        if (((uint32_t *)table)[i] != 0) return -1;
+    uint32_t crc = 0xffffffffU;
+    crc = crc32_update(crc, header + 8, 12);
+    crc = crc32_update(crc, table, sizeof(table));
+    crc = crc32_update(crc, transaction_payload, (size_t)count * FS_SECTOR_SIZE);
+    if (~crc != ((uint32_t *)header)[5]) return -1;
+    /* Validate every record before replaying any home sector. */
+    for (uint32_t i = 0; i < count; ++i)
+        if (raw_write_sector(transaction_targets[i], transaction_payload + (size_t)i * FS_SECTOR_SIZE) < 0) return -1;
+    if (block_flush() < 0) return -1;
+    for (size_t i = 0; i < FS_SECTOR_SIZE; ++i) header[i] = 0;
+    if (raw_write_sector(FS_JOURNAL_START, header) < 0 || block_flush() < 0) return -1;
+    transaction_count = 0;
+    return 1;
+}
 
 static int read_sector(uint32_t sector, void *buffer) {
-    return block_read(sector, buffer);
+    if (offline) return -1;
+    if (transaction_depth) {
+        const int slot = transaction_slot(sector);
+        if (slot >= 0) {
+            const uint8_t *source = transaction_payload + (size_t)slot * FS_SECTOR_SIZE;
+            for (size_t i = 0; i < FS_SECTOR_SIZE; ++i) ((uint8_t *)buffer)[i] = source[i];
+            return 0;
+        }
+    }
+    const int result = raw_read_sector(sector, buffer);
+    if (result < 0 && transaction_depth && !transaction_error) transaction_error = -5;
+    return result;
 }
 
 /*
@@ -72,10 +222,31 @@ static int disk_is_blank(uint32_t sectors) {
 }
 
 static int write_sector(uint32_t sector, const void *buffer) {
-    return block_write(sector, buffer);
+    if (offline || read_only) return -1;
+    if (!transaction_depth) return raw_write_sector(sector, buffer);
+    if (transaction_error) return -1;
+    if (sector < FS_JOURNAL_START + FS_JOURNAL_SECTORS || sector >= superblock.sector_count) {
+        transaction_error = -5;
+        return -1;
+    }
+    int slot = transaction_slot(sector);
+    if (slot < 0) {
+        if (transaction_count >= FS_JOURNAL_CAPACITY) {
+            transaction_error = -28;
+            return -1;
+        }
+        slot = (int)transaction_count++;
+        transaction_targets[slot] = sector;
+    }
+    uint8_t *destination = transaction_payload + (size_t)slot * FS_SECTOR_SIZE;
+    for (size_t i = 0; i < FS_SECTOR_SIZE; ++i) destination[i] = ((const uint8_t *)buffer)[i];
+    return 0;
 }
 
 static int bitmap_get(uint32_t sector, uint32_t bit) {
+    if ((sector == superblock.inode_bitmap_sector && bit >= superblock.inode_count) ||
+        (sector == superblock.block_bitmap_sector && bit >= superblock.sector_count) ||
+        (sector != superblock.inode_bitmap_sector && sector != superblock.block_bitmap_sector)) return -1;
     uint8_t bytes[FS_SECTOR_SIZE];
     const uint32_t bitmap_sector = sector + bit / (FS_SECTOR_SIZE * 8U);
     if (read_sector(bitmap_sector, bytes) < 0) {
@@ -85,6 +256,9 @@ static int bitmap_get(uint32_t sector, uint32_t bit) {
 }
 
 static int bitmap_set(uint32_t sector, uint32_t bit, int value) {
+    if ((sector == superblock.inode_bitmap_sector && bit >= superblock.inode_count) ||
+        (sector == superblock.block_bitmap_sector && bit >= superblock.sector_count) ||
+        (sector != superblock.inode_bitmap_sector && sector != superblock.block_bitmap_sector)) return -1;
     uint8_t bytes[FS_SECTOR_SIZE];
     const uint32_t bitmap_sector = sector + bit / (FS_SECTOR_SIZE * 8U);
     if (read_sector(bitmap_sector, bytes) < 0) {
@@ -146,33 +320,41 @@ static int inode_write(uint32_t number, const Inode *inode) {
 static long inode_allocate(uint32_t type) {
     for (uint32_t i = 0; i < superblock.inode_count; ++i) {
         const int used = bitmap_get(superblock.inode_bitmap_sector, i);
+        if (used < 0) return -5;
         if (used == 0) {
             Inode inode = { .type = type };
-            if (bitmap_set(superblock.inode_bitmap_sector, i, 1) < 0 || inode_write(i, &inode) < 0) {
-                return -1;
-            }
+            if (bitmap_set(superblock.inode_bitmap_sector, i, 1) < 0 || inode_write(i, &inode) < 0) return -5;
             return (long)i;
         }
     }
-    return -1;
+    return -28;
 }
 
 static long block_allocate(void) {
-    for (uint32_t sector = superblock.data_sector; sector < superblock.sector_count; ++sector) {
-        const int used = bitmap_get(superblock.block_bitmap_sector, sector);
-        if (used == 0 && bitmap_set(superblock.block_bitmap_sector, sector, 1) == 0) {
-            uint8_t zero[FS_SECTOR_SIZE] = {0};
-            if (write_sector(sector, zero) == 0) {
+    uint8_t bits[FS_SECTOR_SIZE];
+    for (uint32_t map = 0; map < superblock.block_bitmap_length; ++map) {
+        if (read_sector(superblock.block_bitmap_sector + map, bits) < 0) return -5;
+        const uint32_t first = map * FS_SECTOR_SIZE * 8U;
+        for (uint32_t byte = 0; byte < FS_SECTOR_SIZE; ++byte) {
+            if (bits[byte] == 0xffU) continue;
+            for (uint32_t bit = 0; bit < 8; ++bit) {
+                const uint32_t sector = first + byte * 8U + bit;
+                if (sector < superblock.data_sector || sector >= superblock.sector_count ||
+                    (bits[byte] & (uint8_t)(1U << bit))) continue;
+                if (bitmap_set(superblock.block_bitmap_sector, sector, 1) < 0) return -5;
+                uint8_t zero[FS_SECTOR_SIZE] = {0};
+                if (write_sector(sector, zero) < 0) return transaction_error ? transaction_error : -5;
                 return (long)sector;
             }
         }
     }
-    return -1;
+    return -28;
 }
 
 static int inode_block(const Inode *inode, uint32_t index, int allocate, uint32_t *result) {
     if (index < FS_DIRECT) {
         uint32_t *entry = (uint32_t *)&inode->direct[index];
+        if (*entry && (*entry < superblock.data_sector || *entry >= superblock.sector_count)) return -1;
         if (*entry == 0 && allocate) {
             const long block = block_allocate();
             if (block < 0) return -1;
@@ -186,6 +368,7 @@ static int inode_block(const Inode *inode, uint32_t index, int allocate, uint32_
     const uint32_t pointer_index = index % FS_POINTERS_PER_SECTOR;
     if (indirect_index >= FS_INDIRECT) return -1;
     uint32_t indirect_sector = inode->indirect[indirect_index];
+    if (indirect_sector && (indirect_sector < superblock.data_sector || indirect_sector >= superblock.sector_count)) return -1;
     if (indirect_sector == 0 && allocate) {
         const long block = block_allocate();
         if (block < 0) return -1;
@@ -198,6 +381,8 @@ static int inode_block(const Inode *inode, uint32_t index, int allocate, uint32_
     }
     uint32_t pointers[FS_POINTERS_PER_SECTOR];
     if (read_sector(indirect_sector, pointers) < 0) return -1;
+    if (pointers[pointer_index] && (pointers[pointer_index] < superblock.data_sector ||
+                                    pointers[pointer_index] >= superblock.sector_count)) return -1;
     if (pointers[pointer_index] == 0 && allocate) {
         const long block = block_allocate();
         if (block < 0) return -1;
@@ -263,6 +448,7 @@ static int dir_find(const Inode *directory, const char *name, uint32_t *inode_nu
 }
 
 static int path_lookup(const char *path, uint32_t *number) {
+    if (offline) return -5;
     if (!mounted || path == 0 || path[0] != '/') return -22;
     uint32_t current = superblock.root_inode;
     const char *cursor = path;
@@ -340,7 +526,7 @@ static long create_node(const char *path, uint32_t type) {
     uint32_t existing;
     if (dir_find(&parent, name, &existing) == 0) return -17;
     const long node_number = inode_allocate(type);
-    if (node_number < 0) return -28;
+    if (node_number < 0) return node_number;
     if (type == FS_TYPE_DIRECTORY) {
         Inode node;
         if (inode_read((uint32_t)node_number, &node) < 0) return -5;
@@ -359,16 +545,20 @@ static int format_filesystem(uint32_t sectors) {
     superblock = (Superblock){
         .sector_count = sectors,
         .inode_count = FS_INODE_COUNT,
-        .inode_bitmap_sector = 1,
-        .block_bitmap_sector = 2,
+        .inode_bitmap_sector = FS_JOURNAL_START + FS_JOURNAL_SECTORS,
+        .block_bitmap_sector = FS_JOURNAL_START + FS_JOURNAL_SECTORS + 1U,
         .block_bitmap_length = block_bitmap_length,
-        .inode_table_sector = 2 + block_bitmap_length,
+        .inode_table_sector = FS_JOURNAL_START + FS_JOURNAL_SECTORS + 1U + block_bitmap_length,
         .inode_table_length = (FS_INODE_COUNT * FS_INODE_SIZE) / FS_SECTOR_SIZE,
-        .data_sector = 2 + block_bitmap_length + (FS_INODE_COUNT * FS_INODE_SIZE) / FS_SECTOR_SIZE,
+        .data_sector = FS_JOURNAL_START + FS_JOURNAL_SECTORS + 1U + block_bitmap_length + (FS_INODE_COUNT * FS_INODE_SIZE) / FS_SECTOR_SIZE,
         .root_inode = FS_ROOT_INODE
     };
+    if (sectors <= superblock.data_sector) return -1;
+    format_version = 2;
     uint8_t sector[FS_SECTOR_SIZE] = {0};
-    if (write_sector(1, sector) < 0) return -1;
+    for (uint32_t lba = FS_JOURNAL_START; lba < FS_JOURNAL_START + FS_JOURNAL_SECTORS; ++lba)
+        if (raw_write_sector(lba, sector) < 0) return -1;
+    if (write_sector(superblock.inode_bitmap_sector, sector) < 0) return -1;
     for (uint32_t i = 0; i < superblock.block_bitmap_length; ++i) {
         if (write_sector(superblock.block_bitmap_sector + i, sector) < 0) return -1;
     }
@@ -379,7 +569,15 @@ static int format_filesystem(uint32_t sectors) {
     for (uint32_t i = 0; i < superblock.inode_table_length; ++i) {
         if (write_sector(superblock.inode_table_sector + i, sector) < 0) return -1;
     }
-    for (uint32_t i = 0; i < sizeof(FS_MAGIC) - 1; ++i) sector[i] = (uint8_t)FS_MAGIC[i];
+    Inode root = { .type = FS_TYPE_DIRECTORY };
+    if (inode_write(FS_ROOT_INODE, &root) < 0) return -1;
+    mounted = 1;
+    DirectoryEntry dot = { .name = ".", .inode = FS_ROOT_INODE };
+    DirectoryEntry dotdot = { .name = "..", .inode = FS_ROOT_INODE };
+    if (dir_entry_write(&root, 0, &dot) < 0 || dir_entry_write(&root, 1, &dotdot) < 0 ||
+        inode_write(FS_ROOT_INODE, &root) < 0) return -1;
+    if (block_flush() < 0) return -1;
+    for (uint32_t i = 0; i < sizeof(FS_MAGIC_V2) - 1; ++i) sector[i] = (uint8_t)FS_MAGIC_V2[i];
     ((uint32_t *)sector)[2] = superblock.sector_count;
     ((uint32_t *)sector)[3] = superblock.inode_count;
     ((uint32_t *)sector)[4] = superblock.inode_bitmap_sector;
@@ -389,30 +587,161 @@ static int format_filesystem(uint32_t sectors) {
     ((uint32_t *)sector)[8] = superblock.inode_table_length;
     ((uint32_t *)sector)[9] = superblock.data_sector;
     ((uint32_t *)sector)[10] = superblock.root_inode;
-    if (write_sector(0, sector) < 0) return -1;
-    Inode root = { .type = FS_TYPE_DIRECTORY };
-    if (inode_write(FS_ROOT_INODE, &root) < 0) return -1;
-    mounted = 1;
-    DirectoryEntry dot = { .name = ".", .inode = FS_ROOT_INODE };
-    DirectoryEntry dotdot = { .name = "..", .inode = FS_ROOT_INODE };
-    if (dir_entry_write(&root, 0, &dot) < 0 || dir_entry_write(&root, 1, &dotdot) < 0 ||
-        inode_write(FS_ROOT_INODE, &root) < 0) return -1;
+    ((uint32_t *)sector)[11] = FS_JOURNAL_START;
+    ((uint32_t *)sector)[12] = FS_JOURNAL_SECTORS;
+    ((uint32_t *)sector)[13] = FS_JOURNAL_CAPACITY;
+    if (raw_write_sector(0, sector) < 0 || block_flush() < 0) return -1;
     return 0;
+}
+
+static int layout_valid(int v2, uint32_t device_sectors) {
+    const uint32_t expected_bitmap_length =
+        (superblock.sector_count + FS_SECTOR_SIZE * 8U - 1U) / (FS_SECTOR_SIZE * 8U);
+    if (superblock.sector_count > device_sectors || superblock.sector_count > FS_MAX_SECTORS ||
+        superblock.sector_count <= superblock.data_sector || superblock.inode_count != FS_INODE_COUNT ||
+        superblock.root_inode != FS_ROOT_INODE || superblock.inode_bitmap_sector != (v2 ? FS_JOURNAL_START + FS_JOURNAL_SECTORS : 1U) ||
+        superblock.block_bitmap_length != expected_bitmap_length || superblock.inode_table_length != FS_INODE_COUNT * FS_INODE_SIZE / FS_SECTOR_SIZE)
+        return 0;
+    const uint32_t expected_block_bitmap = superblock.inode_bitmap_sector + 1U;
+    const uint32_t expected_inode_table = expected_block_bitmap + expected_bitmap_length;
+    const uint32_t expected_data = expected_inode_table + superblock.inode_table_length;
+    return superblock.block_bitmap_sector == expected_block_bitmap &&
+           superblock.inode_table_sector == expected_inode_table &&
+           superblock.data_sector == expected_data &&
+           (!v2 || (superblock.inode_bitmap_sector == FS_JOURNAL_START + FS_JOURNAL_SECTORS &&
+                    superblock.data_sector > FS_JOURNAL_START + FS_JOURNAL_SECTORS));
+}
+
+static int claim_block(uint32_t sector, uint8_t *seen) {
+    if (sector < superblock.data_sector || sector >= superblock.sector_count) return -1;
+    const int used = bitmap_get(superblock.block_bitmap_sector, sector);
+    if (used != 1 || (seen[sector / 8U] & (uint8_t)(1U << (sector % 8U)))) return -1;
+    seen[sector / 8U] |= (uint8_t)(1U << (sector % 8U));
+    return 0;
+}
+
+static int filesystem_validate(void) {
+    uint8_t seen[FS_MAX_SECTORS / 8U] = {0};
+    uint32_t max_file = (FS_DIRECT + FS_INDIRECT * FS_POINTERS_PER_SECTOR) * FS_SECTOR_SIZE;
+    if (superblock.sector_count > FS_MAX_SECTORS) return -1;
+    for (uint32_t sector = 0; sector < superblock.data_sector; ++sector)
+        if (bitmap_get(superblock.block_bitmap_sector, sector) != 1) return -1;
+    for (uint32_t number = 0; number < superblock.inode_count; ++number) {
+        const int allocated = bitmap_get(superblock.inode_bitmap_sector, number);
+        if (allocated < 0) return -1;
+        Inode inode;
+        if (inode_read(number, &inode) < 0) return -1;
+        if (inode.reserved[0] || inode.reserved[1]) return -1;
+        if (!allocated) {
+            if (inode.type || inode.size) return -1;
+            for (uint32_t i = 0; i < FS_DIRECT; ++i) if (inode.direct[i]) return -1;
+            for (uint32_t i = 0; i < FS_INDIRECT; ++i) if (inode.indirect[i]) return -1;
+            continue;
+        }
+        if ((number == superblock.root_inode && inode.type != FS_TYPE_DIRECTORY) ||
+            (inode.type != FS_TYPE_DIRECTORY && inode.type != FS_TYPE_FILE) || inode.size > max_file ||
+            (inode.type == FS_TYPE_DIRECTORY && inode.size % sizeof(DirectoryEntry))) return -1;
+        for (uint32_t i = 0; i < FS_DIRECT; ++i)
+            if (inode.direct[i] && claim_block(inode.direct[i], seen) < 0) return -1;
+        for (uint32_t i = 0; i < FS_INDIRECT; ++i) {
+            if (!inode.indirect[i]) continue;
+            if (claim_block(inode.indirect[i], seen) < 0) return -1;
+            uint32_t pointers[FS_POINTERS_PER_SECTOR];
+            if (read_sector(inode.indirect[i], pointers) < 0) return -1;
+            for (uint32_t j = 0; j < FS_POINTERS_PER_SECTOR; ++j)
+                if (pointers[j] && claim_block(pointers[j], seen) < 0) return -1;
+        }
+        const uint32_t needed_blocks = (inode.size + FS_SECTOR_SIZE - 1U) / FS_SECTOR_SIZE;
+        for (uint32_t i = 0; i < needed_blocks; ++i) {
+            uint32_t block;
+            if (inode_block(&inode, i, 0, &block) < 0 || block == 0) return -1;
+        }
+        if (inode.type == FS_TYPE_DIRECTORY) {
+            const uint32_t entries = inode.size / (uint32_t)sizeof(DirectoryEntry);
+            if (entries < 2) return -1;
+            for (uint32_t i = 0; i < entries; ++i) {
+                DirectoryEntry entry;
+                if (dir_entry_read(&inode, i, &entry) < 0 || entry.inode >= superblock.inode_count ||
+                    bitmap_get(superblock.inode_bitmap_sector, entry.inode) != 1) return -1;
+                size_t length = 0;
+                while (length < FS_NAME_SIZE && entry.name[length]) ++length;
+                if (length == 0 || length == FS_NAME_SIZE) return -1;
+                for (size_t j = 0; j < length; ++j) if (entry.name[j] == '/') return -1;
+                Inode child;
+                if (inode_read(entry.inode, &child) < 0 ||
+                    (child.type != FS_TYPE_DIRECTORY && child.type != FS_TYPE_FILE)) return -1;
+                if (i == 0 && (!bytes_equal(entry.name, ".", 2) || entry.name[1] != 0 || entry.inode != number)) return -1;
+                if (i == 1 && (!bytes_equal(entry.name, "..", 3) || entry.name[2] != 0)) return -1;
+            }
+            if (number == superblock.root_inode) {
+                DirectoryEntry parent_entry;
+                if (dir_entry_read(&inode, 1, &parent_entry) < 0 || parent_entry.inode != number) return -1;
+            }
+        }
+    }
+    for (uint32_t sector = superblock.data_sector; sector < superblock.sector_count; ++sector) {
+        const int allocated = bitmap_get(superblock.block_bitmap_sector, sector);
+        const int claimed = (seen[sector / 8U] >> (sector % 8U)) & 1U;
+        if (allocated < 0 || allocated != claimed) return -1;
+    }
+    /* Every directory must be reachable exactly once from root, with a correct '..'. */
+    uint32_t queue[FS_INODE_COUNT];
+    uint8_t reached[FS_INODE_COUNT] = {0};
+    uint32_t head = 0, tail = 1;
+    queue[0] = superblock.root_inode;
+    reached[superblock.root_inode] = 1;
+    while (head < tail) {
+        const uint32_t parent_number = queue[head++];
+        Inode parent;
+        if (inode_read(parent_number, &parent) < 0) return -1;
+        const uint32_t entries = parent.size / (uint32_t)sizeof(DirectoryEntry);
+        for (uint32_t i = 2; i < entries; ++i) {
+            DirectoryEntry entry;
+            Inode child;
+            if (dir_entry_read(&parent, i, &entry) < 0 || inode_read(entry.inode, &child) < 0) return -1;
+            if (reached[entry.inode]) return -1;
+            for (uint32_t j = 2; j < i; ++j) {
+                DirectoryEntry previous;
+                if (dir_entry_read(&parent, j, &previous) < 0) return -1;
+                size_t k = 0;
+                while (k < FS_NAME_SIZE && previous.name[k] == entry.name[k] && entry.name[k]) ++k;
+                if (k < FS_NAME_SIZE && previous.name[k] == 0 && entry.name[k] == 0) return -1;
+            }
+            reached[entry.inode] = 1;
+            if (child.type != FS_TYPE_DIRECTORY) continue;
+            if (tail >= FS_INODE_COUNT) return -1;
+            DirectoryEntry dotdot;
+            if (dir_entry_read(&child, 1, &dotdot) < 0 || dotdot.inode != parent_number) return -1;
+            queue[tail++] = entry.inode;
+        }
+    }
+    for (uint32_t number = 0; number < superblock.inode_count; ++number) {
+        Inode inode;
+        if (inode_read(number, &inode) < 0) return -1;
+        if (inode.type && !reached[number]) return -1;
+    }
+    return bitmap_get(superblock.inode_bitmap_sector, superblock.root_inode) == 1 ? 0 : -1;
 }
 
 int fs_init(void) {
     /* A failed initialization must not retain a previous mounted state. */
     mounted = 0;
+    read_only = 0;
+    offline = 0;
+    transaction_depth = 0;
     uint8_t sector[FS_SECTOR_SIZE] = {0};
     const uint32_t sectors = block_sector_count();
-    if (sectors == 0) return -1;
+    if (sectors == 0 || sectors > FS_MAX_SECTORS) {
+        console_puts("[fs] Unsupported device capacity; disk left unchanged\n");
+        return -1;
+    }
     if (read_sector(0, sector) < 0) {
         console_puts("[fs] Cannot read filesystem header; disk left unchanged\n");
         return -1;
     }
-    int valid = 1;
-    for (uint32_t i = 0; i < sizeof(FS_MAGIC) - 1; ++i) valid &= sector[i] == (uint8_t)FS_MAGIC[i];
-    if (!valid) {
+    int v1 = bytes_equal(sector, FS_MAGIC, 8);
+    int v2 = bytes_equal(sector, FS_MAGIC_V2, 8);
+    if (!v1 && !v2) {
         /*
          * Missing magic can mean an unsupported format or damaged WUFS, not
          * empty media. No disk writes are allowed until blankness is proven.
@@ -432,18 +761,28 @@ int fs_init(void) {
             console_puts("[fs] Unknown or damaged filesystem on nonblank disk; refusing format\n");
             return -1;
         }
-        console_puts("[fs] Initializing blank disk as WUFS\n");
+        if (sectors <= FS_JOURNAL_START + FS_JOURNAL_SECTORS + 1U + 8U + FS_INODE_COUNT * FS_INODE_SIZE / FS_SECTOR_SIZE ||
+            !block_flush_supported()) {
+            console_puts("[fs] Device capacity or FLUSH support is insufficient; disk left unchanged\n");
+            return -1;
+        }
+        console_puts("[fs] Initializing blank disk as WUFS0002\n");
+        const size_t cache_pages = (FS_JOURNAL_CAPACITY * FS_SECTOR_SIZE + PAGE_SIZE - 1U) / PAGE_SIZE;
+        transaction_payload = (uint8_t *)page_alloc_contiguous(cache_pages);
+        if (!transaction_payload) { console_puts("[fs] Journal cache allocation failed; disk unchanged\n"); return -1; }
         if (format_filesystem(sectors) < 0) {
             /* The formatter may have enabled inode access before failing. */
             mounted = 0;
             return -1;
         }
         mounted = 1;
-        (void)fs_mkdir("/bin");
-        (void)fs_mkdir("/boot");
-        (void)fs_mkdir("/dev");
-        (void)fs_mkdir("/home");
-        (void)fs_mkdir("/home/user");
+        if (fs_mkdir("/bin") < 0 || fs_mkdir("/boot") < 0 || fs_mkdir("/dev") < 0 ||
+            fs_mkdir("/home") < 0 || fs_mkdir("/home/user") < 0) {
+            mounted = 0;
+            offline = 1;
+            console_puts("[fs] Initial directory creation failed; volume offline\n");
+            return -1;
+        }
         console_puts("[fs] Created /bin /boot /dev /home/user\n");
     } else {
         const uint32_t *fields = (const uint32_t *)sector;
@@ -456,9 +795,34 @@ int fs_init(void) {
         superblock.inode_table_length = fields[8];
         superblock.data_sector = fields[9];
         superblock.root_inode = fields[10];
-        if (superblock.sector_count > sectors || superblock.inode_count != FS_INODE_COUNT ||
-            superblock.data_sector >= superblock.sector_count || superblock.root_inode >= superblock.inode_count) return -1;
+        format_version = v2 ? 2 : 1;
+        if (!layout_valid(v2, sectors)) { console_puts("[fs] Invalid WUFS layout; refusing mount\n"); return -1; }
+        if (v2) {
+            if (fields[11] != FS_JOURNAL_START || fields[12] != FS_JOURNAL_SECTORS || fields[13] != FS_JOURNAL_CAPACITY) return -1;
+            for (size_t i = 14U * sizeof(uint32_t); i < FS_SECTOR_SIZE; ++i)
+                if (sector[i]) { console_puts("[fs] Nonzero reserved superblock bytes; refusing mount\n"); return -1; }
+            const size_t cache_pages = (FS_JOURNAL_CAPACITY * FS_SECTOR_SIZE + PAGE_SIZE - 1U) / PAGE_SIZE;
+            transaction_payload = (uint8_t *)page_alloc_contiguous(cache_pages);
+            if (!transaction_payload) { console_puts("[fs] Journal cache allocation failed; refusing mount\n"); return -1; }
+            if (!block_flush_supported()) {
+                uint8_t journal_header[FS_SECTOR_SIZE];
+                if (raw_read_sector(FS_JOURNAL_START, journal_header) < 0) return -1;
+                for (size_t i = 0; i < FS_SECTOR_SIZE; ++i)
+                    if (journal_header[i]) { offline = 1; console_puts("[fs] Pending journal requires FLUSH support; refusing mount\n"); return -1; }
+                read_only = 1;
+                console_puts("[fs] Device lacks FLUSH; WUFS0002 mounted read-only\n");
+            } else {
+                const int recovered = journal_recover(superblock.sector_count);
+                if (recovered < 0) { offline = 1; console_puts("[fs] Invalid or unrecoverable journal; volume unavailable, journal retained when possible\n"); return -1; }
+                if (block_flush() < 0) { offline = 1; return -1; }
+                if (recovered > 0) console_puts("[fs] Replayed committed WUFS journal\n");
+            }
+        } else {
+            read_only = 1;
+            console_puts("[fs] WUFS0001 mounted read-only; use a new WUFS0002 disk for writes\n");
+        }
         mounted = 1;
+        if (filesystem_validate() < 0) { mounted = 0; offline = 1; console_puts("[fs] Metadata validation failed; refusing mount\n"); return -1; }
         console_puts("[fs] Mounted existing WUFS volume\n");
     }
     return 0;
@@ -488,12 +852,12 @@ long fs_list(const char *path, char *output, size_t capacity) {
     return (long)used;
 }
 
-long fs_mkdir(const char *path) {
+static long fs_mkdir_impl(const char *path) {
     const long result = create_node(path, FS_TYPE_DIRECTORY);
     return result < 0 ? result : 0;
 }
 
-long fs_touch(const char *path) {
+static long fs_touch_impl(const char *path) {
     uint32_t number;
     const int result = path_lookup(path, &number);
     if (result == 0) {
@@ -510,15 +874,18 @@ static int inode_free_blocks(Inode *inode) {
     uint8_t zero[FS_SECTOR_SIZE] = {0};
     for (uint32_t i = 0; i < FS_DIRECT; ++i) {
         if (inode->direct[i] != 0) {
+            if (inode->direct[i] < superblock.data_sector || inode->direct[i] >= superblock.sector_count) return -1;
             if (bitmap_set(superblock.block_bitmap_sector, inode->direct[i], 0) < 0) return -1;
             inode->direct[i] = 0;
         }
     }
     for (uint32_t i = 0; i < FS_INDIRECT; ++i) {
         if (inode->indirect[i] == 0) continue;
+        if (inode->indirect[i] < superblock.data_sector || inode->indirect[i] >= superblock.sector_count) return -1;
         uint32_t pointers[FS_POINTERS_PER_SECTOR];
         if (read_sector(inode->indirect[i], pointers) < 0) return -1;
         for (uint32_t j = 0; j < FS_POINTERS_PER_SECTOR; ++j) {
+            if (pointers[j] && (pointers[j] < superblock.data_sector || pointers[j] >= superblock.sector_count)) return -1;
             if (pointers[j] != 0 && bitmap_set(superblock.block_bitmap_sector, pointers[j], 0) < 0) return -1;
         }
         if (bitmap_set(superblock.block_bitmap_sector, inode->indirect[i], 0) < 0 || write_sector(inode->indirect[i], zero) < 0) return -1;
@@ -560,7 +927,7 @@ static int inode_release(uint32_t number, Inode *inode) {
     return 0;
 }
 
-long fs_remove(const char *path) {
+static long fs_remove_impl(const char *path) {
     if (!mounted) return -22;
     uint32_t parent_number, index;
     char name[FS_NAME_SIZE] = {0};
@@ -590,7 +957,7 @@ long fs_remove(const char *path) {
 
 /* Validate the whole tree before deleting: no root, cycles or live CWDs.
    A bounded breadth-first list reversed for deletion gives child-before-parent. */
-long fs_remove_tree(const char *path) {
+static long fs_remove_tree_impl(const char *path) {
     if (!mounted) return -22;
     uint32_t parent_number, index;
     char name[FS_NAME_SIZE] = {0};
@@ -654,7 +1021,7 @@ long fs_remove_tree(const char *path) {
     return 0;
 }
 
-long fs_copy(const char *source, const char *destination) {
+static long fs_copy_impl(const char *source, const char *destination) {
     if (!mounted) return -22;
     uint32_t source_number, parent_number, index = 0;
     int error = path_lookup(source, &source_number);
@@ -681,7 +1048,7 @@ long fs_copy(const char *source, const char *destination) {
     }
 
     const long allocated = inode_allocate(FS_TYPE_FILE);
-    if (allocated < 0) return -28;
+    if (allocated < 0) return allocated;
     Inode copy = { .type = FS_TYPE_FILE };
     for (uint32_t position = 0; position < original.size; position += FS_SECTOR_SIZE) {
         uint32_t from, to;
@@ -745,7 +1112,7 @@ long fs_read(const char *path, size_t offset, void *buffer, size_t length) {
     return (long)copied;
 }
 
-long fs_write(const char *path, const void *buffer, size_t length) {
+static long fs_write_impl(const char *path, const void *buffer, size_t length) {
     if (length > (FS_DIRECT + FS_INDIRECT * FS_POINTERS_PER_SECTOR) * FS_SECTOR_SIZE) return -27;
     uint32_t number;
     int found = path_lookup(path, &number);
@@ -822,7 +1189,7 @@ long fs_read_inode(uint32_t number, size_t offset, void *buffer, size_t length) 
     return (long)copied;
 }
 
-long fs_write_inode(uint32_t number, size_t offset, const void *buffer, size_t length) {
+static long fs_write_inode_impl(uint32_t number, size_t offset, const void *buffer, size_t length) {
     const size_t maximum = (FS_DIRECT + FS_INDIRECT * FS_POINTERS_PER_SECTOR) * FS_SECTOR_SIZE;
     if (offset > maximum || length > maximum - offset || offset + length > UINT32_MAX) return -27;
     Inode inode;
@@ -845,15 +1212,80 @@ long fs_write_inode(uint32_t number, size_t offset, const void *buffer, size_t l
         if (write_sector(sector, data) < 0) { failure = -5; break; }
         copied += amount;
     }
-    if (offset + copied > inode.size) inode.size = (uint32_t)(offset + copied);
-    if (inode_write(number, &inode) < 0) return copied ? (long)copied : -5;
-    return copied ? (long)copied : (length == 0 ? 0 : failure);
+    if (copied != length && length != 0) return failure;
+    if (length && offset + copied > inode.size) inode.size = (uint32_t)(offset + copied);
+    if (inode_write(number, &inode) < 0) return -5;
+    return (long)copied;
 }
 
-long fs_truncate_inode(uint32_t number) {
+static long fs_truncate_inode_impl(uint32_t number) {
     Inode inode;
     if (inode_read(number, &inode) < 0 || inode.type != FS_TYPE_FILE) return -21;
     if (inode_free_blocks(&inode) < 0) return -5;
     inode.size = 0;
     return inode_write(number, &inode) < 0 ? -5 : 0;
+}
+
+long fs_mkdir(const char *path) {
+    int error = transaction_begin();
+    if (error < 0) return error;
+    const long result = fs_mkdir_impl(path);
+    error = transaction_end(result);
+    return error < 0 ? error : result;
+}
+
+long fs_touch(const char *path) {
+    int error = transaction_begin();
+    if (error < 0) return error;
+    const long result = fs_touch_impl(path);
+    error = transaction_end(result);
+    return error < 0 ? error : result;
+}
+
+long fs_remove(const char *path) {
+    int error = transaction_begin();
+    if (error < 0) return error;
+    const long result = fs_remove_impl(path);
+    error = transaction_end(result);
+    return error < 0 ? error : result;
+}
+
+long fs_remove_tree(const char *path) {
+    int error = transaction_begin();
+    if (error < 0) return error;
+    const long result = fs_remove_tree_impl(path);
+    error = transaction_end(result);
+    return error < 0 ? error : result;
+}
+
+long fs_copy(const char *source, const char *destination) {
+    int error = transaction_begin();
+    if (error < 0) return error;
+    const long result = fs_copy_impl(source, destination);
+    error = transaction_end(result);
+    return error < 0 ? error : result;
+}
+
+long fs_write(const char *path, const void *buffer, size_t length) {
+    int error = transaction_begin();
+    if (error < 0) return error;
+    const long result = fs_write_impl(path, buffer, length);
+    error = transaction_end(result);
+    return error < 0 ? error : result;
+}
+
+long fs_write_inode(uint32_t number, size_t offset, const void *buffer, size_t length) {
+    int error = transaction_begin();
+    if (error < 0) return error;
+    const long result = fs_write_inode_impl(number, offset, buffer, length);
+    error = transaction_end(result);
+    return error < 0 ? error : result;
+}
+
+long fs_truncate_inode(uint32_t number) {
+    int error = transaction_begin();
+    if (error < 0) return error;
+    const long result = fs_truncate_inode_impl(number);
+    error = transaction_end(result);
+    return error < 0 ? error : result;
 }

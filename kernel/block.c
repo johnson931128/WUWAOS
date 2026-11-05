@@ -36,6 +36,7 @@
 #define DEVICE_DRIVER_OK 4U
 #define DEVICE_FEATURES_OK 8U
 #define FEATURE_VERSION_1 0U
+#define FEATURE_FLUSH 9U
 #define QUEUE_SIZE 8U
 
 typedef struct {
@@ -75,6 +76,7 @@ typedef struct {
     volatile uint16_t consumed;
     uint16_t length;
     uint64_t capacity;
+    int flush_supported;
     VirtqDescriptor descriptor[QUEUE_SIZE] __attribute__((aligned(16)));
     VirtqAvailable avail_ring __attribute__((aligned(2)));
     VirtqUsed used_ring __attribute__((aligned(4)));
@@ -247,7 +249,10 @@ static int init_device(uintptr_t base) {
         return -1;
     }
     device[VIRTIO_DRIVER_FEATURES_SEL / 4] = 0;
-    device[VIRTIO_DRIVER_FEATURES / 4] = 0;
+    device[VIRTIO_DEVICE_FEATURES_SEL / 4] = 0;
+    const uint32_t low_features = device[VIRTIO_DEVICE_FEATURES / 4];
+    active->flush_supported = (low_features & (1U << FEATURE_FLUSH)) != 0;
+    device[VIRTIO_DRIVER_FEATURES / 4] = active->flush_supported ? (1U << FEATURE_FLUSH) : 0;
     device[VIRTIO_DRIVER_FEATURES_SEL / 4] = 1;
     device[VIRTIO_DRIVER_FEATURES / 4] = 1U << FEATURE_VERSION_1;
     device[VIRTIO_STATUS / 4] |= DEVICE_FEATURES_OK;
@@ -360,7 +365,7 @@ int block_init_from_fdt(const void *fdt) {
                 kernel_idle();
             }
             swap_disk = active;
-        } else if (has_magic(header, "WUFS0001")) {
+        } else if (has_magic(header, "WUFS0001") || has_magic(header, "WUFS0002")) {
             if (filesystem != 0) {
                 console_puts("[block] Duplicate WUFS disks; refusing boot\n");
                 kernel_idle();
@@ -387,6 +392,35 @@ int block_write(uint32_t sector, const void *buffer) {
     active = filesystem;
     if (active == 0) return -1;
     return transfer(sector, (void *)buffer, 1);
+}
+int block_flush(void) {
+    active = filesystem;
+    if (active == 0) return -1;
+    if (!active->flush_supported) return -1;
+    request_status = 0xffU;
+    active->header.type = 4U;
+    active->header.reserved = 0;
+    active->header.sector = 0;
+    descriptors[0] = (VirtqDescriptor){ (uintptr_t)&active->header, sizeof(active->header), 1U, 1U };
+    descriptors[1] = (VirtqDescriptor){ (uintptr_t)&request_status, 1U, 2U, 0U };
+    const uint16_t index = available.index;
+    available.ring[index % queue_size] = 0;
+    const uint64_t start = clock_ticks();
+    __asm__ volatile("fence rw, w" : : : "memory");
+    available.index = (uint16_t)(index + 1U);
+    __asm__ volatile("fence w, o" : : : "memory");
+    device[VIRTIO_QUEUE_NOTIFY / 4] = 0;
+    while (used.index == consumed_used) {
+        const uint64_t elapsed = clock_ticks() - start;
+        if (elapsed >= clock_ms_ticks(BLOCK_IO_TIMEOUT_MS) && used.index == consumed_used)
+            transfer_timeout(0, 1, elapsed);
+    }
+    __asm__ volatile("fence r, rw" : : : "memory");
+    ++consumed_used;
+    return request_status == 0 ? 0 : -1;
+}
+int block_flush_supported(void) {
+    return filesystem != 0 && filesystem->flush_supported;
 }
 uint32_t block_sector_count(void) {
     return filesystem == 0 ? 0 : filesystem->capacity > UINT32_MAX ? UINT32_MAX : (uint32_t)filesystem->capacity;

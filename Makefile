@@ -82,7 +82,7 @@ $(TARGET): $(OBJECTS) kernel/linker.ld
 	$(CC) $(LDFLAGS) -Wl,-T,kernel/linker.ld -Wl,-Map,build/kernel.map $(OBJECTS) -o $@
 
 build/kernel-disk.elf: $(TARGET)
-	$(OBJCOPY) --strip-debug $< $@
+	$(OBJCOPY) --strip-all $< $@
 
 DISK_IMAGE ?= build/wuwaos.img
 SWAP_IMAGE ?= build/wuwaos-swap.img

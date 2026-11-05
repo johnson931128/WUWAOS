@@ -129,7 +129,7 @@ To exit QEMU, press **Ctrl+A**, release the keys, and then press **X**. The `exi
 
 ## Filesystem Initialization Checks
 
-The current source protects unknown nonblank disks in both the kernel and the host image tool: a missing `WUFS0001` signature permits automatic initialization only after the media is confirmed to contain all zero bytes. These changes and the test entry below postdate portable v1; the existing release ZIP does not include them. The user confirmed completion of this verification on 2026-11-05; per-case console logs and hashes have not been archived, and fault-injection coverage remains outstanding.
+The current source preserves legacy `WUFS0001` images read-only and formats confirmed blank media as `WUFS0002`. WUFS0002 uses a bounded full-sector redo journal with flush barriers and boot-time replay. Unknown nonblank images and images with a pending or invalid journal are never rewritten by the host image tool. These changes postdate portable v1; the existing release ZIP does not include WUFS0002 or the journal and is not rebuilt by this source update. Details, new-disk commands, recovery steps, and scratch QEMU fault-injection results are in [Spec 32](docs/SPEC-32-wufs-redo-journal.md); the older initialization guard is in [Spec 31](docs/SPEC-31-filesystem-initialization-guard.md).
 
 From a source checkout with the portable environment, run these fixed commands in PowerShell:
 

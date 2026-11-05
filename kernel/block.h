@@ -11,6 +11,8 @@ unsigned int block_mmio_count(void);
 uintptr_t block_mmio_base(unsigned int index);
 int block_read(uint32_t sector, void *buffer);
 int block_write(uint32_t sector, const void *buffer);
+int block_flush(void);
+int block_flush_supported(void);
 uint32_t block_sector_count(void);
 int block_swap_read(uint32_t sector, void *buffer);
 int block_swap_write(uint32_t sector, const void *buffer);

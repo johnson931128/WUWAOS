@@ -35,6 +35,7 @@
 | 29 | [Windows 單指令桌面啟動器](./SPEC-29-desktop-launcher.md)，背景 QEMU、原生 VNC viewer、QMP 關閉與 Snapshot 磁碟隔離 |
 | 30 | [桌面 Terminal 與圖形 shell](./SPEC-30-graphical-terminal.md)，VirtIO keyboard/tablet、獨立 GUI TTY、ANSI 終端與 QEMU 驗收 |
 | 31 | [WUFS 非空白磁碟保護與固定驗證入口](./SPEC-31-filesystem-initialization-guard.md)，kernel／主機映像工具的格式化條件、獨立磁碟與 SHA-256 檢查；使用者已確認本項驗證 |
+| 32 | [WUFS0002 整磁區 redo journal 與安全儲存](./SPEC-32-wufs-redo-journal.md)，提交順序、重播、WUFS0001 唯讀相容、host image 安全替換與 QEMU fault 驗收 |
 
 ## 如何判斷是否驗證過
 
