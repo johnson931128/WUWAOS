@@ -50,7 +50,7 @@ README 的 [Windows portable release](https://github.com/johnson931128/WUWAOS#wi
 
 請對照工具印出的預期開機訊息，只使用 `help`／`ls` 等讀取操作；按 Ctrl+A，放開後按 X 結束 QEMU，工具才會比對前後 SHA-256。`valid` 應正常掛載且磁碟不變；`blank` 應初始化並產生 WUFS 標記；`damaged`（檔頭清零）和 `tail`（只在最後一個 byte 放資料）應拒絕格式化且磁碟完全不變。
 
-`PASS` 回報的是磁碟內容檢查，開機訊息仍需人工確認。測試映像會保留下來供檢查；每次都是新磁碟，因此空白案例可以重複執行。這個入口需要含上述工具的原始碼版本，舊的 portable v1 發行包沒有這個後續新增的命令。本版核心編譯與 QEMU 驗收尚待記錄；演算法、預期訊息及驗證邊界見 [Spec 31](./SPEC-31-filesystem-initialization-guard.md)。
+`PASS` 回報的是磁碟內容檢查，開機訊息仍需人工確認。測試映像會保留下來供檢查；每次都是新磁碟，因此空白案例可以重複執行。這個入口需要含上述工具的原始碼版本，舊的 portable v1 發行包沒有這個後續新增的命令。使用者已於 2026-11-05 確認本項驗證完成；演算法、證據範圍及仍待故障注入的項目見 [Spec 31](./SPEC-31-filesystem-initialization-guard.md)。
 
 ## 授權與套件來源
 

@@ -45,7 +45,7 @@ WUFS 在第一個磁區開頭使用 8-byte 格式標記（magic）`WUFS0001`。�
 
 主機上的 `tools/make_disk.py` 也會先檢查既有映像：WUFS 映像依原有流程更新，未知且非空白的映像則報錯退出，不寫回檔案。這一層不可省略，因為一般 `make run` 在 kernel 啟動前就會執行該工具。
 
-完整設計與四種驗證案例見 [Spec 31](../SPEC-31-filesystem-initialization-guard.md)。本次機制已實作，編譯與 QEMU 驗收結果尚未記錄；portable v1 發行包不包含這次後續修正。它也不提供 fsck、資料復原或掉電交易保護。
+完整設計與四種驗證案例見 [Spec 31](../SPEC-31-filesystem-initialization-guard.md)。本次機制已實作，使用者已確認本項驗證完成，逐案例原始輸出尚未留存；portable v1 發行包不包含這次後續修正。它也不提供 fsck、資料復原或掉電交易保護。
 
 ## 路徑查找與讀寫
 

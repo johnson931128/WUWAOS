@@ -6,7 +6,7 @@ WUWAOS 是以 C 與 RISC-V 組合語言撰寫、真正運行於 QEMU 虛擬電�
 
 **[從環境與啟動開始 →](./topics/getting-started.md)**
 
-Windows 可先下載 [免安裝完整包](./portable-windows.md)，在 PowerShell 使用 `.\Start-WUWAOS.cmd` 啟動 CLI，或加上 `gui` 開啟桌面。最新原始碼的磁碟保護機制與 `.\Test-FsDisk.cmd` 操作見 [Spec 31](./SPEC-31-filesystem-initialization-guard.md)；本版核心驗收尚待記錄，這些後續修正不包含在既有 portable v1 ZIP。
+Windows 可先下載 [免安裝完整包](./portable-windows.md)，在 PowerShell 使用 `.\Start-WUWAOS.cmd` 啟動 CLI，或加上 `gui` 開啟桌面。最新原始碼的磁碟保護機制與 `.\Test-FsDisk.cmd` 操作見 [Spec 31](./SPEC-31-filesystem-initialization-guard.md)；使用者已確認磁碟保護驗證，這些後續修正不包含在既有 portable v1 ZIP。
 
 ## 閱讀路線
 

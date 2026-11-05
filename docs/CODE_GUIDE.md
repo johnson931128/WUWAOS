@@ -314,7 +314,7 @@ WUFS 在 LBA 0 存 superblock，接著 inode bitmap、block bitmap、固定 inod
 
 `fs_init` 先清除掛載狀態。magic 不符時，`disk_is_blank` 使用 512-byte 緩衝區掃描整顆磁碟，回傳全零、非空白或讀取失敗；只有全零可進入 formatter。讀取失敗、非零資料及容量介面的飽和值都會拒絕自動格式化，格式化失敗也會清除掛載狀態。正常 magic 仍走既有 superblock 欄位驗證；這不是完整 fsck。
 
-主機的 `make_disk.py` 也檢查整個既有映像，拒絕覆寫 magic 不符且含非零資料的檔案，避免在 kernel 啟動前先清掉內容。固定入口 `.\Test-FsDisk.cmd` 不經 `disk-image` target，直接以新建磁碟啟動 kernel；詳見 [Spec 31](./SPEC-31-filesystem-initialization-guard.md)。本版編譯與 QEMU 驗收結果尚未記錄。
+主機的 `make_disk.py` 也檢查整個既有映像，拒絕覆寫 magic 不符且含非零資料的檔案，避免在 kernel 啟動前先清掉內容。固定入口 `.\Test-FsDisk.cmd` 不經 `disk-image` target，直接以新建磁碟啟動 kernel；詳見 [Spec 31](./SPEC-31-filesystem-initialization-guard.md)。使用者已於 2026-11-05 確認本項驗證完成，逐案例原始輸出尚未留存。
 
 ## 10. syscall.c、共用編號與使用者 API
 

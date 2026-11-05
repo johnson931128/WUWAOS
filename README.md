@@ -129,7 +129,7 @@ To exit QEMU, press **Ctrl+A**, release the keys, and then press **X**. The `exi
 
 ## Filesystem Initialization Checks
 
-The current source protects unknown nonblank disks in both the kernel and the host image tool: a missing `WUFS0001` signature permits automatic initialization only after the media is confirmed to contain all zero bytes. These changes and the test entry below postdate portable v1; the existing release ZIP does not include them. Kernel build and QEMU acceptance results for this change have not yet been recorded.
+The current source protects unknown nonblank disks in both the kernel and the host image tool: a missing `WUFS0001` signature permits automatic initialization only after the media is confirmed to contain all zero bytes. These changes and the test entry below postdate portable v1; the existing release ZIP does not include them. The user confirmed completion of this verification on 2026-11-05; per-case console logs and hashes have not been archived, and fault-injection coverage remains outstanding.
 
 From a source checkout with the portable environment, run these fixed commands in PowerShell:
 

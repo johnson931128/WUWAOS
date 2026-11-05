@@ -50,7 +50,7 @@ Makefile 先建立核心、使用者映像及磁碟，再啟動 QEMU。WUFS 磁�
 .\Test-FsDisk.cmd tail
 ```
 
-每次都會自動編譯並建立獨立測試磁碟。按 Ctrl+A，放開後按 X 結束 QEMU，工具才會檢查前後雜湊。預期訊息與結果見 [Spec 31](../SPEC-31-filesystem-initialization-guard.md)。這些是 portable v1 之後的原始碼更新；v1 ZIP 沒有上述測試入口，也不包含本次保護修正。本版編譯及 QEMU 驗收結果尚未記錄。
+每次都會自動編譯並建立獨立測試磁碟。按 Ctrl+A，放開後按 X 結束 QEMU，工具才會檢查前後雜湊。預期訊息與結果見 [Spec 31](../SPEC-31-filesystem-initialization-guard.md)。這些是 portable v1 之後的原始碼更新；v1 ZIP 沒有上述測試入口，也不包含本次保護修正。使用者已確認磁碟保護驗證完成，證據範圍與未驗證項目記錄於該規格。
 
 ## 進入系統後
 
