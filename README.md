@@ -4,10 +4,11 @@
 ![Architecture: RISC-V 64](https://img.shields.io/badge/architecture-RISC--V%2064-283272?logo=riscv&logoColor=white)
 ![Platform: QEMU](https://img.shields.io/badge/platform-QEMU-FF6600?logo=qemu&logoColor=white)
 ![Project: Educational OS](https://img.shields.io/badge/project-educational%20OS-2E8B57)
+![License: MIT](https://img.shields.io/badge/license-MIT-green)
 
 WUWAOS is a small operating system written in **C and RISC-V assembly** that boots on a QEMU-emulated RISC-V 64-bit machine. The project explores how processes, scheduling, memory, and file systems work together by implementing a kernel and user programs.
 
-[Documentation website](https://johnson931128.github.io/WUWAOS/) · [Code and architecture guide](docs/CODE_GUIDE.md) · [Specifications and verification](docs/history.md)
+[Documentation website](https://johnson931128.github.io/WUWAOS/) · [Windows portable guide](docs/portable-windows.md) · [Releases](https://github.com/johnson931128/WUWAOS/releases) · [Code and architecture guide](docs/CODE_GUIDE.md) · [Specifications and verification](docs/history.md)
 
 ## System Overview
 
@@ -44,7 +45,9 @@ When QEMU has a VirtIO GPU, tablet, and keyboard, WUWAOS draws a 1280×720 deskt
 
 The Terminal accepts US keyboard input including Shift, Enter, Backspace, Tab, Ctrl+D, and arrow keys. It supports a fixed 100×30 character area and a subset of ANSI cursor, erase, color, alternate-screen, and visibility controls. It is a small kernel TTY, not a POSIX PTY. It has no resize, drag, clipboard, job control, or Ctrl+C support. [Graphical Terminal design and QEMU evidence](docs/SPEC-30-graphical-terminal.md) · [workstate screenshot](docs/images/wuwaos-terminal-workstate.png).
 
-On Windows with WSL1, start the desktop and its native viewer with one PowerShell command. The launcher builds the OS, runs QEMU in the background, and closes that QEMU session when the viewer closes:
+With the Windows portable release, open the desktop from PowerShell using `./Start-WUWAOS.cmd gui`. QEMU runs natively on Windows; a VNC viewer is not needed. See the [portable guide](docs/portable-windows.md) for extraction and build instructions.
+
+On Windows with an existing WSL1 environment, start the desktop and its native viewer with one PowerShell command. The WSL launcher builds the OS, runs QEMU in the background, and closes that QEMU session when the viewer closes:
 
 ```powershell
 ./tools/run-desktop.ps1
@@ -60,6 +63,27 @@ Install or download the official [TigerVNC Windows viewer](https://github.com/Ti
 For a Linux desktop or WSLg session with a working display, use `make run-gui GUI_DISPLAY=gtk` or `make run-gui GUI_DISPLAY=sdl`. The advanced manual WSL1 path remains `make run-gui-vnc` followed by a Windows VNC viewer connected to `127.0.0.1::5901`. GUI Make targets update the selected disk images before QEMU starts; do not edit images on the host while QEMU is using them. `make run` remains the text-mode UART workflow.
 
 ## Getting Started
+
+### Windows portable release
+
+The portable release bundles the WUWAOS source and a Windows x64 toolchain: MSYS2, Clang, LLD, LLVM, Make, Python, QEMU, and OpenSBI. It supports offline compilation and execution without an installer, administrator access, WSL, or changes to the system PATH.
+
+Download `WUWAOS-portable-windows-x64.zip` from [Releases](https://github.com/johnson931128/WUWAOS/releases) when a portable release is available. Extract the complete archive into a writable local directory; use a simple path such as `C:\WUWAOS`, avoiding spaces and special characters. Open PowerShell in the extracted project directory:
+
+```powershell
+.\Start-WUWAOS.cmd check   # Verify the bundled tools
+.\Start-WUWAOS.cmd build   # Compile and prepare fresh disk images
+.\Start-WUWAOS.cmd gui     # Build if needed and open the graphical desktop
+.\Start-WUWAOS.cmd         # Build if needed and run the UART shell
+```
+
+Close the QEMU window to stop the graphical session. For the UART shell, press **Ctrl+A**, release the keys, and press **X**. Stop the existing session before opening another one that uses the same disk images.
+
+The release includes a package/version manifest and SHA-256 checksum. It excludes the original computer's user profiles, cached downloads, signing keyring, and guest disk contents. The first build creates new WUFS and swap images; later sessions preserve guest files. The toolchain supports Windows x64; other hosts need their own tools. See the [portable guide](docs/portable-windows.md) for details and packaging commands.
+
+GitHub's automatically generated **Source code** archives and a normal `git clone` contain only project files; the toolchain is supplied separately in the portable release asset.
+
+### Existing WSL environment
 
 The following example uses Windows PowerShell, WSL Ubuntu, and a checkout at `C:\programing\WUWAOS`. WSL needs Clang, LLD, llvm-objcopy, Make, Python 3, QEMU for RISC-V, and OpenSBI.
 
@@ -90,7 +114,12 @@ This first loader accepts a restricted static ELF64 RV64 layout and the WUWAOS s
 The documentation and course notes linked below are currently written in Traditional Chinese.
 
 - [Getting started and topic chapters](docs/index.md): boot, processes, scheduling, memory, I/O, file systems, and user programs.
+- [Windows portable environment](docs/portable-windows.md): offline builds, native QEMU, packaging, checksums, and Release uploads.
 - [Synchronization demo](docs/SPEC-23-sync-demo.md): observing mutex and semaphore blocking and wakeup.
 - [Code and architecture guide](docs/CODE_GUIDE.md): the responsibilities and design of each source file.
 - [Specifications and verification index](docs/history.md): design decisions, verification, and limitations for each stage; older specifications retain their historical context.
 - [Course notes](notes/): operating system concepts and terminology.
+
+## License
+
+WUWAOS's original source code is licensed under the [MIT License](LICENSE). The desktop font uses the [SIL Open Font License 1.1](licenses/Cascadia-OFL.txt). Tools bundled in portable releases retain their individual licenses; see [third-party notices](THIRD_PARTY_NOTICES.md) and the release's package manifest for details.

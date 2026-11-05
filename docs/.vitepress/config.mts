@@ -47,7 +47,7 @@ export default defineConfig({
     siteTitle: 'WUWAOS 實作紀錄',
     nav: [{ text: '閱讀章節', link: '/topics/getting-started' }, { text: '規格紀錄', link: '/history' }],
     sidebar: [
-      { text: 'WUWAOS', items: [{ text: '00 · 專案總覽', link: '/' }] },
+      { text: 'WUWAOS', items: [{ text: '00 · 專案總覽', link: '/' }, { text: 'Windows 免安裝環境', link: '/portable-windows' }] },
       { text: '從硬體到應用程式', items: chapters.map(([text, slug], i) => ({ text: `${String(i + 1).padStart(2, '0')} · ${text}`, link: `/topics/${slug}` })) },
       { text: '規格與參考', items: [{ text: '原始規格與驗收紀錄', link: '/history' }, { text: '完整程式碼導覽', link: '/CODE_GUIDE' }] },
     ],

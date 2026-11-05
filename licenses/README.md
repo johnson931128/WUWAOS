@@ -1,4 +1,11 @@
-# Desktop font
+# Licenses and third-party components
+
+WUWAOS's original source code uses the [MIT License](../LICENSE). The desktop
+font and tools included in a Windows portable release retain their own licenses.
+See [third-party notices](../THIRD_PARTY_NOTICES.md) for the package manifest,
+bundled license locations, and source-package references.
+
+## Desktop font
 
 `kernel/font_terminal.h` contains **WUWAOS Terminal**, a renamed rasterized
 ASCII subset derived from Microsoft's Cascadia Mono Regular, release v2407.24.
