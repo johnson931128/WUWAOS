@@ -51,7 +51,7 @@ Windows 可先下載 [免安裝完整包](./portable-windows.md)，在 PowerShel
 
 ![XERJ Corpus Hub 於 2026 年 11 月 5 日寄出的 WUWAOS 程式參考通知郵件截圖](./images/wuwaos-xerj-corpus-hub-email-2026-11-05.png)
 
-[查看原圖](./images/wuwaos-xerj-corpus-hub-email-2026-11-05.png)
+[查看原圖](https://raw.githubusercontent.com/johnson931128/WUWAOS/main/docs/images/wuwaos-xerj-corpus-hub-email-2026-11-05.png)
 
 ## 參考與致意
 
