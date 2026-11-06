@@ -45,6 +45,14 @@ Windows 可先下載 [免安裝完整包](./portable-windows.md)，在 PowerShel
 
 本站只展示架構說明與操作指令，OS 原始碼以 GitHub 連結提供，不內嵌程式碼。OS 與文件變更經使用者授權提交到 main；網站發布另由專用工具處理。驗收結果是各規格所記錄的當時操作，網站建置不代表重新執行過 OS 驗證。
 
+## 特殊事蹟
+
+2026 年 11 月 5 日收到 XERJ Corpus Hub 來信，表示選中 WUWAOS 的非空白磁碟保護實作，擬以 MIT 授權並附來源的方式作為程式參考。
+
+![XERJ Corpus Hub 於 2026 年 11 月 5 日寄出的 WUWAOS 程式參考通知郵件截圖](./images/wuwaos-xerj-corpus-hub-email-2026-11-05.png)
+
+[查看原圖](./images/wuwaos-xerj-corpus-hub-email-2026-11-05.png)
+
 ## 參考與致意
 
 閱讀版面與循序章節安排參考 [《1000 行打造作業系統》](https://operating-system-in-1000-lines.vercel.app/tw/)。本文內容依 WUWAOS 自己的程式碼整理，沒有複製該書文章。作業系統概念參考 repository 的 `notes/` 課程筆記，各章另列對應檔案；筆記全文不包含在網站中。
