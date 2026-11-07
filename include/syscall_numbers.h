@@ -69,5 +69,7 @@
 #define ERR_NO_SYSCALL (-38L)
 #define ERR_BROKEN_PIPE (-32L)
 #define ERR_BAD_FD (-9L)
+#define ERR_INTERRUPTED (-4L)
+#define ERR_TIMED_OUT (-110L)
 
 #endif

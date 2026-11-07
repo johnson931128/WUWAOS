@@ -20,6 +20,7 @@ typedef struct {
     uint32_t input_read, input_write, output_read, output_write;
     TtyOutputConsumer consumer;
     void *consumer_context;
+    KernelEventSource input_event;
 } TtyEndpoint;
 
 static TtyEndpoint endpoints[TTY_ENDPOINT_LIMIT];
@@ -57,6 +58,20 @@ void tty_init(void) {
         .references = 1,
         .consumer = uart_output
     };
+    (void)event_source_init(&uart->input_event, uart->generation);
+}
+
+void tty_poll(void) {
+    tty_init();
+    TtyEndpoint *uart = &endpoints[TTY_UART_SLOT];
+    size_t copied = 0;
+    while (uart->input_write - uart->input_read < INPUT_CAPACITY) {
+        const int character = uart_getc_raw();
+        if (character < 0) break;
+        uart->input[uart->input_write++ % INPUT_CAPACITY] = (unsigned char)character;
+        ++copied;
+    }
+    if (copied) event_source_notify(&uart->input_event, 0);
 }
 
 TtyId tty_uart_id(void) {
@@ -68,16 +83,22 @@ TtyId tty_session_create(TtyOutputConsumer consumer, void *context) {
     tty_init();
     for (unsigned slot = TTY_UART_SLOT + 1U; slot < TTY_ENDPOINT_LIMIT; ++slot) {
         TtyEndpoint *endpoint = &endpoints[slot];
-        if (endpoint->used || endpoint->generation == UINT32_MAX) continue;
+        if (endpoint->used || endpoint->generation == UINT32_MAX || endpoint->input_event.retired) continue;
         uint32_t generation = endpoint->generation + 1U;
+        const KernelEventSource previous_event = endpoint->input_event;
         *endpoint = (TtyEndpoint){
             .generation = generation,
             .used = 1,
             .active = 1,
             .references = 1,
             .consumer = consumer,
-            .consumer_context = context
+            .consumer_context = context,
+            .input_event = previous_event
         };
+        if (event_source_init(&endpoint->input_event, generation) < 0) {
+            *endpoint = (TtyEndpoint){ .generation = generation, .input_event = previous_event };
+            continue;
+        }
         return make_id(slot, generation);
     }
     return TTY_ID_INVALID;
@@ -87,6 +108,14 @@ int tty_session_active(TtyId id) {
     tty_init();
     TtyEndpoint *endpoint = get_endpoint(id);
     return endpoint && endpoint->active;
+}
+
+KernelEventSource *tty_input_event(TtyId id, uint32_t *generation) {
+    tty_init();
+    TtyEndpoint *endpoint = get_endpoint(id);
+    if (!endpoint || !endpoint->active) return 0;
+    if (generation) *generation = endpoint->input_event.generation;
+    return &endpoint->input_event;
 }
 
 int tty_retain(TtyId id) {
@@ -104,7 +133,9 @@ void tty_release(TtyId id) {
     if (endpoint->uart && endpoint->references == 1) return;
     if (--endpoint->references == 0) {
         const uint32_t generation = endpoint->generation;
-        *endpoint = (TtyEndpoint){ .generation = generation };
+        event_source_close(&endpoint->input_event, ERR_IO);
+        const KernelEventSource input_event = endpoint->input_event;
+        *endpoint = (TtyEndpoint){ .generation = generation, .input_event = input_event };
     }
 }
 
@@ -155,6 +186,7 @@ int tty_session_close(TtyId id) {
     endpoint->input_read = endpoint->input_write;
     endpoint->consumer = 0;
     endpoint->consumer_context = 0;
+    event_source_close(&endpoint->input_event, ERR_IO);
     return 0;
 }
 
@@ -165,6 +197,7 @@ int tty_input_push(TtyId id, const unsigned char *bytes, size_t length) {
     size_t copied = 0;
     while (copied < length && endpoint->input_write - endpoint->input_read < INPUT_CAPACITY)
         endpoint->input[endpoint->input_write++ % INPUT_CAPACITY] = bytes[copied++];
+    if (copied) event_source_notify(&endpoint->input_event, 0);
     return (int)copied;
 }
 
@@ -172,10 +205,6 @@ int tty_input_read_byte(TtyId id) {
     tty_init();
     TtyEndpoint *endpoint = get_endpoint(id);
     if (!endpoint || !endpoint->active) return TTY_READ_CLOSED;
-    if (endpoint->input_read == endpoint->input_write && endpoint->uart) {
-        const int character = uart_getc_raw();
-        if (character >= 0) endpoint->input[endpoint->input_write++ % INPUT_CAPACITY] = (unsigned char)character;
-    }
     if (endpoint->input_read == endpoint->input_write) return -1;
     return endpoint->input[endpoint->input_read++ % INPUT_CAPACITY];
 }
@@ -220,14 +249,21 @@ long tty_set_raw_owner(TtyId id, long pid, int enabled) {
     TtyEndpoint *endpoint = get_endpoint(id);
     if (!endpoint || !endpoint->active || pid <= 0 || (enabled != 0 && enabled != 1)) return ERR_BAD_FD;
     if (endpoint->raw_owner != 0 && endpoint->raw_owner != pid) return ERR_BUSY;
-    endpoint->raw_owner = enabled ? pid : 0;
+    const long next_owner = enabled ? pid : 0;
+    if (endpoint->raw_owner != next_owner) {
+        endpoint->raw_owner = next_owner;
+        event_source_notify(&endpoint->input_event, 0);
+    }
     return 0;
 }
 
 void tty_release_raw_owner(long pid) {
     tty_init();
     for (unsigned i = 0; i < TTY_ENDPOINT_LIMIT; ++i)
-        if (endpoints[i].used && endpoints[i].raw_owner == pid) endpoints[i].raw_owner = 0;
+        if (endpoints[i].used && endpoints[i].raw_owner == pid) {
+            endpoints[i].raw_owner = 0;
+            event_source_notify(&endpoints[i].input_event, 0);
+        }
 }
 
 int tty_filter_crlf(TtyId id, int character, int raw) {

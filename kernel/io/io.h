@@ -16,7 +16,6 @@ long io_console_poll(void);
 TtyId io_console_route_tty(void);
 long io_attach_tty(Process *process, TtyId id);
 void io_poll(void);
-int io_console_waiting(void);
 void io_close_process(Process *process);
 void io_cleanup_process_terminal(Process *process, int restore_ansi, TtyId end_session);
 void io_inherit(Process *child, const Process *parent);

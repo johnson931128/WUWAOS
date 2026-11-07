@@ -22,18 +22,29 @@ TrapFrame *trap_handler(TrapFrame *frame) {
         process_current()->frame = frame;
     }
     if (from_user && frame->scause == SUPERVISOR_TIMER) {
+        process_kernel_call_enter();
         timer_interrupt();
         process_preempt();
-        return process_resume(); /* Interrupt sepc is already the resume address. */
+        TrapFrame *resume = process_resume(); /* Interrupt sepc is already the resume address. */
+        process_kernel_call_return();
+        return resume;
     }
     if (from_user && frame->scause == USER_ECALL) {
+        process_kernel_call_enter();
         frame->sepc += 4; /* ECALL is a 32-bit instruction. */
         syscall_dispatch(frame);
-        return process_resume();
+        TrapFrame *resume = process_resume();
+        process_kernel_call_return();
+        return resume;
     }
     if (from_user && (frame->scause == 12 || frame->scause == 13 || frame->scause == 15)) {
+        process_kernel_call_enter();
         const int error = vm_handle_fault(process_current()->page_table, frame->stval, frame->scause, frame->sepc);
-        if (error == 0) return process_resume(); /* Retry the same instruction, not sepc + 4. */
+        if (error == 0) {
+            TrapFrame *resume = process_resume(); /* Retry the same instruction, not sepc + 4. */
+            process_kernel_call_return();
+            return resume;
+        }
         console_puts("[fault] PID="); console_number(process_current()->pid);
         console_puts(" cause="); console_number((long)frame->scause);
         console_puts(" address="); console_hex(frame->stval);

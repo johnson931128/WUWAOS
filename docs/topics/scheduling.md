@@ -55,7 +55,9 @@ yield（主動讓出）會放棄剩餘時間並排隊尾；阻塞或退出也放
 
 初始使用者狀態設 sstatus.SPIE（陷阱返回後中斷啟用狀態），並開啟 sie.STIE（允許計時器中斷）。進入核心後，SIE（監督模式中斷全域開關）保持關閉，處理完才返回使用者模式。
 
-單核心的頁表、行程表與 VirtIO 佇列不會在修改一半時被切走。代價是長 syscall、同步磁碟 I/O 或 Swap 會延後搶占；**50 ms 並非嚴格的最大回應時間，也不是精確 CPU burst 統計**。全員等待 UART 時停用計時器事件，仍採輸入輪詢。
+單核心的頁表、行程表與 VirtIO 佇列不會在修改一半時被切走。代價是長 syscall、同步磁碟 I/O 或 Swap 會延後搶占；**50 ms 並非嚴格的最大回應時間，也不是精確 CPU burst 統計**。所有行程等待時沒有 50 ms user quantum；若仍有 UART／UI poll work，idle scheduler 會另外 arm 短期 timer 以 WFI 喚醒並輪詢。
+
+若沒有 Ready 行程但仍有 event 或 UI poll work，排程器使用固定的短絕對 deadline arm SBI timer，於 SIE=0 下執行 WFI；`sie.STIE` 保持開啟，因此本地 timer pending 可喚醒 WFI，而 trap handler 不會進入 S-mode timer interrupt。返回後先停止／確認 timer，再輪詢 UART、UI 與 event timeout。Spurious wake 會沿用原絕對 deadline，避免無限延後。這是 idle polling 節能等待，不改 50 ms RR quantum，也不是裝置中斷驅動。
 
 ## 在 QEMU 觀察
 

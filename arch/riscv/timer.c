@@ -34,7 +34,11 @@ void timer_init(void) {
 }
 
 void timer_start_slice(unsigned long milliseconds) {
-    set_deadline(clock_ticks() + clock_ms_ticks(milliseconds));
+    timer_start_deadline(clock_ticks() + clock_ms_ticks(milliseconds));
+}
+
+void timer_start_deadline(uint64_t deadline) {
+    set_deadline(deadline);
     armed = 1;
 }
 

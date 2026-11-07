@@ -14,7 +14,7 @@ QEMU → OpenSBI（機器模式韌體）
   → process_start → swtch → scheduler_loop → swtch → first_run → user_enter → sret
   → user/lib/entry.S → user_main(0) → shell_main
       → 顯示 wuwaos>，以 read 等待輸入
-      → kernel/io/io.c 輪詢 UART 或獨立 GUI TTY，完成一行並喚醒 shell
+      → scheduler 的 io_poll 輪詢 UART 並通知 TTY event；shell 在原 syscall stack 醒來後取字元、完成一行
       → user/shell/shell.c 解析指令
       → user/lib/api.c 的 ecall → arch/riscv/trap.S → arch/riscv/trap.c → kernel/syscall/syscall.c
           ├─ kernel/proc/process.c → kernel/proc/scheduler.c：PCB 狀態／生命週期 → FIFO 就緒佇列
@@ -245,7 +245,7 @@ ps 的 free／total 是底層配置池頁數；vmstat 的 resident／limit 是�
 ## 7. process.c / process.h：PCB 與生命週期
 
 原本的 Process 結構現在以 ProcessControlBlock 標記，仍只有一份真實狀態。processes[16] 是行程表，kernel_stacks 每欄預留 16 KiB。
-PCB 保存 PID／父 PID／角色／狀態／結束碼、頁表與兩種 stack、frame、等待原因／事件通道／子 PID／結果位址、固定 8 格 FD table 與待完成 I/O 的種類／FD／位址／長度／進度。FD 0／1／2 預設為 console input／output／error，其他 FD 指向全域 OFD 表。
+PCB 保存 PID／父 PID／角色／狀態／結束碼、頁表與兩種 stack、frame、等待原因／事件通道／子 PID／結果位址、固定 8 格 FD table、event WaitRecord 與 `kernel_call_active`／`kill_pending`。WaitRecord 保存 source generation/sequence、deadline、完成狀態與結果；TTY／pipe 實際 buffer 位址與短期 staging 留在 caller stack，不交由 scheduler poller 使用。UART FD 0／1／2 是固定 sentinel；GUI TTY、pipe 與 file FD 指向全域 OFD 表。
 `ready_next` 指向下一個就緒 PCB，`ready_queued` 標示是否已入列；只有 Ready 行程位於佇列，Running／Waiting／Zombie／Unused 不佔據佇列節點。行程表仍保存所有狀態，佇列不複製 PCB。
 
 ```text
@@ -314,22 +314,20 @@ process_table 先格式化各列，依最大資料長度調整欄寬，再輸出
 ### 終端行輸入
 
 io_read 先驗證 fd（描述號）、長度與完整可寫範圍。fd0 未接管道時接受 2–128-byte 行輸入請求。
-process_block_io 將緩衝區／長度存入 PCB、設定 IO_CONSOLE_READ，狀態改為 Waiting。不是在使用者程式持續讀硬體。
-console_read_line 非阻塞輪詢字元、回顯、處理 CR／LF 與 Backspace。CR 後的 LF 會忽略；超長行丟棄到換行後回傳錯誤，不執行截斷命令。Ctrl+D（EOT）空行時回 EOF=0，行內有內容時回傳目前字元但不附換行；raw mode 不特殊處理。
-process_block_io 在核心函式內切走；完成時回寫換行與長度，process_complete_io 把結果存入 PCB io_result，再改 Ready。恢復後 process_block_io 正常回傳結果，經 io_read／io_write→syscall_dispatch 填 a0。
+TTY read 在 caller stack 上以 event snapshot→讀取 readiness→必要時 wait→醒來 retry。`io_poll` 只輪詢 UART 並 notify，console_read_line 在原 process stack 收集字元、回顯並處理 CR／LF 與 Backspace。CR 後的 LF 會忽略；超長行丟棄到換行後回傳錯誤，不執行截斷命令。Ctrl+D（EOT）空行時回 EOF=0，行內有內容時回傳目前字元但不附換行；raw mode 不特殊處理。
 
-`console_mode(1)` 取得 raw console 的單一持有權。持有者 read(0, buffer, 1) 設定 IO_CONSOLE_RAW，console_read_raw 取得一個 byte 後直接寫回、不回顯，不要求 Enter。其他 console 讀取者（包括已掛起的請求）回 -16，避免讀走編輯器按鍵；fork 不繼承持有權，exit／kill／成功 exec 釋放它。切換時略過 shell 命令 CR 後尚未消耗的 LF。這是自訂的簡化介面，沒有完整 termios、信號與前景 process group。
+`console_mode(1)` 取得 endpoint 的 raw input owner。持有者 read(0, buffer, 1) 在原 process stack wait/retry，取得一個 byte 後直接複製、不回顯，不要求 Enter。其他 endpoint 讀取者（包括已掛起的請求）回 -16，避免讀走編輯器按鍵；fork 不繼承持有權，exit／kill／成功 exec 釋放它。切換時略過 shell 命令 CR 後尚未消耗的 LF。這是自訂的簡化介面，沒有完整 termios、信號與前景 process group。
 
 ### FD、OFD 與 Pipe 環形緩衝區
 
-每 PCB 有 8 格 FD table，FD 0／1／2 初始指向特殊 console input／output／error；其他項目指向全域 16 格 OFD 表。OFD 保存一般檔案 inode、共享 offset／讀寫權限，或 pipe 的讀端／寫端。dup／dup2 與 fork 增加 OFD 引用，同一描述共用 offset；exec 保留描述，close／exit／kill 減少引用。open 與 pipe 選最小可用 FD，標準描述關閉後其槽位可重用。
+每 PCB 有 8 格 FD table，UART FD 0／1／2 是不占 OFD 的固定 console sentinel；GUI TTY、pipe 與 file FD 指向全域 16 格 OFD。OFD 可保存 TTY generation handle、一般檔案 inode／共享 offset／讀寫權限，或 pipe 的讀端／寫端。GUI fd 1／2 共用 writable TTY OFD；dup／dup2 與 fork 增加 OFD 引用，同一描述共用 offset／endpoint；exec 保留描述，close／exit／kill 減少引用。open 與 pipe 選最小可用 FD，標準描述關閉後其槽位可重用。
 
 `pipes[8]` 各有固定 256-byte 資料陣列、reader／writer OFD 參照、`read_at`／`write_at` 與 `count`。寫 byte 後索引對 256 取餘數，讀取相反；傳輸 N bytes 耗時 O(N)，儲存固定 O(256)。pipe syscall 同時配置 read/write OFD；dup／fork 只增加 OFD 引用，不複製 ring。
 
 - `io_read`／`io_write` 先按 OFD 類型與方向驗證，再檢查使用者記憶體權限；console、pipe 與 WUFS regular file 使用相同 FD 呼叫。
 - pipe 空且尚有 writer 時讀取 pending；無 writer 且資料已讀完回 EOF 0。滿時寫入 pending；無 reader 回 -32。pipe 讀寫允許短讀／短寫，使用者可循環處理。
 - file OFD 的 read offset 增加實際讀取量；write 使用 RMW sector 保留未改 bytes，`O_APPEND` 每次從目前 EOF 寫入並更新共享 offset。開啟中的 inode 不可透過 rm／rm tree／cp 覆寫／truncate 釋放或換代。
-- io_poll 掃描 WAIT_IO PCB，依保存的 FD 重新解析 OFD，重試 pipe／console 操作，完成傳輸／EOF／錯誤後填 io_result 並喚醒。
+- pipe read/write 在 caller stack 上重試操作；usercopy 成功後更新 ring 並 notify。`io_poll` 僅 harvest UART bytes 並 notify input source，不掃描 PCB 代替行程搬移資料。
 - close／exit／kill 經 OFD 引用計數更新 pipe reader／writer。最後 writer 關閉且 ring 變空才回 EOF；最後 reader 關閉會讓 writer 回 -32。
 
 固定容量限制為每 process 8 descriptors、全域 16 OFD、8 pipes；建立／繼承／關閉在單核心核心區間內完成，不需要額外鎖。Shell 每行最多 3 個 stages；各 stage 用標準 FD，建立後關閉所有額外端點。

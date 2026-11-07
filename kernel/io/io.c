@@ -27,9 +27,11 @@ typedef struct {
 } OpenFile;
 typedef struct {
     int used;
+    uint32_t generation;
     unsigned readers, writers;
     unsigned char bytes[PIPE_CAPACITY];
     size_t read_at, write_at, count;
+    KernelEventSource event;
 } Pipe;
 
 static OpenFile open_files[OFD_LIMIT];
@@ -93,7 +95,12 @@ static void ofd_release(int index) {
         Pipe *pipe = &pipes[ofd->pipe];
         if (ofd->type == OFD_PIPE_READ && pipe->readers) --pipe->readers;
         if (ofd->type == OFD_PIPE_WRITE && pipe->writers) --pipe->writers;
-        if (pipe->readers == 0 && pipe->writers == 0) pipe->used = 0;
+        if (pipe->readers == 0 && pipe->writers == 0) {
+            const uint32_t generation = pipe->generation;
+            event_source_close(&pipe->event, ERR_BROKEN_PIPE);
+            const KernelEventSource event = pipe->event;
+            *pipe = (Pipe){ .generation = generation, .event = event };
+        } else event_source_notify(&pipe->event, 0);
     } else if (ofd->type == OFD_TTY) tty_release(ofd->tty);
     *ofd = (OpenFile){0};
 }
@@ -150,13 +157,28 @@ void io_cleanup_process_terminal(Process *process, int restore_ansi, TtyId end_s
 
 static int reserve_pipe(int *read_ofd, int *write_ofd) {
     int pipe_number = -1;
-    for (int i = 0; i < PIPE_LIMIT; ++i) if (!pipes[i].used) { pipe_number = i; break; }
+    for (int i = 0; i < PIPE_LIMIT; ++i)
+        if (!pipes[i].used && !pipes[i].event.retired && pipes[i].generation != UINT32_MAX) {
+            pipe_number = i;
+            break;
+        }
     if (pipe_number < 0) return -1;
     const int r = allocate_ofd(OFD_PIPE_READ);
     if (r < 0) return -1;
     const int w = allocate_ofd(OFD_PIPE_WRITE);
     if (w < 0) { open_files[r] = (OpenFile){0}; return -1; }
-    pipes[pipe_number] = (Pipe){ .used = 1, .readers = 1, .writers = 1 };
+    const uint32_t generation = pipes[pipe_number].generation + 1U;
+    const KernelEventSource previous_event = pipes[pipe_number].event;
+    pipes[pipe_number] = (Pipe){
+        .used = 1, .generation = generation, .readers = 1, .writers = 1,
+        .event = previous_event
+    };
+    if (event_source_init(&pipes[pipe_number].event, generation) < 0) {
+        pipes[pipe_number] = (Pipe){ .generation = generation, .event = previous_event };
+        open_files[w] = (OpenFile){0};
+        open_files[r] = (OpenFile){0};
+        return -1;
+    }
     open_files[r].pipe = pipe_number;
     open_files[r].readable = 1;
     open_files[w].pipe = pipe_number;
@@ -278,34 +300,92 @@ TtyId io_console_route_tty(void) {
     return fd_tty_writable(output) ? fd_tty_id(output) : TTY_ID_INVALID;
 }
 
-static long pipe_read(Process *process, OpenFile *ofd, uintptr_t buffer, size_t length) {
-    Pipe *pipe = &pipes[ofd->pipe];
+static long pipe_read(Process *process, Pipe *pipe, uintptr_t buffer, size_t length) {
     if (pipe->count == 0) return pipe->writers == 0 ? 0 : IO_PENDING;
-    size_t copied = 0;
-    while (copied < length && pipe->count > 0) {
-        const int error = user_write_byte(process->page_table, buffer + copied, pipe->bytes[pipe->read_at]);
-        if (error < 0) return copied ? (long)copied : error;
-        pipe->read_at = (pipe->read_at + 1) % PIPE_CAPACITY;
-        --pipe->count;
-        ++copied;
-    }
-    return (long)copied;
+    unsigned char staging[PIPE_CAPACITY];
+    size_t amount = length < pipe->count ? length : pipe->count;
+    if (amount > sizeof(staging)) amount = sizeof(staging);
+    for (size_t i = 0; i < amount; ++i)
+        staging[i] = pipe->bytes[(pipe->read_at + i) % PIPE_CAPACITY];
+    const int error = user_copy_to(process->page_table, buffer, staging, amount);
+    if (error < 0) return error;
+    pipe->read_at = (pipe->read_at + amount) % PIPE_CAPACITY;
+    pipe->count -= amount;
+    event_source_notify(&pipe->event, 0);
+    return (long)amount;
 }
 
-static long pipe_write(Process *process, OpenFile *ofd, uintptr_t buffer, size_t length) {
-    Pipe *pipe = &pipes[ofd->pipe];
+static long pipe_write(Process *process, Pipe *pipe, uintptr_t buffer, size_t length) {
     if (pipe->readers == 0) return ERR_BROKEN_PIPE;
     if (pipe->count == PIPE_CAPACITY) return IO_PENDING;
-    size_t copied = 0;
-    while (copied < length && pipe->count < PIPE_CAPACITY) {
-        const int error = user_read_byte(process->page_table, buffer + copied, &pipe->bytes[pipe->write_at]);
-        if (error < 0) return copied ? (long)copied : error;
-        pipe->write_at = (pipe->write_at + 1) % PIPE_CAPACITY;
-        ++pipe->count;
-        ++copied;
-    }
-    return (long)copied;
+    unsigned char staging[PIPE_CAPACITY];
+    size_t amount = PIPE_CAPACITY - pipe->count;
+    if (amount > length) amount = length;
+    const int error = user_copy_from(process->page_table, staging, buffer, amount);
+    if (error < 0) return error;
+    for (size_t i = 0; i < amount; ++i)
+        pipe->bytes[(pipe->write_at + i) % PIPE_CAPACITY] = staging[i];
+    pipe->write_at = (pipe->write_at + amount) % PIPE_CAPACITY;
+    pipe->count += amount;
+    event_source_notify(&pipe->event, 0);
+    return (long)amount;
 }
+
+static long pipe_read_wait(Process *process, int fd, uintptr_t buffer, size_t length) {
+    for (;;) {
+        const int value = fd_value(process, fd);
+        OpenFile *ofd = get_ofd(value);
+        if (!ofd || ofd->type != OFD_PIPE_READ || ofd->pipe < 0 || ofd->pipe >= PIPE_LIMIT)
+            return ERR_BAD_FD;
+        Pipe *pipe = &pipes[ofd->pipe];
+        uint32_t generation;
+        uint64_t sequence;
+        if (!pipe->used || event_source_snapshot(&pipe->event, &generation, &sequence) < 0)
+            return ERR_IO;
+        const long result = pipe_read(process, pipe, buffer, length);
+        if (result != IO_PENDING) return result;
+        const long wait = process_wait_event(&pipe->event, generation, sequence, 0, ERR_TIMED_OUT);
+        if (wait < 0) return wait;
+    }
+}
+
+static long pipe_write_wait(Process *process, int fd, uintptr_t buffer, size_t length) {
+    for (;;) {
+        const int value = fd_value(process, fd);
+        OpenFile *ofd = get_ofd(value);
+        if (!ofd || ofd->type != OFD_PIPE_WRITE || ofd->pipe < 0 || ofd->pipe >= PIPE_LIMIT)
+            return ERR_BAD_FD;
+        Pipe *pipe = &pipes[ofd->pipe];
+        uint32_t generation;
+        uint64_t sequence;
+        if (!pipe->used || event_source_snapshot(&pipe->event, &generation, &sequence) < 0)
+            return ERR_BROKEN_PIPE;
+        const long result = pipe_write(process, pipe, buffer, length);
+        if (result != IO_PENDING) return result;
+        const long wait = process_wait_event(&pipe->event, generation, sequence, 0, ERR_TIMED_OUT);
+        if (wait < 0) return wait;
+    }
+}
+
+static long tty_wait_byte(Process *process, TtyId id, int raw, int *character) {
+    for (;;) {
+        if (!tty_session_active(id)) return ERR_IO;
+        const long owner = tty_raw_owner(id);
+        if (owner < 0) return owner;
+        if ((raw && owner != process->pid) || (!raw && owner != 0)) return ERR_BUSY;
+        uint32_t generation;
+        uint64_t sequence;
+        KernelEventSource *source = tty_input_event(id, &generation);
+        if (!source || event_source_snapshot(source, &generation, &sequence) < 0) return ERR_IO;
+        const int byte = tty_input_read_byte(id);
+        if (byte >= 0) { *character = byte; return 0; }
+        const long wait = process_wait_event(source, generation, sequence, 0, ERR_TIMED_OUT);
+        if (wait < 0) return wait;
+    }
+}
+
+static long console_read_line(Process *process, TtyId id, uintptr_t buffer, size_t length);
+static long console_read_raw(Process *process, TtyId id, uintptr_t buffer);
 
 long io_read(long fd, uintptr_t buffer, size_t length) {
     Process *process = process_current();
@@ -323,17 +403,13 @@ long io_read(long fd, uintptr_t buffer, size_t length) {
         if (owner != 0) {
             if (owner != process->pid) return ERR_BUSY;
             if (length > 128) return ERR_INVALID;
-            process->io_fd = (int)fd;
-            return process_block_io(IO_TTY_RAW, (int)fd, buffer, length);
+            return console_read_raw(process, id, buffer);
         }
         if (length < 2 || length > 128) return ERR_INVALID;
-        process->io_fd = (int)fd;
-        return process_block_io(IO_TTY_READ, (int)fd, buffer, length);
+        return console_read_line(process, id, buffer, length);
     }
     if (ofd && ofd->type == OFD_PIPE_READ) {
-        const long result = pipe_read(process, ofd, buffer, length);
-        if (result == IO_PENDING) return process_block_io(IO_PIPE_READ, (int)fd, buffer, length);
-        return result;
+        return pipe_read_wait(process, (int)fd, buffer, length);
     }
     if (ofd && ofd->type == OFD_FILE) {
         unsigned char staging[512];
@@ -365,9 +441,7 @@ long io_write(long fd, uintptr_t buffer, size_t length) {
         return tty_output_write(id, staging, length);
     }
     if (ofd && ofd->type == OFD_PIPE_WRITE) {
-        const long result = pipe_write(process, ofd, buffer, length);
-        if (result == IO_PENDING) return process_block_io(IO_PIPE_WRITE, (int)fd, buffer, length);
-        return result;
+        return pipe_write_wait(process, (int)fd, buffer, length);
     }
     if (ofd && ofd->type == OFD_FILE) {
         unsigned char staging[512];
@@ -387,93 +461,59 @@ long io_write(long fd, uintptr_t buffer, size_t length) {
     return ERR_INVALID;
 }
 
-static int console_input_byte(TtyId id) {
-    return tty_input_read_byte(id);
-}
-
 static void console_echo(TtyId id, unsigned char byte) {
     (void)tty_output_write(id, &byte, 1);
 }
 
-static long console_read_line(Process *process, TtyId id) {
-    int character;
-    while ((character = console_input_byte(id)) >= 0) {
+static long console_read_line(Process *process, TtyId id, uintptr_t buffer, size_t length) {
+    unsigned char line[128];
+    size_t count = 0;
+    int overflow = 0;
+    for (;;) {
+        int character;
+        const long input = tty_wait_byte(process, id, 0, &character);
+        if (input < 0) return input;
         if (tty_filter_crlf(id, character, 0)) continue;
         if (character == 4) {
-            return process->io_overflow ? ERR_INVALID : (long)process->io_count;
+            if (overflow) return ERR_INVALID;
+            if (count == 0) return 0;
+            const int error = user_copy_to(process->page_table, buffer, line, count);
+            return error < 0 ? error : (long)count;
         }
         if (character == '\r' || character == '\n') {
             console_echo(id, '\n');
-            if (process->io_overflow) return ERR_INVALID;
-            const int error = user_write_byte(process->page_table, process->io_buffer + process->io_count, '\n');
-            if (error < 0) return error;
-            return (long)++process->io_count;
+            if (overflow) return ERR_INVALID;
+            if (count >= length) return ERR_INVALID;
+            line[count++] = '\n';
+            const int error = user_copy_to(process->page_table, buffer, line, count);
+            return error < 0 ? error : (long)count;
         }
         if (character == 8 || character == 127) {
-            if (process->io_count > 0) {
-                --process->io_count;
+            if (count > 0) {
+                --count;
                 console_echo(id, '\b'); console_echo(id, ' '); console_echo(id, '\b');
             }
         } else if (character == '\t' || (character >= 32 && character <= 126)) {
-            if (process->io_count < process->io_length - 1 && !process->io_overflow) {
-                const int error = user_write_byte(process->page_table, process->io_buffer + process->io_count,
-                                                  (unsigned char)character);
-                if (error < 0) return error;
-                ++process->io_count; console_echo(id, (unsigned char)character);
-            } else process->io_overflow = 1;
+            if (count < length - 1 && !overflow) {
+                line[count++] = (unsigned char)character;
+                console_echo(id, (unsigned char)character);
+            } else overflow = 1;
         }
     }
-    return IO_PENDING;
 }
 
-static long console_read_raw(Process *process, TtyId id) {
-    int character;
-    while ((character = console_input_byte(id)) >= 0) {
+static long console_read_raw(Process *process, TtyId id, uintptr_t buffer) {
+    for (;;) {
+        int character;
+        const long input = tty_wait_byte(process, id, 1, &character);
+        if (input < 0) return input;
         if (tty_filter_crlf(id, character, 1)) continue;
-        const int error = user_write_byte(process->page_table, process->io_buffer, (unsigned char)character);
+        const int error = user_write_byte(process->page_table, buffer, (unsigned char)character);
         return error < 0 ? error : 1;
     }
-    return IO_PENDING;
 }
 
 void io_poll(void) {
-    int progress;
-    do {
-        progress = 0;
-        for (int i = 0; i < PROCESS_LIMIT; ++i) {
-            Process *process = process_slot(i);
-            if (process->state != PROCESS_WAITING || process->wait_reason != WAIT_IO) continue;
-            const int value = fd_value(process, process->io_fd);
-            OpenFile *ofd = get_ofd(value);
-            long result = IO_PENDING;
-            const int tty_reading = process->io_operation == IO_TTY_READ || process->io_operation == IO_TTY_RAW;
-            const TtyId tty = fd_tty_id(value);
-            const long raw_owner = tty_reading ? tty_raw_owner(tty) : 0;
-            if (tty_reading && !fd_tty_readable(value)) result = ERR_BAD_FD;
-            else if (tty_reading && !tty_session_active(tty)) result = ERR_IO;
-            else if (tty_reading && raw_owner < 0) result = raw_owner;
-            else if (tty_reading && raw_owner != 0 && raw_owner != process->pid) result = ERR_BUSY;
-            else if (process->io_operation == IO_TTY_READ)
-                result = console_read_line(process, tty);
-            else if (process->io_operation == IO_TTY_RAW && raw_owner != process->pid)
-                result = ERR_BUSY;
-            else if (process->io_operation == IO_TTY_RAW)
-                result = console_read_raw(process, tty);
-            else if (process->io_operation == IO_PIPE_READ && ofd && ofd->type == OFD_PIPE_READ)
-                result = pipe_read(process, ofd, process->io_buffer, process->io_length);
-            else if (process->io_operation == IO_PIPE_WRITE && ofd && ofd->type == OFD_PIPE_WRITE)
-                result = pipe_write(process, ofd, process->io_buffer, process->io_length);
-            else result = ERR_INVALID;
-            if (result != IO_PENDING) { process_complete_io(process, result); progress = 1; }
-        }
-    } while (progress);
-}
-
-int io_console_waiting(void) {
-    for (int i = 0; i < PROCESS_LIMIT; ++i) {
-        const Process *process = process_slot(i);
-        if (process->state == PROCESS_WAITING &&
-            (process->io_operation == IO_TTY_READ || process->io_operation == IO_TTY_RAW)) return 1;
-    }
-    return 0;
+    /* Scheduler context is current_index == -1: only harvest UART bytes here. */
+    tty_poll();
 }

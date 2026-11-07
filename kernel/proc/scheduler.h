@@ -11,6 +11,7 @@ void scheduler_init(void);
 void scheduler_enqueue(Process *process);
 void scheduler_remove(Process *process);
 Process *scheduler_next(void);
+size_t scheduler_ready_count(void);
 void scheduler_print_ready(void);
 
 #endif

@@ -76,7 +76,11 @@ static long acquire(SyncObject *object) {
             --object->value; current->sync_wait_handle = 0; return 0;
         }
         enqueue(object, current);
-        process_block_sync();
+        const long wait_result = process_block_sync();
+        if (wait_result < 0) {
+            current->sync_wait_handle = 0;
+            return wait_result;
+        }
         /* Recheck after wakeup: another runnable process may acquire first. */
     }
 }
@@ -132,4 +136,16 @@ void sync_process_cleanup(Process *process) {
             while (object->head) wake_one(object);
         }
     }
+}
+
+void sync_process_cancel_wait(Process *process) {
+    SyncObject *waiting = lookup(process->sync_wait_handle);
+    if (waiting) {
+        remove_waiter(waiting, process);
+        if (waiting->poisoned || (waiting->kind == SYNC_MUTEX && !waiting->owner) ||
+            (waiting->kind == SYNC_SEMAPHORE && waiting->value > 0)) wake_one(waiting);
+    }
+    process->sync_wait_handle = 0;
+    process->sync_next = 0;
+    process_wake_sync(process);
 }

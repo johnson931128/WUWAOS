@@ -6,14 +6,14 @@
 #include "process_limits.h"
 #include "path_limits.h"
 #include "kernel/io/tty.h"
+#include "kernel/proc/event.h"
 
 typedef enum {
     PROCESS_UNUSED, PROCESS_NEW, PROCESS_READY, PROCESS_RUNNING,
     PROCESS_WAITING, PROCESS_ZOMBIE
 } ProcessState;
 
-typedef enum { WAIT_NONE, WAIT_CHANNEL, WAIT_CHILD, WAIT_IO, WAIT_TIMER, WAIT_SYNC } WaitReason;
-typedef enum { IO_NONE, IO_TTY_READ, IO_TTY_RAW, IO_PIPE_READ, IO_PIPE_WRITE } IoOperation;
+typedef enum { WAIT_NONE, WAIT_CHANNEL, WAIT_CHILD, WAIT_SYNC, WAIT_EVENT } WaitReason;
 
 #define PROCESS_FD_LIMIT 8
 
@@ -28,7 +28,7 @@ typedef struct ProcessControlBlock {
     int ready_queued;
     uint64_t dispatches;
     uint64_t preemptions;
-    uint64_t cpu_ticks, run_started, wake_at;
+    uint64_t cpu_ticks, run_started;
     struct ProcessControlBlock *sync_next;
     long sync_wait_handle;
     long exit_status;
@@ -43,13 +43,9 @@ typedef struct ProcessControlBlock {
     uintptr_t wait_status;
     long program;
     int fd_table[PROCESS_FD_LIMIT];
-    int io_fd;
-    IoOperation io_operation;
-    uintptr_t io_buffer;
-    size_t io_length;
-    size_t io_count;
-    int io_overflow;
-    long io_result;
+    KernelEventWait event_wait;
+    unsigned kernel_call_active : 1;
+    unsigned kill_pending : 1;
     TtyId terminal_session;
 } Process;
 
@@ -76,10 +72,15 @@ long process_list(void);
 long process_inspect(long pid);
 long process_trace(long enabled);
 long process_pipeline(uintptr_t result_address);
-void process_block_sync(void);
+long process_block_sync(void);
 void process_wake_sync(Process *process);
-long process_block_io(IoOperation operation, int fd, uintptr_t buffer, size_t length);
-void process_complete_io(Process *process, long result);
+long process_wait_event(KernelEventSource *source, uint32_t generation, uint64_t sequence,
+                        uint64_t deadline, long timeout_result);
+void process_event_notify(KernelEventSource *source, uint32_t generation, long result);
+void process_event_poll_timeouts(void);
+void process_event_cancel(Process *process, long result);
+void process_kernel_call_enter(void);
+void process_kernel_call_return(void);
 const char *process_name(const Process *process);
 const char *process_state_name(ProcessState state);
 

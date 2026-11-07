@@ -44,6 +44,8 @@ Process *scheduler_next(void) {
     return next;
 }
 
+size_t scheduler_ready_count(void) { return ready_queue.count; }
+
 void scheduler_remove(Process *process) {
     if (!process->ready_queued) {
         return;

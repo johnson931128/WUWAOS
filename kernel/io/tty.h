@@ -3,6 +3,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include "kernel/proc/event.h"
 
 typedef uint64_t TtyId;
 typedef void (*TtyOutputConsumer)(TtyId id, void *context,
@@ -12,7 +13,9 @@ typedef void (*TtyOutputConsumer)(TtyId id, void *context,
 #define TTY_READ_CLOSED (-2)
 
 void tty_init(void);
+void tty_poll(void);
 TtyId tty_uart_id(void);
+KernelEventSource *tty_input_event(TtyId id, uint32_t *generation);
 TtyId tty_session_create(TtyOutputConsumer consumer, void *context);
 int tty_session_active(TtyId id);
 int tty_session_close(TtyId id);

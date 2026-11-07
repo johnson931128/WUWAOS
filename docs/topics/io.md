@@ -22,19 +22,19 @@ TTY endpoint 是本專案自訂核心物件，不是 PTY master/slave ABI。`OFD
 
 ## 等待時資料放在哪裡
 
-`kernel/io/io.c` 不能在核心函式裡一直等到某個行程有資料，否則其他 Ready 行程沒有機會前進。尚未完成的操作會記在 PCB 的 `io_operation`、`io_fd`、`io_buffer`、`io_length`、`io_count`，行程改成 Waiting。
+TTY 與 pipe 的阻塞讀寫保留在原 syscall/kernel stack：呼叫端先讀 event sequence，再嘗試操作；沒有資料或空間時登記該 generation/sequence 的 wait，切換出去。TTY/pipe 狀態改變時只增加 sequence 並喚醒 waiters；行程回到原 stack 後重試，並由 caller 執行 usercopy。Pipe 一次最多以 256-byte stack staging buffer 搬移；usercopy 成功後才更新 ring 索引並通知另一端，失敗則不提交該次 ring 變更。
 
-行程在 process_block_io 內保存核心上下文，切到獨立排程器堆疊。排程迴圈與返回前的 process_resume 輪詢可完成的 I/O，將結果存入 PCB 的 io_result 並喚醒行程。再次派發後從原核心函式恢復，io_read／io_write 正常回傳結果，再由 syscall_dispatch 填使用者 a0；不再由輪詢端直接代填 a0。使用者資料不一定常駐 RAM，搬移時由安全複製介面逐頁載入，錯誤明確回報。見[核心上下文切換](./processes.md#核心函式如何暫停與恢復)。
+`scheduler` 的 `io_poll()` 只輪詢 UART 並通知 TTY input event，不複製使用者記憶體，也不完成高層 pipe 操作。事件 wait 結果存於 PCB，因此 source 關閉或 slot 後續重用時，已喚醒的行程不會再解參考舊 source。kill 對仍持有 syscall stack 的行程延後到安全返回邊界清理；deadline/取消也透過同一 wait result 返回。這是目前單 hart、核心不可搶佔下的 caller-stack 設計，並非非同步裝置請求。
 
-這裡的「阻塞行程」不等於「裝置中斷」：目前 UART 仍以輪詢觀察，不是中斷驅動。
+沒有 Ready 行程而存在 event/UI poll work 時，scheduler 以有限的絕對 SBI timer deadline、SIE=0/STIE=1 與 WFI 等待；醒來後停止/確認 timer、輪詢並檢查 timeout。UART 仍由輪詢觀察，不是中斷驅動。事件框架與目前實作進度見[後續計畫](https://github.com/johnson931128/WUWAOS/blob/main/plan.md#2-統一事件等待與非同步-io)。
 
 ## 真實的位元組管道
 
-每個行程有 8 格 FD table，初始 0／1／2 對應 console input／output／error；全域 16 個 OFD（開啟檔案描述）保存檔案 offset 或 pipe endpoint。`dup`、`dup2` 與 fork 共用 OFD，因此共用檔案 offset；exec 保留描述，exit／kill 逐格關閉。console 描述是特殊核心端點，不占 OFD 槽。open 支援唯讀、唯寫、讀寫、建立、截斷與附加旗標；`O_APPEND` 每次寫入時取目前 EOF。WUFS 開啟中的 inode 若被 rm、rm tree、cp 覆寫或 truncate，會回 busy，避免開啟描述指向已回收或換代 inode。
+每個行程有 8 格 FD table，初始 0／1／2 對應 console input／output／error；全域 16 個 OFD（開啟檔案描述）保存檔案 offset、pipe endpoint 或 GUI TTY handle。`dup`、`dup2` 與 fork 共用 OFD，因此共用檔案 offset／endpoint 引用；exec 保留描述，exit／kill 逐格關閉。固定 UART console sentinel 不占 OFD；GUI TTY 使用 OFD，fd 1／2 共用可寫描述。open 支援唯讀、唯寫、讀寫、建立、截斷與附加旗標；`O_APPEND` 每次寫入時取目前 EOF。WUFS 開啟中的 inode 若被 rm、rm tree、cp 覆寫或 truncate，會回 busy，避免開啟描述指向已回收或換代 inode。
 
 每個 pipe 使用 256-byte ring buffer（環形緩衝區）。`read_at`、`write_at` 是讀寫索引，`count` 記錄目前資料量；索引前進至尾端後繞回。
 
-管道滿時寫入者等待；reader 讀走資料後輪詢會喚醒寫入者。空管道且仍有寫入者時，reader 等待；所有寫端關閉且資料讀完才得到 EOF（資料結束）。沒有讀取者時，寫入回報 `ERR_BROKEN_PIPE`。
+管道滿時寫入者等待；reader 成功讀走資料後以 event 喚醒寫入者。空管道且仍有寫入者時，reader 等待；所有寫端關閉且資料讀完才得到 EOF（資料結束）。沒有讀取者時，寫入回報 `ERR_BROKEN_PIPE`。每次操作可短寫，呼叫端以回傳位元組數確認進度。
 
 每 byte 入／出緩衝區 O(1)，搬移 N bytes 為 O(N)，另外可能包含多次阻塞與恢復。端點引用透過 OFD 引用計數在 dup／fork 繼承、close／exit／kill 關閉時更新；多餘端點關閉後才會出現 EOF 或 broken pipe。
 

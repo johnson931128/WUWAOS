@@ -35,10 +35,27 @@ static void process_poll_ui(void) {
 static int process_ui_event_active(void) {
     return ui_active_callback && ui_active_callback();
 }
+
+static int process_event_waiting(void) {
+    for (int i = 0; i < PROCESS_LIMIT; ++i)
+        if (processes[i].event_wait.active && !processes[i].event_wait.completed) return 1;
+    return 0;
+}
+
+static uint64_t process_event_deadline(uint64_t fallback) {
+    uint64_t deadline = fallback;
+    for (int i = 0; i < PROCESS_LIMIT; ++i) {
+        const KernelEventWait *wait = &processes[i].event_wait;
+        if (!wait->active || wait->completed || !wait->deadline) continue;
+        if ((int64_t)(wait->deadline - deadline) < 0) deadline = wait->deadline;
+    }
+    return deadline;
+}
 static long next_pid = 1;
 static int trace_enabled = 1;
 static unsigned char scheduler_stack[16 * 1024] __attribute__((aligned(16)));
 static KernelContext scheduler_context, boot_context;
+static void process_cancel_wait(Process *process);
 
 static _Noreturn void first_run(void) {
     user_enter(process_current()->frame);
@@ -311,9 +328,6 @@ static long process_install_image(Process *process, uintptr_t root, long program
     process->wait_reason = WAIT_NONE;
     process->channel = process->wait_pid = 0;
     process->wait_status = 0;
-    process->io_operation = IO_NONE;
-    process->io_buffer = process->io_length = process->io_count = 0;
-    process->io_overflow = 0;
     vm_enable(root);
     vm_destroy(old_root);
     console_puts("[exec] PID=");
@@ -352,27 +366,8 @@ long process_sleep(long channel) {
 
 long process_sleep_ms(long milliseconds) {
     if (milliseconds < 1 || milliseconds > 60000) return ERR_INVALID;
-    Process *process = process_current();
-    process->wake_at = clock_ticks() + clock_ms_ticks((unsigned long)milliseconds);
-    process->wait_reason = WAIT_TIMER;
-    transition(process, PROCESS_WAITING, "timed sleep");
-    suspend_current();
-    return 0;
-}
-
-static int wake_timed(void) {
-    const uint64_t now = clock_ticks();
-    int pending = 0;
-    for (int i = 0; i < PROCESS_LIMIT; ++i) {
-        Process *process = &processes[i];
-        if (process->state != PROCESS_WAITING || process->wait_reason != WAIT_TIMER) continue;
-        if ((int64_t)(now - process->wake_at) >= 0) {
-            process->wait_reason = WAIT_NONE;
-            process->wake_at = 0;
-            transition(process, PROCESS_READY, "timer wakeup");
-        } else pending = 1;
-    }
-    return pending;
+    const uint64_t deadline = clock_ticks() + clock_ms_ticks((unsigned long)milliseconds);
+    return process_wait_event(0, 0, 0, deadline, 0);
 }
 
 long process_wakeup(long channel) {
@@ -437,6 +432,7 @@ long process_wait(long pid, uintptr_t status_address) {
     transition(parent, PROCESS_WAITING, "wait child");
     suspend_current();
     /* Resume inside wait, on this parent's original kernel stack. */
+    if (parent->kill_pending) return ERR_INTERRUPTED;
     parent->wait_reason = WAIT_NONE;
     parent->wait_pid = 0;
     parent->wait_status = 0;
@@ -451,7 +447,7 @@ static void terminate(Process *process, long status) {
     io_cleanup_process_terminal(process, process->program == PROGRAM_FAN || process->program == PROGRAM_WORKSTATE,
                                 session);
     process->terminal_session = TTY_ID_INVALID;
-    process->io_operation = IO_NONE;
+    process->event_wait = (KernelEventWait){0};
     process->wait_reason = WAIT_NONE;
     process->channel = 0;
     process->wait_pid = 0;
@@ -493,15 +489,46 @@ long process_kill(long pid) {
         target->parent_pid != process_current()->pid || target->state == PROCESS_ZOMBIE) {
         return ERR_INVALID;
     }
+    if (target->kernel_call_active || target->event_wait.active) {
+        target->kill_pending = 1;
+        process_cancel_wait(target);
+        return 0;
+    }
     terminate(target, -9);
     return 0;
 }
 
-void process_block_sync(void) {
+static void process_cancel_wait(Process *process) {
+    if (process->event_wait.active) {
+        process_event_cancel(process, ERR_INTERRUPTED);
+        return;
+    }
+    switch (process->wait_reason) {
+    case WAIT_CHANNEL:
+        process->channel = 0;
+        process->wait_reason = WAIT_NONE;
+        if (process->state == PROCESS_WAITING) transition(process, PROCESS_READY, "wait cancelled");
+        break;
+    case WAIT_CHILD:
+        process->wait_pid = 0;
+        process->wait_status = 0;
+        process->wait_reason = WAIT_NONE;
+        if (process->state == PROCESS_WAITING) transition(process, PROCESS_READY, "wait cancelled");
+        break;
+    case WAIT_SYNC:
+        sync_process_cancel_wait(process);
+        break;
+    default:
+        break;
+    }
+}
+
+long process_block_sync(void) {
     Process *process = process_current();
     process->wait_reason = WAIT_SYNC;
     transition(process, PROCESS_WAITING, "sync wait");
     suspend_current();
+    return process->kill_pending ? ERR_INTERRUPTED : 0;
 }
 
 void process_wake_sync(Process *process) {
@@ -511,27 +538,91 @@ void process_wake_sync(Process *process) {
     }
 }
 
-long process_block_io(IoOperation operation, int fd, uintptr_t buffer, size_t length) {
-    Process *process = process_current();
-    process->io_operation = operation;
-    process->io_fd = fd;
-    process->io_buffer = buffer;
-    process->io_length = length;
-    process->io_count = 0;
-    process->io_overflow = 0;
-    process->io_result = 0;
-    process->wait_reason = WAIT_IO;
-    transition(process, PROCESS_WAITING, (operation == IO_TTY_READ || operation == IO_TTY_RAW) ? "console read" :
-               operation == IO_PIPE_READ ? "pipe read" : "pipe write");
-    suspend_current();
-    return process->io_result;
+void process_kernel_call_enter(void) {
+    Process *process = process_current_or_null();
+    if (process) process->kernel_call_active = 1;
 }
 
-void process_complete_io(Process *process, long result) {
-    process->io_result = result;
-    process->io_operation = IO_NONE;
-    process->wait_reason = WAIT_NONE;
-    transition(process, PROCESS_READY, "I/O ready");
+void process_kernel_call_return(void) {
+    Process *process = process_current_or_null();
+    if (!process) return;
+    process->kernel_call_active = 0;
+    if (process->kill_pending) {
+        process->kill_pending = 0;
+        process_exit(-9);
+    }
+}
+
+static void complete_event_wait(Process *process, long result) {
+    KernelEventWait *wait = &process->event_wait;
+    if (!wait->active || wait->completed) return;
+    wait->result = result;
+    wait->completed = 1;
+    if (process->state == PROCESS_WAITING && process->wait_reason == WAIT_EVENT)
+        transition(process, PROCESS_READY, "event completed");
+}
+
+long process_wait_event(KernelEventSource *source, uint32_t generation, uint64_t sequence,
+                        uint64_t deadline, long timeout_result) {
+    Process *process = process_current_or_null();
+    if (!process || process->state != PROCESS_RUNNING || process->event_wait.active) return ERR_BUSY;
+    if (process->kill_pending) return ERR_INTERRUPTED;
+    uintptr_t status;
+    __asm__ volatile("csrr %0, sstatus" : "=r"(status));
+    if (status & (1UL << 1)) return ERR_BUSY;
+    if (source) {
+        if (!source->active || source->generation != generation) return ERR_IO;
+        if (source->sequence != sequence) return 0;
+    } else if (!deadline) return ERR_INVALID;
+    if (deadline && (int64_t)(clock_ticks() - deadline) >= 0) return timeout_result;
+
+    process->event_wait = (KernelEventWait){
+        .source = source,
+        .generation = generation,
+        .sequence = sequence,
+        .deadline = deadline,
+        .timeout_result = timeout_result,
+        .active = 1
+    };
+    process->wait_reason = WAIT_EVENT;
+    transition(process, PROCESS_WAITING, deadline ? "event/deadline wait" : "event wait");
+    suspend_current();
+
+    /* The result lives in the PCB; source may already name a reused slot. */
+    const long result = process->event_wait.result;
+    process->event_wait = (KernelEventWait){0};
+    if (process->wait_reason == WAIT_EVENT) process->wait_reason = WAIT_NONE;
+    return result;
+}
+
+void process_event_notify(KernelEventSource *source, uint32_t generation, long result) {
+    if (!source) return;
+    for (int i = 0; i < PROCESS_LIMIT; ++i) {
+        Process *process = &processes[i];
+        KernelEventWait *wait = &process->event_wait;
+        if (process->state == PROCESS_UNUSED || !wait->active || wait->completed ||
+            wait->source != source || wait->generation != generation) continue;
+        complete_event_wait(process, result);
+    }
+}
+
+void process_event_poll_timeouts(void) {
+    const uint64_t now = clock_ticks();
+    for (int i = 0; i < PROCESS_LIMIT; ++i) {
+        Process *process = &processes[i];
+        KernelEventWait *wait = &process->event_wait;
+        if (!wait->active || wait->completed || !wait->deadline) continue;
+        if ((int64_t)(now - wait->deadline) >= 0) complete_event_wait(process, wait->timeout_result);
+    }
+}
+
+void process_event_cancel(Process *process, long result) {
+    if (!process || !process->event_wait.active) return;
+    /* Cancellation wins until the saved caller resumes and unwinds. */
+    process->event_wait.result = result;
+    process->event_wait.completed = 1;
+    if (process->state == PROCESS_WAITING && process->wait_reason == WAIT_EVENT)
+        transition(process, PROCESS_READY, "event cancelled");
 }
 
 static const char *program_name(long program) {
@@ -551,10 +642,10 @@ static const char *waiting_for(const Process *process) {
     if (process->wait_reason == WAIT_CHANNEL) {
         return "channel";
     }
-    if (process->wait_reason == WAIT_TIMER) return "timer";
     if (process->wait_reason == WAIT_SYNC) return "sync";
-    return (process->io_operation == IO_TTY_READ || process->io_operation == IO_TTY_RAW) ? "console" :
-           process->io_operation == IO_PIPE_READ ? "pipe-read" : "pipe-write";
+    if (process->wait_reason == WAIT_EVENT)
+        return process->event_wait.source ? "event" : "timer";
+    return "-";
 }
 
 long process_list(void) {
@@ -634,12 +725,22 @@ long process_inspect(long pid) {
         console_number(process->fd_table[fd]);
         console_putc(fd + 1 == PROCESS_FD_LIMIT ? '\n' : ' ');
     }
-    console_puts("\nio_buffer=");
-    console_hex(process->io_buffer);
-    console_puts(" length=");
-    console_number((long)process->io_length);
+    console_puts("\nwait_source=");
+    console_hex((uintptr_t)process->event_wait.source);
+    console_puts(" generation=");
+    console_number(process->event_wait.generation);
+    console_puts(" sequence=");
+    console_number((long)process->event_wait.sequence);
+    console_puts(" deadline=");
+    console_number((long)process->event_wait.deadline);
     console_puts(" completed=");
-    console_number((long)process->io_count);
+    console_number(process->event_wait.completed);
+    console_puts(" result=");
+    console_number(process->event_wait.result);
+    console_puts(" kernel_call_active=");
+    console_number(process->kernel_call_active);
+    console_puts(" kill_pending=");
+    console_number(process->kill_pending);
     console_putc('\n');
     vm_print_space(process->page_table);
     return 0;
@@ -672,9 +773,10 @@ static _Noreturn void scheduler_loop(void) {
         /* Never reap a process while executing on its stack or its root. */
         vm_use_kernel();
         current_index = -1;
-        const int timed_waiting = wake_timed();
+        process_event_poll_timeouts();
         io_poll();
         process_poll_ui();
+        process_event_poll_timeouts();
         for (int i = 0; i < PROCESS_LIMIT; ++i) {
             if (processes[i].state == PROCESS_ZOMBIE && processes[i].parent_pid == 0) {
                 reap(&processes[i]);
@@ -692,8 +794,19 @@ static _Noreturn void scheduler_loop(void) {
             continue;
         }
 
-        if (io_console_waiting() || timed_waiting || process_ui_event_active()) {
-            continue; /* Poll UART/deadlines while every process is blocked. */
+        if (process_event_waiting() || process_ui_event_active()) {
+            const uint64_t poll_deadline = clock_ticks() + clock_ms_ticks(10);
+            const uint64_t wake_deadline = process_event_deadline(poll_deadline);
+            while ((int64_t)(clock_ticks() - wake_deadline) < 0 &&
+                   scheduler_ready_count() == 0 && (process_event_waiting() || process_ui_event_active())) {
+                timer_start_deadline(wake_deadline);
+                __asm__ volatile("wfi" : : : "memory");
+                timer_stop(); /* SIE stays clear; software acknowledges pending STIP. */
+                io_poll();
+                process_poll_ui();
+                process_event_poll_timeouts();
+            }
+            continue;
         }
         int waiting = 0;
         for (int i = 0; i < PROCESS_LIMIT; ++i) {

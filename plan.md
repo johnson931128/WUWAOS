@@ -1,6 +1,6 @@
 # 後續實作計畫
 
-目前整體狀態：規劃完成，第 1 階段完成，第 2–6 階段未開始。Spec 33 的原始碼分層工作已完成。
+目前整體狀態：第 1 階段完成；第 2 階段的 2A 完成，2B/2C 與第 3–6 階段未開始。Spec 33 的原始碼分層工作已完成。
 
 ## 1. 多 TTY 與 session 物件化
 
@@ -38,9 +38,51 @@
 
 ## 2. 統一事件等待與非同步 I/O
 
-- 進度：未開始。
-- 實作內容：統一 I/O 完成、逾時與取消的事件表示，以及阻塞與喚醒路徑。
-- 方法與完成判準：沿用單 hart、核心不可搶佔假設；驗證阻塞操作能依完成、逾時或取消一致恢復，且沒有忙等或錯誤喚醒。
+- 整體進度：進行中；此階段分三個子步，2A 完成不可代表整個階段完成。
+
+### 2A. 事件框架、TTY/pipe 等待與 idle
+
+- 進度：完成實作與本階段驗收；第 2 階段整體仍進行中，2B/2C 未開始。
+- 實作內容：`kernel/proc/event.c` 提供帶 generation/sequence 的 event source 與 per-process WaitRecord；完成、deadline timeout、cancel 結果均存於 PCB。TTY/pipe 改由原 syscall caller stack try/wait/retry；scheduler `io_poll` 僅 harvest UART 並通知事件，不做 usercopy／VM／swap。kill 對仍持有 kernel call stack 的行程延後至安全 unwind。移除舊 `process_block_io`／`process_complete_io`、`WAIT_IO`／`WAIT_TIMER` 及不再使用的 PCB io buffer 欄位；`pcb` 改顯示實際 WaitRecord 與 kill 狀態。Idle 在 SIE=0、sie.STIE=1 下以有限 SBI 絕對 deadline 加 WFI；醒來 stop/ack timer 後再 poll。
+- 解決觀念與演算法：source 在固定 storage 中保存 generation、sequence、active/retired；init 只允許 inactive source 以更大 generation 重用，generation／sequence 不允許繞回。waiter 註冊前先 snapshot sequence，再檢查 readiness；原核心不可搶佔區內若 source 已關閉或 generation 不合回 `ERR_IO`，若 sequence 已改變立即回 0 讓 caller 重試，否則寫入 PCB WaitRecord、改 WAIT_EVENT 並切換。notify 先遞增 sequence，再以 source pointer+generation 找相符 waiter，將結果存入 PCB 並喚醒；close 在 source 失效前以 `ERR_IO` 完成既有 waiter。恢復後只讀 PCB result 並清 WaitRecord，不再解參考 source，故即使 slot 已重用亦不 alias。deadline 掃描以硬體 time 做 wrap-safe 到期比較；只有無 Ready process 且仍有 event/UI poll work 才以固定短絕對 deadline WFI，spurious wake 不重算延後原 deadline。
+- Pipe read/write 演算法：
+
+  ```text
+  repeat:
+      (generation, sequence) = snapshot(pipe.event)
+      if read has no data and writers remain, or write has no space:
+          result = wait_event(pipe.event, generation, sequence)
+          if result < 0: return result
+          continue
+      amount = min(request, current readable data / free ring space, 256)
+      if read:
+          staging = peek ring bytes
+          result = user_copy_to(caller, staging)
+      else:
+          result = user_copy_from(caller, staging)
+      if result < 0: return error without changing ring counters
+      if write: copy staging -> ring
+      advance ring counters; notify(pipe.event); return amount
+  ```
+
+  staging 是 ready 後在 caller stack 建立，並不跨 wait 保留 payload；usercopy 成功後才 commit 讀寫 counters 並通知另一端，因此當前單 hart 無 async VM 下錯誤不會遺失資料或漏喚醒。2B 若讓 usercopy 可 yield，仍需 pipe gate／pinning，不能把此演算法視為已解決跨行程 race。
+- Kill unwind 演算法：user trap 入口標記 `kernel_call_active`；kill 對 active stack 設 `kill_pending`，event wait 寫 `ERR_INTERRUPTED`，channel／child wait 清理 wait fields，sync wait 從等待鏈移除並喚醒。原 stack 恢復並正常返回 syscall/fault/timer trap 的 unwind 邊界時才清 active 並 terminate，釋放 OFD、sync、TTY 等資源；VM 則在之後安全的 process reap 階段回收，不由 kill/unwind 直接銷毀。event waiter 即使已完成並 READY 但尚未 unwind，仍保持 active/stack 生命週期並可安全取消。
+- 驗收結果：`make -j2 all build/user.bin build/app.bin build/fan.bin build/workstate.bin build/kernel-disk.elf` 成功，隨後 `make -q` 無待建目標；未新增測試程式碼。fresh V2 scratch QEMU (`build/phase2a/`) 的 GUI QMP 實際執行 `echo pipe | cat`、整檔 redirect 與 `cat /home/user/phase2a.txt`，畫面讀回 `persist`。另執行 `cat /boot/kernel.elf | cat > /home/user/pipe4.elf`：GDB 在真實 caller syscall stack 觀察 writer `pipes[0].count=256, readers=1, writers=1` 時進入 pipe event wait；亦觀察 reader `count=0, readers=1, writers=1` 時進入 event wait，兩個 SP 均位於各自 `kernel_stack_top` 以下的行程核心堆疊。兩行程最後皆 exit 0。停機後 host 唯讀驗證 scratch WUFS metadata 有效，來源與目的檔皆 156,328 bytes 且逐位元組相同，SHA-256 均為 `6af9f7641202c8beb6bab0d44a7cf6d155687f71c0517aba789d73c6425b41f4`。GDB 在真實 syscall stack 確認 TTY `process_wait_event` caller 的 SP 落在 `kernel_stacks`；TTY input notify 使 WAITING waiter READY/completed；在 snapshot 與 register 中間注入 newline 後實際返回 0 且未註冊 wait，caller 取走換行後繼續下一 read；以 active gen=1 呼叫 gen=2 wait 回 `-5` 且未建立 WaitRecord。`demo sync` 的真實 `sleep_ms` deadline wait 正常 timeout/completion；`WAIT_SYNC` child 與 `WAIT_CHANNEL` worker 經既有 shell/QEMU operation 被 kill 後皆安全 unwind、exit/reap，workstate event waiter 被 kill 時 PCB 先 READY+completed/result=`-4`，再於返回邊界清理。GUI TTY 在真實 PID 2 WAIT_EVENT 時由 scheduler stack 呼叫 `tty_session_close`，waiter 被喚醒並存 `-5`；read syscall frame a0 為 `-5`，之後僅為清除該測試 shell，在 read 已 unwind 的 kernel-call-return 邊界標記 kill_pending，並非聲稱 closed shell 自行正常退出。UI 釋放舊 endpoint 後點圖示建立 PID 3 新 Terminal session。WFI GDB：前置 `sstatus&2=0`、`sie&0x20=0x20`、`sip=0`、`current_index=-1`、ready_count=0；WFI 醒來後 time 前進且 `sip&0x20=0x20`，`timer_stop` 後 `sip&0x20=0`，仍能再 arm 與接受 GUI input。UART input 事件/timeout亦以實際 shell堆疊與QEMU serial trace觀察。
+- 驗收記錄：`build/phase2a/final-gdb.log`（真實 stack、sequence retry、stale generation、WFI前後CSR/time）、`build/phase2a/gdb-runtime.log`（deadline wait、WAIT_SYNC/WAIT_CHANNEL/event kill 互動）、`build/phase2a/close-event-gdb.log`（TTY close result）、`build/phase2a/pipe-block-gdb.log`（大檔 pipeline 的 writer-full、reader-empty 阻塞與 caller stack）、`build/phase2a/pipe-uart.log`（pipeline completion）、`build/phase2a/close-uart.log`、`build/phase2a/final-uart.log`、`build/phase2a-final-readback.png`、`build/phase2a-close-reopened.png`。scratch WUFS／swap 均與原始 `build/wuwaos.img`／swap 分開。原始disk SHA256=`6ba61b2e9e6c5af4931dd39d338619bf66bf25c5639bb916adc59b6b62fd4989`、swap SHA256=`f6ddb73f54cf434916200d752a0596b14da7d6534fe0f8cf454e6b1c02078355`，均保持原值。4 個 user binary 的 SHA-256 與第 1 階段基準相同。
+- 限制與未執行項目：本子步不改 VirtIO block/GPU、WUFS transaction 或 VM eviction 為非同步；boot/pre-scheduler 同步 block 初始化保留單執行緒同步路徑。沒有對 `WAIT_CHILD` cancel 分支單獨做 runtime kill case；event cancel、WAIT_SYNC、WAIT_CHANNEL 已有代表性 runtime 驗收。沒有真斷電或 DMA timeout/cancel 驗收；若 DMA 未能安全取消，不能丟棄 request/buffer，timeout 仍 fail-stop，復原留待第 3 階段。WFI 驗收是 QEMU 單 hart/OpenSBI 環境，不代表所有 SBI/QEMU 平台皆同；UART 仍是 timer-polling，不是 UART interrupt。
+
+### 2B. Owner-aware gate 與 Block/FS/VM 非同步
+
+- 進度：未開始；須待 2A 完成並另行確認 gate 鎖序、DMA 所有權及 kill unwind 規則。
+- 實作內容：以 owner-aware 可睡眠 gate 序列化共享的 `fs_staging`、WUFS transaction staging/metadata、VM resident/eviction/clone state、Block active-device/request buffers；把 Block completion 納入事件框架，DMA request/buffer 在 device safe completion 前維持有效。
+- 方法與完成判準：採單 hart cooperative ownership，不 spin/yield 錯誤共享狀態；scheduler poll 只推進 request slot 並發布 completion。明確鎖序、不可在 gate poller 中呼叫高層 FS/VM/usercopy；boot no-current 僅允許單執行緒同步 fallback；kill/timeout 不提前釋放 gate 或借用 DMA buffer。
+- 設計前置風險：VM gate 單獨不足以保護即將 swap-out 的 user frame，因其他 U-mode process 仍可能存取被驅逐的實體頁；非同步 swap-out 前須 revoke victim PTE 並 `sfence`，保留 RAM/bounce snapshot，失敗時 restore 原 PTE，且 scheduler reap 的 `vm_destroy` 只能 try/defer，不能睡眠等待 VM gate。Async FS/VM 也會讓 pipe ring 在 usercopy yield 時、共享 OFD offset 在檔案 I/O yield 時被其他 process 改動，因此需 pipe/OFD ownership gate，或在 gate 外先 copy/pin、gate 內 commit；只替 FS/VM 加 gate 不夠。核心診斷 route 應改為 per-Process，避免跨行程的 set/reset 互相清除。建議鎖序：OFD/pipe → FS（含 syscall fs_staging 外層）→ VM → Block；FS 不反向取得 OFD，scheduler poll/reap 不得睡眠。DMA 已提交後的通用 event cancel 不可立即 unwind／釋放 device gate 或 swap slot；2B 要定義不可中斷區或 critical depth，kill 延後至 DMA safe completion 後清理，排 gate 時才可取消。timeout 需裝置安全停止／完成後再發布，否則沿用 fail-stop；UI poll 即使從 process_resume 呼叫也需明確保證 nonblocking，不能等待 VM gate。這些尚屬 2B 設計待辦，未在 2A 實作或驗收。
+
+### 2C. GPU 非阻塞 present
+
+- 進度：未開始；須待 2B 共用事件/取消語意穩定。
+- 實作內容：將 GPU transfer/flush 拆成 request state machine，由 UI 保留 dirty 區域直到 completion，GPU command/response buffer 在完成前有明確 owner。
+- 方法與完成判準：scheduler/UI poll 不 busy-wait；錯誤及 timeout 時不重用 DMA 仍可存取的記憶體。本步只實作安全非阻塞與錯誤傳遞，不宣稱 device reset 復原；復原策略屬第 3 階段。
 
 ## 3. GPU 錯誤降級與裝置復原
 
