@@ -25,6 +25,8 @@ long workstate_snapshot(uintptr_t address, size_t length) {
     if (length != sizeof(WorkstateSnapshot)) return ERR_INVALID;
     Process *caller = process_current();
     if (!user_writable(caller->page_table, address, length)) return ERR_ADDRESS;
+    int scope_error = vm_scope_enter();
+    if (scope_error < 0) return scope_error;
     WorkstateSnapshot snapshot = {0};
     snapshot.version = WORKSTATE_VERSION;
     snapshot.ticks = clock_ticks();
@@ -53,10 +55,13 @@ long workstate_snapshot(uintptr_t address, size_t length) {
             snapshot.busy_ticks += pending;
         }
         VmUsage usage;
-        vm_get_usage(process->page_table, &usage);
+        const int usage_error = vm_get_usage(process->page_table, &usage);
+        if (usage_error < 0) { (void)vm_scope_leave(); return usage_error; }
         row->resident_pages = usage.resident_pages;
         row->swapped_pages = usage.swapped_pages;
         row->heap_bytes = usage.heap_bytes;
     }
+    const int leave_error = vm_scope_leave();
+    if (leave_error < 0) return leave_error;
     return user_copy_to(caller->page_table, address, &snapshot, sizeof(snapshot));
 }

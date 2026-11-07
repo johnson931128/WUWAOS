@@ -1,4 +1,5 @@
 #include "kernel/fs/fs.h"
+#include "kernel/proc/gate.h"
 #include "drivers/virtio/block.h"
 #include "kernel/io/console.h"
 #include "kernel/proc/process.h"
@@ -65,6 +66,16 @@ static int transaction_error;
 static uint32_t transaction_target_storage[FS_JOURNAL_CAPACITY];
 #define transaction_targets transaction_target_storage
 static uint8_t *transaction_payload;
+static KernelGate filesystem_gate;
+
+int fs_scope_enter(void) { return kernel_gate_enter(&filesystem_gate); }
+
+int fs_scope_leave(void) { return kernel_gate_leave(&filesystem_gate); }
+
+static long fs_scope_finish(long result) {
+    const int error = fs_scope_leave();
+    return error < 0 ? error : result;
+}
 
 static int raw_read_sector(uint32_t sector, void *buffer) { return block_read(sector, buffer); }
 static int raw_write_sector(uint32_t sector, const void *buffer) { return block_write(sector, buffer); }
@@ -469,7 +480,7 @@ static int path_lookup(const char *path, uint32_t *number) {
     return 0;
 }
 
-long fs_is_directory(const char *path) {
+static long fs_is_directory_impl(const char *path) {
     uint32_t number;
     int result = path_lookup(path, &number);
     if (result < 0) return result;
@@ -828,7 +839,7 @@ int fs_init(void) {
     return 0;
 }
 
-long fs_list(const char *path, char *output, size_t capacity) {
+static long fs_list_impl(const char *path, char *output, size_t capacity) {
     uint32_t number;
     const int found = path_lookup(path, &number);
     if (found < 0) return found;
@@ -1079,7 +1090,7 @@ discard:
     return error;
 }
 
-long fs_size(const char *path) {
+static long fs_size_impl(const char *path) {
     uint32_t number;
     int error = path_lookup(path, &number);
     if (error < 0) return error;
@@ -1088,7 +1099,7 @@ long fs_size(const char *path) {
     return inode.type == FS_TYPE_FILE ? (long)inode.size : -21;
 }
 
-long fs_read(const char *path, size_t offset, void *buffer, size_t length) {
+static long fs_read_impl(const char *path, size_t offset, void *buffer, size_t length) {
     uint32_t number;
     const int found = path_lookup(path, &number);
     if (found < 0) return found;
@@ -1144,7 +1155,7 @@ static long fs_write_impl(const char *path, const void *buffer, size_t length) {
     return (long)length;
 }
 
-long fs_open_inode(const char *path, int create, uint32_t *number) {
+static long fs_open_inode_impl(const char *path, int create, uint32_t *number) {
     if (!mounted) return -22;
     uint32_t inode_number;
     int found = path_lookup(path, &inode_number);
@@ -1161,13 +1172,13 @@ long fs_open_inode(const char *path, int create, uint32_t *number) {
     return 0;
 }
 
-long fs_inode_size(uint32_t number) {
+static long fs_inode_size_impl(uint32_t number) {
     Inode inode;
     if (inode_read(number, &inode) < 0) return -5;
     return inode.type == FS_TYPE_FILE ? (long)inode.size : -21;
 }
 
-long fs_read_inode(uint32_t number, size_t offset, void *buffer, size_t length) {
+static long fs_read_inode_impl(uint32_t number, size_t offset, void *buffer, size_t length) {
     Inode inode;
     if (inode_read(number, &inode) < 0) return -5;
     if (inode.type != FS_TYPE_FILE) return -21;
@@ -1227,65 +1238,116 @@ static long fs_truncate_inode_impl(uint32_t number) {
 }
 
 long fs_mkdir(const char *path) {
-    int error = transaction_begin();
+    int error = fs_scope_enter();
     if (error < 0) return error;
+    error = transaction_begin();
+    if (error < 0) return fs_scope_finish(error);
     const long result = fs_mkdir_impl(path);
     error = transaction_end(result);
-    return error < 0 ? error : result;
+    return fs_scope_finish(error < 0 ? error : result);
 }
 
 long fs_touch(const char *path) {
-    int error = transaction_begin();
+    int error = fs_scope_enter();
     if (error < 0) return error;
+    error = transaction_begin();
+    if (error < 0) return fs_scope_finish(error);
     const long result = fs_touch_impl(path);
     error = transaction_end(result);
-    return error < 0 ? error : result;
+    return fs_scope_finish(error < 0 ? error : result);
 }
 
 long fs_remove(const char *path) {
-    int error = transaction_begin();
+    int error = fs_scope_enter();
     if (error < 0) return error;
+    error = transaction_begin();
+    if (error < 0) return fs_scope_finish(error);
     const long result = fs_remove_impl(path);
     error = transaction_end(result);
-    return error < 0 ? error : result;
+    return fs_scope_finish(error < 0 ? error : result);
 }
 
 long fs_remove_tree(const char *path) {
-    int error = transaction_begin();
+    int error = fs_scope_enter();
     if (error < 0) return error;
+    error = transaction_begin();
+    if (error < 0) return fs_scope_finish(error);
     const long result = fs_remove_tree_impl(path);
     error = transaction_end(result);
-    return error < 0 ? error : result;
+    return fs_scope_finish(error < 0 ? error : result);
 }
 
 long fs_copy(const char *source, const char *destination) {
-    int error = transaction_begin();
+    int error = fs_scope_enter();
     if (error < 0) return error;
+    error = transaction_begin();
+    if (error < 0) return fs_scope_finish(error);
     const long result = fs_copy_impl(source, destination);
     error = transaction_end(result);
-    return error < 0 ? error : result;
+    return fs_scope_finish(error < 0 ? error : result);
 }
 
 long fs_write(const char *path, const void *buffer, size_t length) {
-    int error = transaction_begin();
+    int error = fs_scope_enter();
     if (error < 0) return error;
+    error = transaction_begin();
+    if (error < 0) return fs_scope_finish(error);
     const long result = fs_write_impl(path, buffer, length);
     error = transaction_end(result);
-    return error < 0 ? error : result;
+    return fs_scope_finish(error < 0 ? error : result);
 }
 
 long fs_write_inode(uint32_t number, size_t offset, const void *buffer, size_t length) {
-    int error = transaction_begin();
+    int error = fs_scope_enter();
     if (error < 0) return error;
+    error = transaction_begin();
+    if (error < 0) return fs_scope_finish(error);
     const long result = fs_write_inode_impl(number, offset, buffer, length);
     error = transaction_end(result);
-    return error < 0 ? error : result;
+    return fs_scope_finish(error < 0 ? error : result);
 }
 
 long fs_truncate_inode(uint32_t number) {
-    int error = transaction_begin();
+    int error = fs_scope_enter();
     if (error < 0) return error;
+    error = transaction_begin();
+    if (error < 0) return fs_scope_finish(error);
     const long result = fs_truncate_inode_impl(number);
     error = transaction_end(result);
-    return error < 0 ? error : result;
+    return fs_scope_finish(error < 0 ? error : result);
+}
+
+long fs_is_directory(const char *path) {
+    int error = fs_scope_enter();
+    return error < 0 ? error : fs_scope_finish(fs_is_directory_impl(path));
+}
+
+long fs_list(const char *path, char *output, size_t capacity) {
+    int error = fs_scope_enter();
+    return error < 0 ? error : fs_scope_finish(fs_list_impl(path, output, capacity));
+}
+
+long fs_size(const char *path) {
+    int error = fs_scope_enter();
+    return error < 0 ? error : fs_scope_finish(fs_size_impl(path));
+}
+
+long fs_read(const char *path, size_t offset, void *buffer, size_t length) {
+    int error = fs_scope_enter();
+    return error < 0 ? error : fs_scope_finish(fs_read_impl(path, offset, buffer, length));
+}
+
+long fs_open_inode(const char *path, int create, uint32_t *number) {
+    int error = fs_scope_enter();
+    return error < 0 ? error : fs_scope_finish(fs_open_inode_impl(path, create, number));
+}
+
+long fs_inode_size(uint32_t number) {
+    int error = fs_scope_enter();
+    return error < 0 ? error : fs_scope_finish(fs_inode_size_impl(number));
+}
+
+long fs_read_inode(uint32_t number, size_t offset, void *buffer, size_t length) {
+    int error = fs_scope_enter();
+    return error < 0 ? error : fs_scope_finish(fs_read_inode_impl(number, offset, buffer, length));
 }

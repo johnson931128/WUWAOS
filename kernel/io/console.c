@@ -3,19 +3,17 @@
 #include "kernel/proc/process.h"
 #include "drivers/uart/uart.h"
 
-static TtyId route_tty;
-static long route_owner_pid;
-
 void console_set_route_tty(TtyId id, long owner_pid) {
-    route_tty = id;
-    route_owner_pid = owner_pid;
+    Process *process = process_current_or_null();
+    if (!process || (owner_pid != 0 && process->pid != owner_pid)) return;
+    process->console_route_tty = id;
 }
 
 void console_putc(char character) {
     Process *process = process_current_or_null();
-    if (route_tty != TTY_ID_INVALID && process && process->pid == route_owner_pid) {
+    if (process && process->console_route_tty != TTY_ID_INVALID) {
         const unsigned char byte = (unsigned char)character;
-        (void)tty_output_write(route_tty, &byte, 1);
+        (void)tty_output_write(process->console_route_tty, &byte, 1);
         return;
     }
     if (character == '\n') {

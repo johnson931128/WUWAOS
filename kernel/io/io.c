@@ -2,6 +2,7 @@
 #include "kernel/io/console.h"
 #include "kernel/io/tty.h"
 #include "kernel/fs/fs.h"
+#include "kernel/proc/gate.h"
 #include "syscall_numbers.h"
 #include "kernel/mm/vm.h"
 #include <limits.h>
@@ -14,7 +15,7 @@
 #define CONSOLE_OUT (-2)
 #define CONSOLE_ERR (-3)
 
-typedef enum { OFD_FILE, OFD_PIPE_READ, OFD_PIPE_WRITE, OFD_TTY } OfdType;
+typedef enum { OFD_RESERVED, OFD_FILE, OFD_PIPE_READ, OFD_PIPE_WRITE, OFD_TTY } OfdType;
 typedef struct {
     int used;
     OfdType type;
@@ -36,6 +37,8 @@ typedef struct {
 
 static OpenFile open_files[OFD_LIMIT];
 static Pipe pipes[PIPE_LIMIT];
+static KernelGate ofd_gates[OFD_LIMIT];
+static KernelGate pipe_gates[PIPE_LIMIT];
 
 static int fd_value(Process *process, long fd) {
     if (fd < 0 || fd >= PROCESS_FD_LIMIT) return -99;
@@ -71,6 +74,7 @@ static int find_free_fd(Process *process, int minimum) {
 
 static int allocate_ofd(OfdType type) {
     for (int i = 0; i < OFD_LIMIT; ++i) if (!open_files[i].used) {
+        if (kernel_gate_init(&ofd_gates[i]) < 0) continue;
         open_files[i] = (OpenFile){ .used = 1, .type = type, .refs = 1, .pipe = -1 };
         return i;
     }
@@ -163,6 +167,7 @@ static int reserve_pipe(int *read_ofd, int *write_ofd) {
             break;
         }
     if (pipe_number < 0) return -1;
+    if (kernel_gate_init(&pipe_gates[pipe_number]) < 0) return -1;
     const int r = allocate_ofd(OFD_PIPE_READ);
     if (r < 0) return -1;
     const int w = allocate_ofd(OFD_PIPE_WRITE);
@@ -213,12 +218,14 @@ long io_open(const char *path, long flags) {
         ((flags & FD_O_APPEND) && access == FD_O_RDONLY)) return ERR_INVALID;
     const int fd = find_free_fd(process, 0);
     if (fd < 0) return ERR_NO_SLOT;
+    const int index = allocate_ofd(OFD_RESERVED);
+    if (index < 0) return ERR_NO_SLOT;
+    int scope_error = fs_scope_enter();
+    if (scope_error < 0) { ofd_release(index); return scope_error; }
     uint32_t inode;
     long result = fs_open_inode(path, !!(flags & FD_O_CREAT), &inode);
-    if (result < 0) return result;
-    if ((flags & FD_O_TRUNC) && io_inode_is_open(inode)) return ERR_BUSY;
-    const int index = allocate_ofd(OFD_FILE);
-    if (index < 0) return ERR_NO_SLOT;
+    if (result < 0) goto open_failed;
+    if ((flags & FD_O_TRUNC) && io_inode_is_open(inode)) { result = ERR_BUSY; goto open_failed; }
     OpenFile *ofd = &open_files[index];
     ofd->inode = inode;
     ofd->readable = access != FD_O_WRONLY;
@@ -226,15 +233,23 @@ long io_open(const char *path, long flags) {
     ofd->append = !!(flags & FD_O_APPEND);
     if (flags & FD_O_TRUNC) {
         result = fs_truncate_inode(inode);
-        if (result < 0) { ofd_release(index); return result; }
+        if (result < 0) goto open_failed;
     }
     if (ofd->append) {
         result = fs_inode_size(inode);
-        if (result < 0) { ofd_release(index); return result; }
+        if (result < 0) goto open_failed;
         ofd->offset = (size_t)result;
     }
+    ofd->type = OFD_FILE;
     process->fd_table[fd] = index;
+    scope_error = fs_scope_leave();
+    if (scope_error < 0) return scope_error;
     return fd;
+
+open_failed:
+    (void)fs_scope_leave();
+    ofd_release(index);
+    return result;
 }
 
 long io_close(long fd) {
@@ -323,6 +338,7 @@ static long pipe_write(Process *process, Pipe *pipe, uintptr_t buffer, size_t le
     if (amount > length) amount = length;
     const int error = user_copy_from(process->page_table, staging, buffer, amount);
     if (error < 0) return error;
+    if (pipe->readers == 0) return ERR_BROKEN_PIPE;
     for (size_t i = 0; i < amount; ++i)
         pipe->bytes[(pipe->write_at + i) % PIPE_CAPACITY] = staging[i];
     pipe->write_at = (pipe->write_at + amount) % PIPE_CAPACITY;
@@ -342,7 +358,15 @@ static long pipe_read_wait(Process *process, int fd, uintptr_t buffer, size_t le
         uint64_t sequence;
         if (!pipe->used || event_source_snapshot(&pipe->event, &generation, &sequence) < 0)
             return ERR_IO;
+        const int gate_error = kernel_gate_enter(&pipe_gates[ofd->pipe]);
+        if (gate_error < 0) return gate_error;
+        if (!pipe->used || pipe->generation != generation) {
+            (void)kernel_gate_leave(&pipe_gates[ofd->pipe]);
+            return ERR_IO;
+        }
         const long result = pipe_read(process, pipe, buffer, length);
+        const int leave_error = kernel_gate_leave(&pipe_gates[ofd->pipe]);
+        if (leave_error < 0) return leave_error;
         if (result != IO_PENDING) return result;
         const long wait = process_wait_event(&pipe->event, generation, sequence, 0, ERR_TIMED_OUT);
         if (wait < 0) return wait;
@@ -360,7 +384,15 @@ static long pipe_write_wait(Process *process, int fd, uintptr_t buffer, size_t l
         uint64_t sequence;
         if (!pipe->used || event_source_snapshot(&pipe->event, &generation, &sequence) < 0)
             return ERR_BROKEN_PIPE;
+        const int gate_error = kernel_gate_enter(&pipe_gates[ofd->pipe]);
+        if (gate_error < 0) return gate_error;
+        if (!pipe->used || pipe->generation != generation) {
+            (void)kernel_gate_leave(&pipe_gates[ofd->pipe]);
+            return ERR_BROKEN_PIPE;
+        }
         const long result = pipe_write(process, pipe, buffer, length);
+        const int leave_error = kernel_gate_leave(&pipe_gates[ofd->pipe]);
+        if (leave_error < 0) return leave_error;
         if (result != IO_PENDING) return result;
         const long wait = process_wait_event(&pipe->event, generation, sequence, 0, ERR_TIMED_OUT);
         if (wait < 0) return wait;
@@ -412,14 +444,19 @@ long io_read(long fd, uintptr_t buffer, size_t length) {
         return pipe_read_wait(process, (int)fd, buffer, length);
     }
     if (ofd && ofd->type == OFD_FILE) {
+        const int gate_error = kernel_gate_enter(&ofd_gates[value]);
+        if (gate_error < 0) return gate_error;
         unsigned char staging[512];
         if (length > sizeof(staging)) length = sizeof(staging);
         const long amount = fs_read_inode(ofd->inode, ofd->offset, staging, length);
-        if (amount < 0) return amount;
-        const int error = user_copy_to(process->page_table, buffer, staging, (size_t)amount);
-        if (error < 0) return error;
-        ofd->offset += (size_t)amount;
-        return amount;
+        long result = amount;
+        if (amount >= 0) {
+            const int error = user_copy_to(process->page_table, buffer, staging, (size_t)amount);
+            if (error < 0) result = error;
+            else ofd->offset += (size_t)amount;
+        }
+        const int leave_error = kernel_gate_leave(&ofd_gates[value]);
+        return leave_error < 0 ? leave_error : result;
     }
     return ERR_INVALID;
 }
@@ -448,15 +485,35 @@ long io_write(long fd, uintptr_t buffer, size_t length) {
         if (length > sizeof(staging)) length = sizeof(staging);
         const int error = user_copy_from(process->page_table, staging, buffer, length);
         if (error < 0) return error;
+        const int gate_error = kernel_gate_enter(&ofd_gates[value]);
+        if (gate_error < 0) return gate_error;
+        long result;
         if (ofd->append) {
+            const int scope_error = fs_scope_enter();
+            if (scope_error < 0) {
+                (void)kernel_gate_leave(&ofd_gates[value]);
+                return scope_error;
+            }
+            size_t append_next_offset = 0;
             const long end = fs_inode_size(ofd->inode);
-            if (end < 0) return end;
-            ofd->offset = (size_t)end;
+            if (end < 0) result = end;
+            else {
+                const size_t append_offset = (size_t)end;
+                result = append_offset > SIZE_MAX - length ? ERR_INVALID :
+                         fs_write_inode(ofd->inode, append_offset, staging, length);
+                if (result > 0) append_next_offset = append_offset + (size_t)result;
+            }
+            const int scope_leave = fs_scope_leave();
+            if (result >= 0 && scope_leave < 0) result = scope_leave;
+            if (result > 0) ofd->offset = append_next_offset;
+        } else if (ofd->offset > SIZE_MAX - length) {
+            result = ERR_INVALID;
+        } else {
+            result = fs_write_inode(ofd->inode, ofd->offset, staging, length);
+            if (result > 0) ofd->offset += (size_t)result;
         }
-        if (ofd->offset > SIZE_MAX - length) return ERR_INVALID;
-        const long amount = fs_write_inode(ofd->inode, ofd->offset, staging, length);
-        if (amount > 0) ofd->offset += (size_t)amount;
-        return amount;
+        const int leave_error = kernel_gate_leave(&ofd_gates[value]);
+        return leave_error < 0 ? leave_error : result;
     }
     return ERR_INVALID;
 }

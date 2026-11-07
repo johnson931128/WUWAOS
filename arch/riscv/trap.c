@@ -45,6 +45,8 @@ TrapFrame *trap_handler(TrapFrame *frame) {
             process_kernel_call_return();
             return resume;
         }
+        /* A cancelled Gate wait must unwind to the normal kill boundary first. */
+        process_kernel_call_return();
         console_puts("[fault] PID="); console_number(process_current()->pid);
         console_puts(" cause="); console_number((long)frame->scause);
         console_puts(" address="); console_hex(frame->stval);

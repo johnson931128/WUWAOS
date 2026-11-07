@@ -31,7 +31,7 @@ typedef struct {
 _Static_assert(sizeof(ElfHeader) == 64, "ELF64 header size");
 _Static_assert(sizeof(ProgramHeader) == 56, "ELF64 program header size");
 
-long elf_load(const char *path, uintptr_t *root_out, uintptr_t *entry_out) {
+static long elf_load_impl(const char *path, uintptr_t *root_out, uintptr_t *entry_out) {
     long size = fs_size(path);
     if (size < 0) return size;
     ElfHeader header;
@@ -107,4 +107,12 @@ long elf_load(const char *path, uintptr_t *root_out, uintptr_t *entry_out) {
 fail:
     vm_destroy(root);
     return result;
+}
+
+long elf_load(const char *path, uintptr_t *root_out, uintptr_t *entry_out) {
+    const int error = fs_scope_enter();
+    if (error < 0) return error;
+    const long result = elf_load_impl(path, root_out, entry_out);
+    const int leave_error = fs_scope_leave();
+    return leave_error < 0 ? leave_error : result;
 }

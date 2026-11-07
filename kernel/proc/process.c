@@ -22,6 +22,8 @@ static unsigned char kernel_stacks[PROCESS_LIMIT][16 * 1024]
 static int current_index = -1;
 static ProcessPollCallback ui_poll_callback;
 static ProcessEventActiveCallback ui_active_callback;
+static unsigned poll_context_depth;
+static int runtime_started;
 
 void process_register_ui_events(ProcessPollCallback poll, ProcessEventActiveCallback active) {
     ui_poll_callback = poll;
@@ -34,6 +36,56 @@ static void process_poll_ui(void) {
 
 static int process_ui_event_active(void) {
     return ui_active_callback && ui_active_callback();
+}
+
+static void process_poll_sources(void) {
+    ++poll_context_depth;
+    io_poll();
+    process_poll_ui();
+    --poll_context_depth;
+}
+
+int process_wait_allowed(void) {
+    Process *process = process_current_or_null();
+    return process && process->state == PROCESS_RUNNING && !poll_context_depth;
+}
+
+int process_runtime_nonblocking(void) {
+    return poll_context_depth != 0 || (runtime_started && process_current_or_null() == 0);
+}
+
+void process_gate_acquired(Process *process) {
+    if (!process) return;
+    if (process->internal_gate_depth == UINT_MAX) {
+        console_puts("[gate] Process gate depth overflow\n");
+        kernel_idle();
+    }
+    ++process->internal_gate_depth;
+}
+
+void process_gate_released(Process *process) {
+    if (!process) return;
+    if (!process->internal_gate_depth) {
+        console_puts("[gate] Process gate depth underflow\n");
+        kernel_idle();
+    }
+    --process->internal_gate_depth;
+}
+
+int process_cancel_defer_enter(void) {
+    Process *process = process_current_or_null();
+    if (!process) return 0;
+    if (process->cancel_defer_depth == UINT_MAX) return ERR_INVALID;
+    ++process->cancel_defer_depth;
+    return 0;
+}
+
+int process_cancel_defer_leave(void) {
+    Process *process = process_current_or_null();
+    if (!process) return 0;
+    if (!process->cancel_defer_depth) return ERR_INVALID;
+    --process->cancel_defer_depth;
+    return 0;
 }
 
 static int process_event_waiting(void) {
@@ -229,9 +281,13 @@ long process_start_gui_terminal(TtyOutputConsumer consumer, void *context, TtyId
     if (!process || io_attach_tty(process, id) < 0) {
         if (process) {
             io_close_process(process);
-            vm_destroy(process->page_table);
-            process->page_table = 0;
-            transition(process, PROCESS_UNUSED, "terminal descriptors unavailable");
+            if (vm_destroy(process->page_table) == 0) {
+                process->page_table = 0;
+                transition(process, PROCESS_UNUSED, "terminal descriptors unavailable");
+            } else {
+                process->parent_pid = 0;
+                transition(process, PROCESS_ZOMBIE, "terminal cleanup deferred");
+            }
         }
         (void)tty_session_close(id);
         tty_release(id);
@@ -265,9 +321,13 @@ long process_fork(void) {
     Process *child = find_pid(pid);
     const int copy_error = vm_clone(child->page_table, parent->page_table);
     if (copy_error < 0) {
-        vm_destroy(child->page_table);
-        child->page_table = 0;
-        transition(child, PROCESS_UNUSED, "fork copy failed");
+        if (vm_destroy(child->page_table) == 0) {
+            child->page_table = 0;
+            transition(child, PROCESS_UNUSED, "fork copy failed");
+        } else {
+            child->parent_pid = 0;
+            transition(child, PROCESS_ZOMBIE, "fork cleanup deferred");
+        }
         return copy_error;
     }
     volatile unsigned char *to = (volatile unsigned char *)child->frame;
@@ -297,7 +357,7 @@ long process_exec(long program, const char *argument) {
         size_t length = 0;
         while (argument[length]) ++length;
         const int error = user_copy_to(root, stack, argument, length + 1);
-        if (error < 0) { vm_destroy(root); return error; }
+        if (error < 0) { (void)vm_destroy(root); return error; }
     }
     return process_install_image(process, root, program, USER_ENTRY, stack);
 }
@@ -310,6 +370,14 @@ long process_exec_path(const char *path) {
 }
 
 static long process_install_image(Process *process, uintptr_t root, long program, uintptr_t entry, uintptr_t stack) {
+    int error = process_cancel_defer_enter();
+    if (error < 0) { (void)vm_destroy(root); return error; }
+    error = vm_scope_enter();
+    if (error < 0) {
+        (void)vm_destroy(root);
+        (void)process_cancel_defer_leave();
+        return error;
+    }
     sync_process_cleanup(process); /* New image must not inherit held mutexes. */
     (void)io_console_mode(0); /* Successful exec resets raw input ownership. */
     const uintptr_t old_root = process->page_table;
@@ -329,14 +397,16 @@ static long process_install_image(Process *process, uintptr_t root, long program
     process->channel = process->wait_pid = 0;
     process->wait_status = 0;
     vm_enable(root);
-    vm_destroy(old_root);
+    (void)vm_destroy(old_root);
     console_puts("[exec] PID=");
     console_number(process->pid);
     console_puts(program == PROGRAM_ELF ? " retained; loaded WUFS ELF, program=" :
                  " retained; loaded app image, program=");
     console_number(program);
     console_putc('\n');
-    return 0;
+    error = vm_scope_leave();
+    const int defer_error = process_cancel_defer_leave();
+    return error < 0 ? error : defer_error;
 }
 
 long process_yield(void) {
@@ -388,11 +458,13 @@ long process_wakeup(long channel) {
     return count;
 }
 
-static void reap(Process *process) {
+static int reap(Process *process, int may_wait) {
     /* The caller must be on another root; kernel stacks remain static. */
-    vm_destroy(process->page_table);
+    const int error = may_wait ? vm_destroy(process->page_table) : vm_try_destroy(process->page_table);
+    if (error < 0) return error;
     process->page_table = 0;
     transition(process, PROCESS_UNUSED, "reaped");
+    return 0;
 }
 
 static long collect_child(Process *parent, Process *child, uintptr_t status) {
@@ -404,12 +476,14 @@ static long collect_child(Process *parent, Process *child, uintptr_t status) {
         if (error < 0) return error;
     }
     const long pid = child->pid;
+    const long exit_status = child->exit_status;
+    const int reap_error = reap(child, 1);
+    if (reap_error < 0) return reap_error;
     console_puts("[wait] collected PID=");
     console_number(pid);
     console_puts(" status=");
-    console_number(child->exit_status);
+    console_number(exit_status);
     console_putc('\n');
-    reap(child);
     return pid;
 }
 
@@ -486,12 +560,13 @@ _Noreturn void process_exit(long status) {
 long process_kill(long pid) {
     Process *target = find_pid(pid);
     if (target == 0 || target == process_current() || target->pid == 1 ||
-        target->parent_pid != process_current()->pid || target->state == PROCESS_ZOMBIE) {
+        target->parent_pid != process_current()->pid || target->state == PROCESS_NEW ||
+        target->state == PROCESS_ZOMBIE) {
         return ERR_INVALID;
     }
     if (target->kernel_call_active || target->event_wait.active) {
         target->kill_pending = 1;
-        process_cancel_wait(target);
+        if (!target->cancel_defer_depth) process_cancel_wait(target);
         return 0;
     }
     terminate(target, -9);
@@ -546,6 +621,10 @@ void process_kernel_call_enter(void) {
 void process_kernel_call_return(void) {
     Process *process = process_current_or_null();
     if (!process) return;
+    if (process->cancel_defer_depth || process->internal_gate_depth) {
+        console_puts("[gate] Internal scope leaked across trap return\n");
+        kernel_idle();
+    }
     process->kernel_call_active = 0;
     if (process->kill_pending) {
         process->kill_pending = 0;
@@ -565,8 +644,9 @@ static void complete_event_wait(Process *process, long result) {
 long process_wait_event(KernelEventSource *source, uint32_t generation, uint64_t sequence,
                         uint64_t deadline, long timeout_result) {
     Process *process = process_current_or_null();
-    if (!process || process->state != PROCESS_RUNNING || process->event_wait.active) return ERR_BUSY;
-    if (process->kill_pending) return ERR_INTERRUPTED;
+    if (!process || process->state != PROCESS_RUNNING || process->event_wait.active ||
+        !process_wait_allowed()) return ERR_BUSY;
+    if (process->kill_pending && !process->cancel_defer_depth) return ERR_INTERRUPTED;
     uintptr_t status;
     __asm__ volatile("csrr %0, sstatus" : "=r"(status));
     if (status & (1UL << 1)) return ERR_BUSY;
@@ -617,7 +697,7 @@ void process_event_poll_timeouts(void) {
 }
 
 void process_event_cancel(Process *process, long result) {
-    if (!process || !process->event_wait.active) return;
+    if (!process || !process->event_wait.active || process->cancel_defer_depth) return;
     /* Cancellation wins until the saved caller resumes and unwinds. */
     process->event_wait.result = result;
     process->event_wait.completed = 1;
@@ -677,8 +757,11 @@ long process_list(void) {
 }
 
 long process_inspect(long pid) {
+    const int scope_error = vm_scope_enter();
+    if (scope_error < 0) return scope_error;
     const Process *process = find_pid(pid);
     if (process == 0) {
+        (void)vm_scope_leave();
         return ERR_INVALID;
     }
     console_puts("PCB PID=");
@@ -708,10 +791,14 @@ long process_inspect(long pid) {
     console_puts(" (saved at last switch; stale while Running)");
     console_puts(" user_stack_top=");
     console_hex(process->user_stack_top);
-    console_puts("\nsepc=");
-    console_hex(process->frame->sepc);
-    console_puts(" saved_sp=");
-    console_hex(process->frame->registers[2]);
+    if (process->frame) {
+        console_puts("\nframe=ready sepc=");
+        console_hex(process->frame->sepc);
+        console_puts(" saved_sp=");
+        console_hex(process->frame->registers[2]);
+    } else {
+        console_puts("\nframe=initializing sepc=(unavailable) saved_sp=(unavailable)");
+    }
     console_puts("\nwait=");
     console_puts(waiting_for(process));
     console_puts(" channel=");
@@ -743,6 +830,8 @@ long process_inspect(long pid) {
     console_number(process->kill_pending);
     console_putc('\n');
     vm_print_space(process->page_table);
+    const int leave_error = vm_scope_leave();
+    if (leave_error < 0) return leave_error;
     return 0;
 }
 
@@ -761,8 +850,7 @@ long process_pipeline(uintptr_t result_address) {
 
 TrapFrame *process_resume(void) {
     vm_use_kernel();
-    io_poll();
-    process_poll_ui();
+    process_poll_sources();
     if (process_current()->state != PROCESS_RUNNING) suspend_current();
     vm_enable(process_current()->page_table);
     return process_current()->frame;
@@ -774,12 +862,11 @@ static _Noreturn void scheduler_loop(void) {
         vm_use_kernel();
         current_index = -1;
         process_event_poll_timeouts();
-        io_poll();
-        process_poll_ui();
+        process_poll_sources();
         process_event_poll_timeouts();
         for (int i = 0; i < PROCESS_LIMIT; ++i) {
             if (processes[i].state == PROCESS_ZOMBIE && processes[i].parent_pid == 0) {
-                reap(&processes[i]);
+                (void)reap(&processes[i], 0);
             }
         }
         Process *next = scheduler_next();
@@ -802,8 +889,7 @@ static _Noreturn void scheduler_loop(void) {
                 timer_start_deadline(wake_deadline);
                 __asm__ volatile("wfi" : : : "memory");
                 timer_stop(); /* SIE stays clear; software acknowledges pending STIP. */
-                io_poll();
-                process_poll_ui();
+                process_poll_sources();
                 process_event_poll_timeouts();
             }
             continue;
@@ -826,6 +912,7 @@ static _Noreturn void scheduler_loop(void) {
 }
 
 _Noreturn void process_start(void) {
+    runtime_started = 1;
     scheduler_context.ra = (uintptr_t)scheduler_loop;
     scheduler_context.sp = (uintptr_t)(scheduler_stack + sizeof(scheduler_stack));
     console_puts("[context] RV64 swtch ready; dedicated scheduler stack\n");

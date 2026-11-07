@@ -13,12 +13,15 @@
 #define USER_STACK_TOP (USER_STACK + PAGE_SIZE)
 
 void vm_init(const void *fdt);
+int vm_scope_enter(void);
+int vm_scope_leave(void);
 void vm_map_mmio(uintptr_t base);
 uintptr_t vm_create(long program);
 int vm_elf_allow(uintptr_t root, uintptr_t address, size_t length);
 int vm_elf_write(uintptr_t root, uintptr_t address, const void *buffer, size_t length);
 int vm_clone(uintptr_t destination, uintptr_t source);
-void vm_destroy(uintptr_t root);
+int vm_destroy(uintptr_t root);
+int vm_try_destroy(uintptr_t root);
 void vm_use_kernel(void);
 void vm_enable(uintptr_t root);
 int user_readable(uintptr_t root, uintptr_t address, size_t length);
@@ -35,6 +38,6 @@ void vm_print_space(uintptr_t root);
 typedef struct {
     size_t resident_pages, swapped_pages, heap_bytes;
 } VmUsage;
-void vm_get_usage(uintptr_t root, VmUsage *usage);
+int vm_get_usage(uintptr_t root, VmUsage *usage);
 
 #endif

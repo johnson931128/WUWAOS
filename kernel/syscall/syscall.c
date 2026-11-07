@@ -222,6 +222,8 @@ void syscall_dispatch(TrapFrame *frame) {
             result = path_error < 0 ? path_error : ERR_ADDRESS;
             break;
         }
+        const int scope_error = fs_scope_enter();
+        if (scope_error < 0) { result = scope_error; break; }
         size_t total = 0;
         while (total < length) {
             size_t chunk = length - total;
@@ -234,6 +236,8 @@ void syscall_dispatch(TrapFrame *frame) {
             if ((size_t)read_count < chunk) break;
         }
         if (total != (size_t)-1) result = (long)total;
+        const int release_error = fs_scope_leave();
+        if (result >= 0 && release_error < 0) result = release_error;
         break;
     }
     case SYS_FS_WRITE: {
@@ -247,8 +251,12 @@ void syscall_dispatch(TrapFrame *frame) {
             result = path_error < 0 ? path_error : ERR_ADDRESS;
             break;
         }
+        const int scope_error = fs_scope_enter();
+        if (scope_error < 0) { result = scope_error; break; }
         result = user_copy_from(process->page_table, fs_staging, user_buffer, length);
         if (result == 0) result = fs_write(path, fs_staging, length);
+        const int release_error = fs_scope_leave();
+        if (result >= 0 && release_error < 0) result = release_error;
         break;
     }
     default:

@@ -46,6 +46,9 @@ typedef struct ProcessControlBlock {
     KernelEventWait event_wait;
     unsigned kernel_call_active : 1;
     unsigned kill_pending : 1;
+    unsigned cancel_defer_depth;
+    unsigned internal_gate_depth;
+    TtyId console_route_tty;
     TtyId terminal_session;
 } Process;
 
@@ -81,6 +84,12 @@ void process_event_poll_timeouts(void);
 void process_event_cancel(Process *process, long result);
 void process_kernel_call_enter(void);
 void process_kernel_call_return(void);
+int process_wait_allowed(void);
+int process_runtime_nonblocking(void);
+void process_gate_acquired(Process *process);
+void process_gate_released(Process *process);
+int process_cancel_defer_enter(void);
+int process_cancel_defer_leave(void);
 const char *process_name(const Process *process);
 const char *process_state_name(ProcessState state);
 

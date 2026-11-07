@@ -1,9 +1,10 @@
 - 詳細步驟與方法：[plan.md](./plan.md)
-- 整體進度：第 1 階段完成；第 2 階段 2A 完成，2B/2C 與第 3–6 階段未開始。
+- 整體進度：第 1 階段完成；第 2 階段 2A、2B1 完成，2B2/2C 與第 3–6 階段未開始。
 - 第 1 階段：完成，多 TTY/session 物件化；generation handle、per-endpoint queues/mode/lifecycle、OFD/process 路由及單一 GUI view 已實作並經 GDB、GUI 與 UART QEMU 驗收；限制與演算法見 [plan.md](./plan.md)。
-- 第 2 階段：進行中（2A 完成）；2A 統一事件 wait/completion/timeout/cancel，改為 caller-stack TTY/pipe try-wait-retry 並安全 idle WFI。2B owner-aware gates 與 Block/FS/VM 非同步、2C GPU 非阻塞 present 尚未開始；完成條件和限制見 [plan.md](./plan.md)。
+- 第 2 階段：進行中（2A、2B1 owner-aware gate/共享狀態保護完成；2B2 Block 非同步與 2C GPU 非阻塞 present 未開始）；方法、驗收及限制見 [plan.md](./plan.md)。
 - 第 3 階段：未開始，GPU 錯誤降級與裝置復原。
 - 第 4 階段：未開始，資源所有權／引用回收與核心堆疊保護。
 - 第 5 階段：未開始，多視窗管理。
 - 第 6 階段：未開始，檔案原子替換／錯誤語意與統一診斷。
 - 已完成：Spec 33 原始碼分層。
+- 依使用者指示優先實作、更新進度與分階段推送；額外測試暫緩，僅記錄實際 build/smoke，未跑項目標示 NOT_RUN。

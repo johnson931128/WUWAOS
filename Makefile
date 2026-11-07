@@ -7,7 +7,7 @@ KERNEL_SOURCES := \
 	kernel/boot/main.c drivers/uart/uart.c kernel/io/console.c \
 	arch/riscv/trap.c arch/riscv/sbi.c arch/riscv/timer.c \
 	kernel/mm/page.c kernel/mm/swap.c kernel/mm/vm.c \
-	kernel/proc/process.c kernel/proc/event.c kernel/proc/scheduler.c kernel/ipc/sync.c kernel/proc/workstate.c \
+	kernel/proc/process.c kernel/proc/event.c kernel/proc/gate.c kernel/proc/scheduler.c kernel/ipc/sync.c kernel/proc/workstate.c \
 	kernel/syscall/syscall.c kernel/exec/elf.c kernel/io/io.c ui/boot/splash.c \
 	drivers/virtio/block.c drivers/virtio/gpu.c ui/desktop/desktop.c drivers/virtio/input.c \
 	kernel/fs/fs.c kernel/fs/path.c kernel/lib/memory.c kernel/io/tty.c \

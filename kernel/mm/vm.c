@@ -3,6 +3,9 @@
 #include "syscall_numbers.h"
 #include "process_limits.h"
 #include "kernel/mm/swap.h"
+#include "kernel/proc/gate.h"
+#include "kernel/proc/process.h"
+#include "syscall_numbers.h"
 
 #define PTE_V (1UL << 0)
 #define PTE_R (1UL << 1)
@@ -39,6 +42,7 @@ static VmSpace spaces[PROCESS_LIMIT + 1];
 static uintptr_t kernel_root, mmio[16];
 static size_t mmio_count, resident, frame_limit = VM_DEFAULT_FRAMES;
 static uint64_t next_arrival;
+static KernelGate vm_gate;
 static struct {
     size_t faults, soft_loads, images, zeroes, ins, outs, drops, invalid, io_errors, copies;
 } stats;
@@ -121,6 +125,7 @@ static uint64_t permissions(size_t index) {
 
 /* FIFO among eligible pages. Hits never change arrival; pinned pages cannot move. */
 static int evict_one(void) {
+    if (process_runtime_nonblocking()) return ERR_BUSY;
     uint64_t after = 0;
     int error = ERR_NO_MEMORY;
     for (;;) {
@@ -228,7 +233,7 @@ static int resident_page(VmSpace *space, size_t index, int write, uintptr_t *phy
     return 0;
 }
 
-int vm_handle_fault(uintptr_t root, uintptr_t address, unsigned long cause, uintptr_t pc) {
+static int vm_handle_fault_impl(uintptr_t root, uintptr_t address, unsigned long cause, uintptr_t pc) {
     ++stats.faults;
     VmSpace *space = find_space(root);
     const int index = page_index(space, address);
@@ -326,7 +331,7 @@ static void free_table(uintptr_t address, uintptr_t shared, int level) {
     page_free(address);
 }
 
-void vm_destroy(uintptr_t root) {
+static void vm_destroy_impl(uintptr_t root) {
     if (root == 0) return;
     uintptr_t satp;
     __asm__ volatile("csrr %0, satp" : "=r"(satp));
@@ -338,7 +343,7 @@ void vm_destroy(uintptr_t root) {
     space->root = 0;
 }
 
-uintptr_t vm_create(long program) {
+static uintptr_t vm_create_impl(long program) {
     VmSpace *space = 0;
     for (size_t i = 0; i < PROCESS_LIMIT + 1; ++i) if (spaces[i].root == 0) { space = &spaces[i]; break; }
     if (space == 0) return 0;
@@ -361,7 +366,7 @@ uintptr_t vm_create(long program) {
     return root;
 }
 
-int vm_clone(uintptr_t destination, uintptr_t source) {
+static int vm_clone_impl(uintptr_t destination, uintptr_t source) {
     VmSpace *to = find_space(destination), *from = find_space(source);
     if (to == 0 || from == 0) return ERR_ADDRESS;
     to->heap_end = from->heap_end;
@@ -393,7 +398,7 @@ int vm_clone(uintptr_t destination, uintptr_t source) {
 
 /* Install only validated ELF pages; private bytes are marked dirty so eviction
    preserves them in swap even if the original file is changed or removed. */
-int vm_elf_allow(uintptr_t root, uintptr_t address, size_t length) {
+static int vm_elf_allow_impl(uintptr_t root, uintptr_t address, size_t length) {
     VmSpace *space = find_space(root);
     if (!space || space->program != PROGRAM_ELF || !length || address < USER_ENTRY ||
         address >= USER_DATA + PAGE_SIZE || length > USER_DATA + PAGE_SIZE - address) return ERR_ADDRESS;
@@ -406,7 +411,7 @@ int vm_elf_allow(uintptr_t root, uintptr_t address, size_t length) {
     return 0;
 }
 
-int vm_elf_write(uintptr_t root, uintptr_t address, const void *buffer, size_t length) {
+static int vm_elf_write_impl(uintptr_t root, uintptr_t address, const void *buffer, size_t length) {
     VmSpace *space = find_space(root);
     if (!space || space->program != PROGRAM_ELF) return ERR_ADDRESS;
     size_t copied = 0;
@@ -426,7 +431,7 @@ int vm_elf_write(uintptr_t root, uintptr_t address, const void *buffer, size_t l
     return 0;
 }
 
-long vm_sbrk(uintptr_t root, long increment) {
+static long vm_sbrk_impl(uintptr_t root, long increment) {
     VmSpace *space = find_space(root);
     if (space == 0) return ERR_ADDRESS;
     const uintptr_t old = space->heap_end;
@@ -460,8 +465,8 @@ static int accessible(uintptr_t root, uintptr_t address, size_t length, uint64_t
         address = (address & ~(PAGE_SIZE - 1)) + PAGE_SIZE;
     }
 }
-int user_readable(uintptr_t root, uintptr_t address, size_t length) { return accessible(root, address, length, PTE_R); }
-int user_writable(uintptr_t root, uintptr_t address, size_t length) { return accessible(root, address, length, PTE_R | PTE_W); }
+static int user_readable_impl(uintptr_t root, uintptr_t address, size_t length) { return accessible(root, address, length, PTE_R); }
+static int user_writable_impl(uintptr_t root, uintptr_t address, size_t length) { return accessible(root, address, length, PTE_R | PTE_W); }
 
 static int copy_user(uintptr_t root, uintptr_t user, void *buffer, size_t length, int write) {
     if (!accessible(root, user, length, write ? PTE_R | PTE_W : PTE_R)) return ERR_ADDRESS;
@@ -485,13 +490,10 @@ static int copy_user(uintptr_t root, uintptr_t user, void *buffer, size_t length
     }
     return 0;
 }
-int user_copy_from(uintptr_t root, void *to, uintptr_t from, size_t length) { return copy_user(root, from, to, length, 0); }
-int user_copy_to(uintptr_t root, uintptr_t to, const void *from, size_t length) { return copy_user(root, to, (void *)from, length, 1); }
-int user_read_byte(uintptr_t root, uintptr_t address, unsigned char *result) { return user_copy_from(root, result, address, 1); }
-int user_write_byte(uintptr_t root, uintptr_t address, unsigned char value) { return user_copy_to(root, address, &value, 1); }
-int user_write_long(uintptr_t root, uintptr_t address, long value) { return user_copy_to(root, address, &value, sizeof(value)); }
+static int user_copy_from_impl(uintptr_t root, void *to, uintptr_t from, size_t length) { return copy_user(root, from, to, length, 0); }
+static int user_copy_to_impl(uintptr_t root, uintptr_t to, const void *from, size_t length) { return copy_user(root, to, (void *)from, length, 1); }
 
-long vm_control(long limit) {
+static long vm_control_impl(long limit) {
     if (limit != 0) {
         if (limit < (long)VM_MIN_FRAMES || limit > (long)(RAM_END - RAM_BASE) / (long)PAGE_SIZE) return ERR_INVALID;
         while (resident > (size_t)limit) {
@@ -516,7 +518,7 @@ long vm_control(long limit) {
     return 0;
 }
 
-void vm_print_space(uintptr_t root) {
+static void vm_print_space_impl(uintptr_t root) {
     VmSpace *space = find_space(root);
     if (space == 0) return;
     size_t in_ram = 0, on_disk = 0;
@@ -530,7 +532,7 @@ void vm_print_space(uintptr_t root) {
     console_puts(" faults="); console_number((long)space->faults); console_putc('\n');
 }
 
-void vm_get_usage(uintptr_t root, VmUsage *usage) {
+static void vm_get_usage_impl(uintptr_t root, VmUsage *usage) {
     *usage = (VmUsage){0};
     const VmSpace *space = find_space(root);
     if (space == 0) return;
@@ -539,4 +541,139 @@ void vm_get_usage(uintptr_t root, VmUsage *usage) {
         usage->swapped_pages += !space->pages[i].physical && space->pages[i].slot != 0;
     }
     usage->heap_bytes = space->heap_end - USER_HEAP_BASE;
+}
+
+int vm_scope_enter(void) { return kernel_gate_enter(&vm_gate); }
+int vm_scope_leave(void) { return kernel_gate_leave(&vm_gate); }
+
+uintptr_t vm_create(long program) {
+    if (vm_scope_enter() < 0) return 0;
+    const uintptr_t root = vm_create_impl(program);
+    const int error = vm_scope_leave();
+    return error < 0 ? 0 : root;
+}
+
+int vm_destroy(uintptr_t root) {
+    if (!root) return 0;
+    int error = process_cancel_defer_enter();
+    if (error < 0) return error;
+    error = vm_scope_enter();
+    if (error < 0) {
+        (void)process_cancel_defer_leave();
+        return error;
+    }
+    vm_destroy_impl(root);
+    error = vm_scope_leave();
+    const int defer_error = process_cancel_defer_leave();
+    return error < 0 ? error : defer_error;
+}
+
+int vm_try_destroy(uintptr_t root) {
+    if (!root) return 0;
+    const int error = kernel_gate_try_enter(&vm_gate);
+    if (error < 0) return error;
+    vm_destroy_impl(root);
+    return kernel_gate_leave(&vm_gate);
+}
+
+int vm_handle_fault(uintptr_t root, uintptr_t address, unsigned long cause, uintptr_t pc) {
+    const int error = vm_scope_enter();
+    if (error < 0) return error;
+    const int result = vm_handle_fault_impl(root, address, cause, pc);
+    const int leave_error = vm_scope_leave();
+    return leave_error < 0 ? leave_error : result;
+}
+
+int vm_clone(uintptr_t destination, uintptr_t source) {
+    const int error = vm_scope_enter();
+    if (error < 0) return error;
+    const int result = vm_clone_impl(destination, source);
+    const int leave_error = vm_scope_leave();
+    return leave_error < 0 ? leave_error : result;
+}
+
+int vm_elf_allow(uintptr_t root, uintptr_t address, size_t length) {
+    const int error = vm_scope_enter();
+    if (error < 0) return error;
+    const int result = vm_elf_allow_impl(root, address, length);
+    const int leave_error = vm_scope_leave();
+    return leave_error < 0 ? leave_error : result;
+}
+
+int vm_elf_write(uintptr_t root, uintptr_t address, const void *buffer, size_t length) {
+    const int error = vm_scope_enter();
+    if (error < 0) return error;
+    const int result = vm_elf_write_impl(root, address, buffer, length);
+    const int leave_error = vm_scope_leave();
+    return leave_error < 0 ? leave_error : result;
+}
+
+long vm_sbrk(uintptr_t root, long increment) {
+    const int error = vm_scope_enter();
+    if (error < 0) return error;
+    const long result = vm_sbrk_impl(root, increment);
+    const int leave_error = vm_scope_leave();
+    return leave_error < 0 ? leave_error : result;
+}
+
+int user_readable(uintptr_t root, uintptr_t address, size_t length) {
+    if (vm_scope_enter() < 0) return 0;
+    const int result = user_readable_impl(root, address, length);
+    return vm_scope_leave() < 0 ? 0 : result;
+}
+
+int user_writable(uintptr_t root, uintptr_t address, size_t length) {
+    if (vm_scope_enter() < 0) return 0;
+    const int result = user_writable_impl(root, address, length);
+    return vm_scope_leave() < 0 ? 0 : result;
+}
+
+int user_copy_from(uintptr_t root, void *to, uintptr_t from, size_t length) {
+    const int error = vm_scope_enter();
+    if (error < 0) return error;
+    const int result = user_copy_from_impl(root, to, from, length);
+    const int leave_error = vm_scope_leave();
+    return leave_error < 0 ? leave_error : result;
+}
+
+int user_copy_to(uintptr_t root, uintptr_t to, const void *from, size_t length) {
+    const int error = vm_scope_enter();
+    if (error < 0) return error;
+    const int result = user_copy_to_impl(root, to, from, length);
+    const int leave_error = vm_scope_leave();
+    return leave_error < 0 ? leave_error : result;
+}
+
+int user_read_byte(uintptr_t root, uintptr_t address, unsigned char *result) {
+    return user_copy_from(root, result, address, 1);
+}
+
+int user_write_long(uintptr_t root, uintptr_t address, long value) {
+    return user_copy_to(root, address, &value, sizeof(value));
+}
+
+int user_write_byte(uintptr_t root, uintptr_t address, unsigned char value) {
+    return user_copy_to(root, address, &value, 1);
+}
+
+long vm_control(long limit) {
+    const int error = vm_scope_enter();
+    if (error < 0) return error;
+    const long result = vm_control_impl(limit);
+    const int leave_error = vm_scope_leave();
+    return leave_error < 0 ? leave_error : result;
+}
+
+void vm_print_space(uintptr_t root) {
+    if (vm_scope_enter() < 0) return;
+    vm_print_space_impl(root);
+    (void)vm_scope_leave();
+}
+
+int vm_get_usage(uintptr_t root, VmUsage *usage) {
+    if (!usage) return ERR_INVALID;
+    const int error = vm_scope_enter();
+    if (error < 0) return error;
+    vm_get_usage_impl(root, usage);
+    return vm_scope_leave();
 }

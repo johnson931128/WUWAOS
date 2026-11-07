@@ -73,9 +73,41 @@
 
 ### 2B. Owner-aware gate 與 Block/FS/VM 非同步
 
-- 進度：未開始；須待 2A 完成並另行確認 gate 鎖序、DMA 所有權及 kill unwind 規則。
-- 實作內容：以 owner-aware 可睡眠 gate 序列化共享的 `fs_staging`、WUFS transaction staging/metadata、VM resident/eviction/clone state、Block active-device/request buffers；把 Block completion 納入事件框架，DMA request/buffer 在 device safe completion 前維持有效。
-- 方法與完成判準：採單 hart cooperative ownership，不 spin/yield 錯誤共享狀態；scheduler poll 只推進 request slot 並發布 completion。明確鎖序、不可在 gate poller 中呼叫高層 FS/VM/usercopy；boot no-current 僅允許單執行緒同步 fallback；kill/timeout 不提前釋放 gate 或借用 DMA buffer。
+- 整體進度：進行中；2B 分為 2B1（共享狀態 gate 與呼叫脈絡安全）及 2B2（Block 非同步），完成 2B1 不代表 2B 整體完成。
+
+### 2B1. 可重入 gate 與共享狀態保護
+
+- 進度：完成；2B2 Block 非同步仍未開始，不能視為第 2 階段整體完成。
+- 實作內容：`KernelGate` 以目前 PCB/PID 作 owner、遞迴深度和 event source；每個 OFD offset/data、每個 Pipe copy/commit 各自序列化。FS scope 保護 metadata、redo transaction staging、syscall 的 `fs_staging` 全段及 `io_open` 的查找/截斷/發布；`elf_load` 整段持有 FS scope，避免分段讀取混合不同 ELF 版本。VM scope 保護 address-space 建立、複製、fault、eviction、查詢等共享頁表與 resident metadata。console route 改存每個 Process。`fs_init` 仍是 boot-only 一次性 mount/format/replay，並非 runtime remount API；Block I/O 在本步仍同步。
+- 取得與釋放演算法：
+
+  ```text
+  gate_enter(g):
+      若目前 process 已是 owner: depth++，返回
+      若 no-wait context: gate 空閒則取得，否則 BUSY
+      重複:
+          snapshot event sequence
+          若 gate 空閒: 設 owner/depth，計入 PCB gate ownership，返回
+          wait(event, snapshot)       // 不持有目標 gate
+          若被取消: 返回 interrupted
+
+  gate_leave(g):
+      驗證 owner，depth--
+      若 depth==0: 清 owner/accounting，notify 等待者
+
+  owner 操作結束: 依巢狀順序逐層 leave
+  ```
+
+  一般鎖序為 OFD/Pipe → FS → VM → 單一 Block device。FS 的 `io_inode_is_open` 僅作 SIE=0 下有界 metadata scan，不等待 OFD gate，避免 FS 反向等待 OFD。Pipe 不持 gate 等 data/space event；ready 後 bounded staging copy，再 commit ring/counter 並 notify。這個 copy/commit 保護只涵蓋目前同步 VM 行為，2B2 前仍須保留 Pipe gate；未宣稱可安全跨非同步 VM wait 修改 ring。
+- no-wait 與生命週期：boot pre-scheduler 可在立即取得 Gate 時做同步工作，但不允許睡眠；scheduler/UI poll runtime context 不論有無 current process 都不可等待。VM allocation 在此 context 若需 eviction，會在改 PTE 或提交 I/O 前回 BUSY。scheduler reap 用 `vm_try_destroy` 延後重試。`cancel_defer_depth` 保護 cleanup 和未來 DMA critical section；kill/cancel 只標記 pending，deferred cleanup 等待 Gate、釋放資源後才由 trap return boundary 處理；trap return 檢查 defer/gate ownership 必須平衡。user page fault 在 VM wait 回錯後也先走該 boundary，pending kill 保留 -9 語意，普通 page fault 保留原錯誤。
+- 驗收結果：clean/full rebuild 未執行；本輪增量命令 `make -j2 all build/user.bin build/app.bin build/fan.bin build/workstate.bin build/kernel-disk.elf` 成功。以獨立 scratch WUFS image 啟動 GUI QEMU，shell 執行 `echo gate > /home/user/gate.txt`、`cat /home/user/gate.txt`、`cat /boot/kernel.elf | cat > /home/user/pipe.elf`、讀取該檔及 `workstate q`；UART 顯示 child PID 7 正常以 status 0 結束，parent 收集並回收 child。此 smoke 確認主要 syscall/FS/pipe/VM 路徑可運作，不等同大檔 byte-for-byte host 比較。
+- 未執行：依使用者「確認成功即可、不要花時間測試一堆」指示，未跑 Gate contention/cancel、cleanup defer、NEW-process inspect、poll no-wait eviction 等 GDB 個別邊界案例；也未跑 clean build 或完整 Fan/exec/fork 矩陣。這些不作為已驗證項目。原始 disk/swap 未掛載或修改；本階段未修改任何測試程式碼。
+
+### 2B2. Block 非同步 request
+
+- 進度：未開始；待 2B1 完成、審查及獨立驗收後進入。
+- 實作內容：移除 runtime global active-device request selector；每個 BlockDevice 保存獨立 request/header/status/buffer ownership、gate 及 completion event；scheduler poll 只觀察 VirtIO used ring 並發布完成，不進入 FS/VM/usercopy。
+- 方法與完成判準：每個裝置至多一個 in-flight request，request/buffer 在 completion 前不可釋放或重用。排隊 gate wait 可取消；DMA submit 後進入不可取消 critical depth，kill 只標 pending，待裝置安全完成、清理 request 並逐層釋放 gate 後才於 trap boundary terminate。timeout 目前維持 fail-stop，不提前返回並重用可能仍被 DMA 存取的 buffer；裝置復原留待第 3 階段。
 - 設計前置風險：VM gate 單獨不足以保護即將 swap-out 的 user frame，因其他 U-mode process 仍可能存取被驅逐的實體頁；非同步 swap-out 前須 revoke victim PTE 並 `sfence`，保留 RAM/bounce snapshot，失敗時 restore 原 PTE，且 scheduler reap 的 `vm_destroy` 只能 try/defer，不能睡眠等待 VM gate。Async FS/VM 也會讓 pipe ring 在 usercopy yield 時、共享 OFD offset 在檔案 I/O yield 時被其他 process 改動，因此需 pipe/OFD ownership gate，或在 gate 外先 copy/pin、gate 內 commit；只替 FS/VM 加 gate 不夠。核心診斷 route 應改為 per-Process，避免跨行程的 set/reset 互相清除。建議鎖序：OFD/pipe → FS（含 syscall fs_staging 外層）→ VM → Block；FS 不反向取得 OFD，scheduler poll/reap 不得睡眠。DMA 已提交後的通用 event cancel 不可立即 unwind／釋放 device gate 或 swap slot；2B 要定義不可中斷區或 critical depth，kill 延後至 DMA safe completion 後清理，排 gate 時才可取消。timeout 需裝置安全停止／完成後再發布，否則沿用 fail-stop；UI poll 即使從 process_resume 呼叫也需明確保證 nonblocking，不能等待 VM gate。這些尚屬 2B 設計待辦，未在 2A 實作或驗收。
 
 ### 2C. GPU 非阻塞 present
@@ -111,3 +143,5 @@
 ## 進度維護
 
 每完成一個步驟後，更新本檔與 [`plan_current.md`](./plan_current.md) 的進度。依使用者要求，本檔須記錄實際採用的解決觀念／演算法、必要虛擬碼、驗收結果與限制。未執行或未完成對應 runtime 驗證的項目不得記為完成；若當前條件無法進行 runtime 驗證，需明確保留未完成狀態並記錄限制。
+
+依使用者最新指示，優先實作、更新進度並分階段 commit/push；額外測試暫緩。只記錄實際做過的 build/smoke，未執行項目標示 NOT_RUN，不宣稱全面驗收。

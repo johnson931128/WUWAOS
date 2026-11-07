@@ -4,7 +4,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* Boot-only one-time format/mount/replay before scheduler startup; not a runtime remount API. */
 int fs_init(void);
+int fs_scope_enter(void);
+int fs_scope_leave(void);
 long fs_is_directory(const char *path);
 long fs_list(const char *path, char *output, size_t capacity);
 long fs_mkdir(const char *path);
