@@ -25,6 +25,12 @@ WUWAOS is a small operating system written in **C and RISC-V assembly** that boo
 
 WUWAOS focuses on fundamental operating system mechanisms and is not Linux-compatible. QEMU currently loads the kernel using `-kernel`. A restricted static RV64 ELF loader can run compatible WUWAOS programs from WUFS; general ELF/Linux compatibility, command-line arguments for external ELF programs, compiling C inside WUWAOS, networking, general window management, and a file manager are not supported. The graphical desktop provides one fixed-size Terminal window connected to the existing shell; `make run` remains the UART workflow. See the [documentation](https://johnson931128.github.io/WUWAOS/) and [Spec 21](docs/SPEC-21-native-compilation.md) for limitations and future plans.
 
+## Current Development Status
+
+The current source has isolated TTY sessions, event-based waits, and owner-aware kernel gates protecting shared OFD/pipe operations, WUFS transactions, and VM state. Kernel code can cooperatively sleep and resume its caller stack, although timer preemption still applies only to user mode. These changes prepare the kernel for asynchronous device I/O.
+
+Block I/O still busy-polls synchronously and stops the kernel on timeout. The latest Block change only makes device pointers explicit; asynchronous requests, device recovery, and multi-window management remain unfinished. Implementation is paused while documentation is updated. See the [detailed implementation plan](plan.md) and [compact progress list](plan_current.md) for completed steps, methods, and validation limits. These source changes are not included in the existing portable v1 ZIP.
+
 ## Demo Video
 
 ![WUWAOS QEMU demo: live terminal recording](docs/media/wuwaos-demo.gif)

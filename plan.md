@@ -1,6 +1,6 @@
 # 後續實作計畫
 
-目前整體狀態：第 1 階段完成；第 2 階段的 2A 完成，2B/2C 與第 3–6 階段未開始。Spec 33 的原始碼分層工作已完成。
+目前整體狀態：第 1 階段、2A 與 2B1 完成；2B2 暫停於 Block pointer refactor，非同步 request 尚未完成；2C 與第 3–6 階段未開始。Spec 33 的原始碼分層工作已完成。程式實作暫停，先更新文件與網站。
 
 ## 1. 多 TTY 與 session 物件化
 
@@ -42,7 +42,7 @@
 
 ### 2A. 事件框架、TTY/pipe 等待與 idle
 
-- 進度：完成實作與本階段驗收；第 2 階段整體仍進行中，2B/2C 未開始。
+- 進度：完成實作與本階段驗收；第 2 階段整體仍進行中，2B1 已完成，2B2 暫停，2C 未開始。
 - 實作內容：`kernel/proc/event.c` 提供帶 generation/sequence 的 event source 與 per-process WaitRecord；完成、deadline timeout、cancel 結果均存於 PCB。TTY/pipe 改由原 syscall caller stack try/wait/retry；scheduler `io_poll` 僅 harvest UART 並通知事件，不做 usercopy／VM／swap。kill 對仍持有 kernel call stack 的行程延後至安全 unwind。移除舊 `process_block_io`／`process_complete_io`、`WAIT_IO`／`WAIT_TIMER` 及不再使用的 PCB io buffer 欄位；`pcb` 改顯示實際 WaitRecord 與 kill 狀態。Idle 在 SIE=0、sie.STIE=1 下以有限 SBI 絕對 deadline 加 WFI；醒來 stop/ack timer 後再 poll。
 - 解決觀念與演算法：source 在固定 storage 中保存 generation、sequence、active/retired；init 只允許 inactive source 以更大 generation 重用，generation／sequence 不允許繞回。waiter 註冊前先 snapshot sequence，再檢查 readiness；原核心不可搶佔區內若 source 已關閉或 generation 不合回 `ERR_IO`，若 sequence 已改變立即回 0 讓 caller 重試，否則寫入 PCB WaitRecord、改 WAIT_EVENT 並切換。notify 先遞增 sequence，再以 source pointer+generation 找相符 waiter，將結果存入 PCB 並喚醒；close 在 source 失效前以 `ERR_IO` 完成既有 waiter。恢復後只讀 PCB result 並清 WaitRecord，不再解參考 source，故即使 slot 已重用亦不 alias。deadline 掃描以硬體 time 做 wrap-safe 到期比較；只有無 Ready process 且仍有 event/UI poll work 才以固定短絕對 deadline WFI，spurious wake 不重算延後原 deadline。
 - Pipe read/write 演算法：
@@ -142,6 +142,14 @@
 - 進度：未開始；此工作不屬於第 1 階段。
 - 實作內容：整理檔案安全暫存與原子替換路徑、寫入錯誤語意，統一核心與裝置診斷資訊。
 - 方法與完成判準：替換結果只呈現完整舊版或完整新版；提交後回錯時，明確回報結果不確定狀態及診斷資訊。
+
+## 文件與網站同步（程式實作暫停期間）
+
+- 目標與範圍：依目前原始碼同步程式碼導覽、主題章節、README、網站首頁與歷程摘要；保留舊規格驗收、特殊事蹟與媒體，不修改核心程式。
+- 方法：以第 1 階段、2A、2B1 已實作內容為現況，將 2B2 pointer refactor 與尚未實作的非同步 request／復原清楚區分。細節連回本計畫，避免網站另維護一份不同步的演算法紀錄。
+- 步驟與進度：第一批導覽／主題文件已以 `1e08d74` 提交並 push；第二批 README／首頁／歷程摘要與本計畫同步於本批提交。既有工具已將網站建置並發布到 gh-pages `1f99d02`，公開頁面已更新。
+- 驗收方式：文件建置與線上頁面內容快速確認；本輪不新增測試程式碼，不重新執行 OS runtime／QEMU／GDB 或測試矩陣。
+- 實際結果：VitePress 建置成功（僅有 bundle size 提示）；公開首頁 HTTP 200，已包含「目前開發進度」與 2B2 暫停內容，並保留「特殊事蹟」。此次只核對線上 HTML 內容，未做瀏覽器視覺驗收，未重跑 OS 測試。
 
 ## 進度維護
 

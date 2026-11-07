@@ -3,6 +3,22 @@
 此處按開發順序保存規格。它們記錄「當時做了什麼」，不一定代表現在的架構；第一次閱讀建議先看左側主題章節。
 Spec 33 以前的歷史 source link 若指向舊 `kernel/` 或 `user/` 路徑，固定指向 2026-11-07 重整前 commit `800a805`，以保留當時程式碼參照；目前目錄與 UI/kernel 邊界見 [Spec 33](./SPEC-33-module-architecture.md)。
 
+## Spec 33 之後的實作進度
+
+後續工作直接記錄於 [詳細計畫](https://github.com/johnson931128/WUWAOS/blob/main/plan.md)，不改寫舊規格的驗收紀錄。對照目前程式碼請讀 [程式碼導覽](./CODE_GUIDE.md) 與主題章節。
+
+| 工作 | 目前狀態與紀錄 |
+| --- | --- |
+| 第 1 階段：多 TTY/session | 已完成 endpoint 世代 handle、獨立佇列與 OFD 路由；UI 仍只有單一 Terminal view（[d89a8a7](https://github.com/johnson931128/WUWAOS/commit/d89a8a7)） |
+| 2A：事件等待 | 已完成 TTY／pipe 的 caller-stack 等待與 idle 喚醒，scheduler poll 不執行 usercopy（[f9e092b](https://github.com/johnson931128/WUWAOS/commit/f9e092b)） |
+| 2B1：核心 gate | 已完成 owner-aware gate、OFD／pipe、FS／VM 保護與延後取消；增量建置及基本 GUI smoke 已執行，額外邊界矩陣未執行（[aa480e3](https://github.com/johnson931128/WUWAOS/commit/aa480e3)） |
+| 2B2：非同步 Block | 暫停；只完成明確 BlockDevice 指標整理及該物件檔編譯，非同步 request／swap 尚未完成（[6cda03e](https://github.com/johnson931128/WUWAOS/commit/6cda03e)） |
+| 2C、第 3–6 階段 | 未開始：GPU 非阻塞 present、裝置復原、資源／堆疊保護、多視窗、原子替換與診斷 |
+
+目前先更新文件與網站；本次文件建置不代表重新執行以上 OS 驗收。各項演算法與驗收限制以詳細計畫為準。
+
+## 原始規格
+
 | 階段 | 規格與定位 |
 | --- | --- |
 | 01 | [使用者模式與系統呼叫](./SPEC-01-user-syscalls.md) |

@@ -22,6 +22,16 @@ Windows 可先下載 [免安裝完整包](./portable-windows.md)，在 PowerShel
 | 如何寫自己的互動程式？ | [Shell 與 fan](./topics/applications.md) |
 | 如何觀察行程的 CPU 與記憶體用量？ | [workstate 即時監測](./topics/monitoring.md) |
 
+## 目前開發進度
+
+目前以整理核心錯誤處理與共享狀態為主，為後續 UI／視窗功能建立基礎：
+
+- **已完成**：多 TTY/session 物件、事件等待，以及 2B1 的 owner-aware kernel gate；OFD／pipe、FS 與 VM 在可合作式切換行程的路徑上有明確的保護範圍。
+- **暫停於 2B2 前置整理**：Block driver 已改用明確的裝置指標，實際傳輸仍同步輪詢；尚未完成非同步 request、completion event 或非同步 swap 的 PTE 撤銷／回復。
+- **後續待辦**：GPU 非阻塞 present、裝置復原、資源與堆疊保護、多視窗管理、檔案原子替換與統一診斷。程式實作暫停，先同步文件與網站。
+
+詳細步驟、演算法及已執行／未執行的驗收見 [實作計畫](https://github.com/johnson931128/WUWAOS/blob/main/plan.md)；只看進度可讀 [精簡清單](https://github.com/johnson931128/WUWAOS/blob/main/plan_current.md)。這些原始碼更新不包含於既有 portable v1 ZIP。
+
 ## 目前的系統邊界
 
 | 項目 | 現況 |
@@ -30,10 +40,10 @@ Windows 可先下載 [免安裝完整包](./portable-windows.md)，在 PowerShel
 | 執行模式 | S-mode 核心、U-mode 使用者程式 |
 | 行程 | 最多 16 個 PCB；fork／exec／exit／wait 與事件等待 |
 | 核心上下文 | RV64 swtch.S；每行程保留 C 呼叫堆疊、獨立排程器堆疊 |
-| 同步 | 自製 Mutex／Semaphore；`demo sync` 可觀察父子行程等待與喚醒 |
-| 排程 | 單核心 RR、50 ms 時間片；使用者程式可搶占，核心內不搶占 |
+| 同步 | 使用者 Mutex／Semaphore；核心 owner-aware gate 保護 OFD／pipe、FS 與 VM |
+| 排程 | 單核心 RR、50 ms 時間片；使用者程式可搶占，核心內不被計時器搶占，但可事件等待／合作式切換 |
 | 記憶體 | Sv39 三級頁表、4 KiB 頁、按需分頁、FIFO 置換、獨立 Swap |
-| 磁碟 | VirtIO 區塊 I/O、自訂 WUFS、重新啟動後保留檔案 |
+| 磁碟 | 同步 VirtIO 區塊 I/O；WUFS0002 redo journal／開機重播，逾時仍 fail-stop，尚無裝置復原 |
 | 操作 | Shell FD/OFD、三階段管道、檔案重導向、fan 全螢幕文字編輯器 |
 | 圖形輸出 | 可選 VirtIO GPU/tablet/keyboard；1280×720 桌面含固定 Terminal 視窗與獨立 GUI shell TTY |
 | 監測 | workstate 全螢幕；每秒更新行程、CPU 派發時間、RSS／Swap 與整體 RAM |
