@@ -26,6 +26,8 @@ TTY 與 pipe 的阻塞讀寫保留在原 syscall/kernel stack：呼叫端先讀 
 
 `scheduler` 的 `io_poll()` 只輪詢 UART 並通知 TTY input event，不複製使用者記憶體，也不完成高層 pipe 操作。事件 wait 結果存於 PCB，因此 source 關閉或 slot 後續重用時，已喚醒的行程不會再解參考舊 source。kill 對仍持有 syscall stack 的行程延後到安全返回邊界清理；deadline/取消也透過同一 wait result 返回。這是目前單 hart、核心不可搶佔下的 caller-stack 設計，並非非同步裝置請求。
 
+每個 OFD 的可重入 Gate 保護共享 file offset／資料操作；每個 pipe 的 Gate 保護 ring copy/commit。FS scope 會涵蓋 metadata／交易 staging。目前已接入的 Gate 順序為 OFD/Pipe → FS → VM；per-device Block Gate 尚未接入。scheduler/UI poll 是 no-wait context，競爭中的 Gate 不會讓 poller 睡眠；Block request 目前尚未接上 scheduler event poll。
+
 沒有 Ready 行程而存在 event/UI poll work 時，scheduler 以有限的絕對 SBI timer deadline、SIE=0/STIE=1 與 WFI 等待；醒來後停止/確認 timer、輪詢並檢查 timeout。UART 仍由輪詢觀察，不是中斷驅動。事件框架與目前實作進度見[後續計畫](https://github.com/johnson931128/WUWAOS/blob/main/plan.md#2-統一事件等待與非同步-io)。
 
 ## 真實的位元組管道
@@ -45,7 +47,7 @@ TTY 與 pipe 的阻塞讀寫保留在原 syscall/kernel stack：呼叫端先讀 
 換頁操作 → swap.c → block.c → VirtIO queue → 獨立 Swap 磁碟
 ```
 
-`drivers/virtio/block.c` 從 FDT 探索現代 VirtIO-MMIO 裝置，每顆磁碟有自己的請求與佇列狀態。以磁碟標頭辨識 WUFS 與 Swap，不依賴裝置順序。目前磁碟請求同步輪詢完成；尚無磁碟排程、非同步請求或快取。
+`drivers/virtio/block.c` 從 FDT 探索現代 VirtIO-MMIO 裝置，每顆磁碟有自己的請求與佇列狀態；初始化、transfer 與 flush 明確傳遞 `BlockDevice *`，不靠全域 active-device selector。以磁碟標頭辨識 WUFS 與 Swap，不依賴裝置順序。目前磁碟請求仍由呼叫者同步 busy-poll 完成；非同步請求與 scheduler completion poll 尚未實作，也沒有快取。
 
 每個已提交的 512-byte 請求以硬體時間計數器計時，預設超過 5 秒且仍未完成，就印出裝置、角色、操作、磁區與等待時間，然後停止核心。逾時不是取消成功，因此不返回上層、不回收或重用請求緩衝區。門檻在 `drivers/virtio/block.h` 調整；一次頁面交換含八筆磁區請求，不共用一個 5 秒總預算。這是目前 WUWAOS 的停止策略，尚無裝置重設與恢復。見 [Spec 12](../SPEC-12-block-timeout.md)。
 

@@ -223,6 +223,7 @@ Sv39 將虛擬位址拆成 L2／L1／L0 三個 9-bit 索引與 12-bit 頁內位�
 只有已保留的合法區域能補頁；heap 最後一個部分頁按頁對齊映射。新建立的行程只先配置私有根表與低位址 L1，不配置使用者頁；L0 表與使用者頁在需要時取得。kernel/root/page-table 頁面常駐、不參與使用者 FIFO 置換。
 
 - VmSpace 保存 root、program、heap_end、缺頁數，以及 262 個 VmPage 補充分頁記錄。spaces[5] 是 metadata，並非預先配置的使用者 RAM；第五欄供 exec 準備新空間。
+- `vm_scope_enter/leave` 以可重入 owner Gate 序列化頁表、resident metadata、複製與查詢；同一行程可遞迴進入。scheduler/UI poll 是 no-wait context，若配置需要 eviction 會在改 PTE 或提交磁碟請求前回 BUSY。現行換出仍是同步 block I/O，沒有先撤 PTE 再非同步寫 Swap 的流程。
 - VmPage 的 physical 非零表示常駐；slot 非零表示有獨立 swap backing；兩者皆零時由原始映像或零頁重建。dirty 與硬體 PTE_D 合併判斷修改狀態，pins 表示暫時不可換出，arrival 表示本次入駐次序。
 - vm_walk 用 `(address >> (12 + 9 * level)) & 511` 逐層取索引，需要時配置下層表。核心 vm_map 僅安裝 4 KiB 映射，拒絕覆蓋既有 PTE。
 - resident_page 取得頁框並完整讀取 swap 或填入映像／零頁，成功後才公布有效 PTE；kernel copyout 主動標 dirty，使用者直接寫入則由硬體 D bit 記錄。換入失敗保留原 slot，不公布部分讀取的頁面。
@@ -277,7 +278,9 @@ wait 的 status 可為空指標，否則阻塞前及回寫時檢查完整可寫�
 terminate 由 exit／kill 共用：逐一 close FD、取消 pending I/O、清理等待資訊、保存結果、成為 Zombie，並通知等待自己的父行程。workstate/fan 終止時還復原終端畫面。
 process_kill 只接受目前行程的直接子行程，不接受自己、PID 1 或已是 Zombie，結果為 -9；不是完整訊號系統。
 父行程退出時子行程交給仍活著的 PID 1，否則無父行程；無父行程的 Zombie 由核心回收。
-reap 以 vm_destroy 釋放私有頁面與表、清除 PCB 的根表指標後將欄位改成 Unused；呼叫時必須已切離該根表及堆疊。孤兒回收在 scheduler stack，父 wait 在父堆疊；固定核心 stack 到下次建立才清零。kill 可丟棄沒有持鎖資源的暫停呼叫，未來加入鎖必須重新設計安全取消。
+`vm_destroy` 釋放私有頁面與表、清除 PCB 的根表指標後才可把欄位改成 Unused；呼叫時必須已切離該根表及堆疊。父行程 wait 可在自己的 stack 上等待並清理；scheduler 對孤兒 zombie 使用 `vm_try_destroy`，Gate 忙碌時延後回收，不在 scheduler stack 睡眠。`PROCESS_NEW` 在建立頁表期間保留 PCB slot；`process_inspect` 遇到尚未建立的 frame 會顯示 initializing，不解參考 null。
+
+`KernelGate` 以 PCB/PID 作 owner 並追蹤遞迴深度；競爭者記錄 event generation/sequence 後，在不持有目標 Gate 時等待。Kill 對仍在 syscall/fault 核心 stack 的行程標記 pending，讓原呼叫先 unwind；cancel-defer 保護必須完成的 VM cleanup。trap return 邊界檢查內部 Gate/defer 深度後才處理 pending kill。這是目前同步核心工作的生命週期保護，不代表已支援裝置 DMA 安全取消。
 
 ### 查詢與管道
 
@@ -330,7 +333,7 @@ TTY read 在 caller stack 上以 event snapshot→讀取 readiness→必要時 w
 - pipe read/write 在 caller stack 上重試操作；usercopy 成功後更新 ring 並 notify。`io_poll` 僅 harvest UART bytes 並 notify input source，不掃描 PCB 代替行程搬移資料。
 - close／exit／kill 經 OFD 引用計數更新 pipe reader／writer。最後 writer 關閉且 ring 變空才回 EOF；最後 reader 關閉會讓 writer 回 -32。
 
-固定容量限制為每 process 8 descriptors、全域 16 OFD、8 pipes；建立／繼承／關閉在單核心核心區間內完成，不需要額外鎖。Shell 每行最多 3 個 stages；各 stage 用標準 FD，建立後關閉所有額外端點。
+固定容量限制為每 process 8 descriptors、全域 16 OFD、8 pipes；建立／發布與引用計數仍在單 hart、SIE=0 的 bounded 核心區間更新，不等待 Gate。每個 OFD 有自己的可重入 Gate 保護 offset／資料操作，每個 pipe 另有 Gate 保護 ring copy/commit；目前 Gate 順序是 OFD/Pipe → FS → VM，per-device Block Gate 尚未接入。Block 呼叫仍在持有上層 scope 時同步 busy-poll。Shell 每行最多 3 個 stages；各 stage 用標準 FD，建立後關閉所有額外端點。
 
 ## 9. block.c 與 fs.c：I/O 層和檔案系統
 
@@ -338,11 +341,11 @@ TTY read 在 caller stack 上以 event snapshot→讀取 readiness→必要時 w
 
 kernel_main 從 OpenSBI 傳入 a1 的 FDT（硬體裝置樹），block_init_from_fdt 搜尋 `virtio,mmio` 節點與 reg（裝置暫存器位址），再檢查 magic、Version 2 與 Device ID 2（block）。virtio-mmio 有多個空插槽，所以逐一略過未接裝置與非 block 裝置，不假設磁碟固定在某個位址。`vm_map_mmio` 將找到的那一頁加入核心監督模式映射。
 
-現行驅動最多初始化兩顆 block 裝置，每顆 BlockDevice 各自保存 descriptor／available／used 佇列與完成計數；同步請求切換 active context，不共享佇列狀態。讀取 LBA 0 的 WUFS0001、WUFS0002／WUSWAP01 標記區分檔案系統與交換區，交換磁碟先接或後接皆可。每顆找到的 MMIO 頁都加入核心映射；block_read/write/flush 只走 WUFS 裝置，block_swap_read/write 只走交換裝置。
+現行驅動最多初始化兩顆 block 裝置，每個 `BlockDevice` 各自保存 descriptor／available／used 佇列與完成計數；`init_device`、transfer 與 flush 都明確使用裝置物件，不再切換 active-device selector。讀取 LBA 0 的 WUFS0001、WUFS0002／WUSWAP01 標記區分檔案系統與交換區，交換磁碟先接或後接皆可。每顆找到的 MMIO 頁都加入核心映射；block_read/write/flush 只走 WUFS 裝置，block_swap_read/write 只走交換裝置。
 
 swap.c 驗證 4 KiB slot 標頭與磁碟容量，以 bitmap 配置 1-based slot；0 表示不可用／已滿。每頁讀寫八個連續 512-byte 磁區。make_swap.py 預設建立 4095 slots／16 MiB，--slots 可調整，既有映像只驗證、不覆寫格式；slot bitmap 是本次開機的使用狀態，不保存重啟前行程。
 
-driver 協商 VERSION_1 與裝置提供的 FLUSH feature，選 queue 0，建立 request descriptor（描述項）與 status byte，寫入 available ring、通知裝置並同步輪詢 used index。一次只送一個請求；沒有中斷、佇列併發、DMA IOMMU 或 block cache。WUFS0002 commit 使用 VirtIO FLUSH 作持久性屏障；不提供 FLUSH 的裝置只能唯讀掛載乾淨的 WUFS0002。
+driver 協商 VERSION_1 與裝置提供的 FLUSH feature，選 queue 0，建立 request descriptor（描述項）與 status byte，寫入 available ring、通知裝置並同步輪詢 used index。每次只送一個請求；Block request 尚未接入 event poll/scheduler，沒有非同步請求、裝置並行、DMA IOMMU 或 block cache。WUFS0002 commit 使用 VirtIO FLUSH 作持久性屏障；不提供 FLUSH 的裝置只能唯讀掛載乾淨的 WUFS0002。
 
 單次請求以 `block.h` 的 BLOCK_IO_TIMEOUT_MS 設定門檻（預設 5000 ms），公布 available.index 前讀 rdtime（硬體時間計數器）保存 start。未完成時計算 unsigned 的 now-start，依 QEMU virt 10 MHz 時基比較門檻；到期再讀一次完成索引，仍未完成才印出裝置／角色／讀寫／磁區／經過時間與佇列計數。診斷後關閉監督模式中斷並停在 kernel_idle，不返回、不回收或重用尚可能被裝置 DMA 存取的緩衝區。這是單筆請求的 fail-stop，不是整檔／整頁總逾時，也沒有取消、重試或裝置 reset；初始化設定代數與 UART 等其他輪詢不在範圍。設計與操作紀錄見 [Spec 12](./SPEC-12-block-timeout.md)。
 

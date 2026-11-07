@@ -17,6 +17,8 @@
 
 `kernel/mm/vm.c` 的 VmSpace 保存程式來源、heap 結尾與每頁 VmPage；每頁記錄實體位址、交換槽位、修改狀態、入駐次序與暫時固定次數。
 
+VM 的可重入 scope 序列化頁表與 resident metadata 的建立、複製、fault、置換及查詢；scheduler/UI poll 是 no-wait context，若配置必須置換會在修改 PTE 或送出磁碟 I/O 前回 BUSY。Dirty page 目前先同步寫完 Swap，再撤銷舊 PTE 並 `sfence.vma` 後回收 frame；非同步 swap-out 的先撤 PTE／失敗復原流程尚未實作。
+
 | physical | slot | 內容在哪裡 |
 | --- | --- | --- |
 | 有 | 無／有 | 在 RAM；可能還保留交換區副本 |

@@ -53,6 +53,8 @@ WUFS 在第一個磁區開頭使用 8-byte 格式標記（magic）：舊版 `WUF
 
 `kernel/fs/fs.c` 從根目錄開始，逐段查找名稱與 inode，最後依檔案內 offset（位移）找直接或間接區塊。建立檔案要配置 inode，擴展內容還要配置資料區塊與必要的間接區塊。`open` 建立的 OFD 保存 inode 和共享 offset，`read`／`write` 逐段存取；`O_APPEND` 寫入時從當下檔尾開始。
 
+runtime FS 操作由可重入 filesystem scope 保護共享 metadata 與 redo transaction staging；SYS_FS_READ／WRITE 的 scope 也涵蓋共用 `fs_staging` 和 usercopy，`elf_load` 則跨檔案大小查詢與全部 segment 讀取持有同一 scope。這讓同時執行的核心呼叫不會混用 transaction buffer 或載入不同版本的 ELF。`fs_init` 是 boot-only 的一次性 mount/format/replay，並非 runtime remount API。已接入的 Gate 順序為 OFD/Pipe → FS → VM；per-device Block Gate 尚未接入，Block I/O 仍在持有上層 scope 時同步 busy-poll。FS 的 inode-open 檢查不等待 OFD Gate。
+
 由於 inode 為 80 bytes、磁區為 512 bytes，有些 inode 會跨磁區。`inode_read`／`inode_write` 依每個磁區剩餘長度分段搬移；transaction 會在 RAM staging 中以 read-your-writes 覆蓋完整 sector，保護旁邊 inode 並讓掛載後的修改可回復。
 
 核心介面的宣告見 [kernel/fs/fs.h（GitHub）](https://github.com/johnson931128/WUWAOS/blob/main/kernel/fs/fs.h)：初始化、列目錄、建立目錄／檔案、讀寫、刪除與複製。

@@ -8,6 +8,8 @@
 
 `ProcessControlBlock` 就是 PCB（行程控制區塊），`processes[16]` 是目前行程表。`page_table` 找到私有位址空間，`frame` 找到暫存器保存狀態；`event_wait` 記錄 source generation/sequence、deadline 與完成結果。阻塞讀寫在原 process kernel stack 上恢復後重試，不把使用者 buffer 指標交給 scheduler poller。
 
+`kernel/proc/gate.c` 的 owner-aware recursive Gate 由 PCB/PID 記錄持有者與深度，等待者以 event sequence 防止漏喚醒。FS、VM、各 OFD 與各 pipe 使用不同 scope；runtime caller 可在等待 Gate 時讓出核心 stack，scheduler/UI poll 不可睡眠。新 PCB 保留 `PROCESS_NEW` slot 等頁表/frame 初始化完成，`pcb` 對 null frame 顯示 initializing。
+
 `ready_next` 是指向下一個 Ready PCB 的指標，不是另一份行程副本。核心堆疊每欄固定 16 KiB；使用者頁面則由 VM 按需要配置。
 
 ## 核心函式如何暫停與恢復
@@ -44,7 +46,7 @@ Running／Ready／Waiting → exit／kill → Zombie → wait → Unused
 
 Zombie（已退出、待回收）仍保留結束結果與資源，讓父行程能透過 wait 取得結果。它已不再執行，也不在 Ready queue（就緒佇列）裡。
 
-`kill` 遇到仍在 syscall/fault/timer kernel call stack 上的目標時，先標記 `kill_pending` 並取消其 event、channel、child 或 sync wait；等原呼叫在自己的 stack 上返回至 trap/syscall 邊界後才執行資源清理並成為 Zombie。這避免丟棄仍需 unwind 的核心堆疊與局部暫存。一般不持有 suspended kernel call stack 的目標仍可直接終止。此行為配合現行單 hart、核心不可搶占設計，尚不是任意核心工作安全點或 DMA request cancellation。
+`kill` 遇到仍在 syscall/fault/timer kernel call stack 上的目標時，先標記 `kill_pending`；可取消的 event、channel、child 或 sync wait 會喚醒原 stack 供其 unwind。正在 cancel-defer cleanup scope 的呼叫不會被直接取消，須完成 cleanup、釋放 Gate 後才在 trap return 邊界處理 kill。這避免丟棄仍需 unwind 的核心堆疊與局部暫存。一般不持有 suspended kernel call stack 的目標仍可直接終止。此行為配合現行單 hart、核心不可搶占設計，尚不是任意核心工作安全點或 DMA request cancellation；Block DMA critical integration 尚未實作。
 
 ## 建立、複製與替換
 
