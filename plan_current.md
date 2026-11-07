@@ -1,6 +1,6 @@
 - 詳細步驟與方法：[plan.md](./plan.md)
-- 整體進度：規劃完成，實作未開始。
-- 第 1 階段：未開始，多 TTY/session 物件化。
+- 整體進度：規劃完成，第 1 階段完成；第 2–6 階段未開始。
+- 第 1 階段：完成，多 TTY/session 物件化；generation handle、per-endpoint queues/mode/lifecycle、OFD/process 路由及單一 GUI view 已實作並經 GDB、GUI 與 UART QEMU 驗收；限制與演算法見 [plan.md](./plan.md)。
 - 第 2 階段：未開始，統一事件等待與非同步 I/O。
 - 第 3 階段：未開始，GPU 錯誤降級與裝置復原。
 - 第 4 階段：未開始，資源所有權／引用回收與核心堆疊保護。

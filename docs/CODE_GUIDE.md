@@ -29,7 +29,7 @@ CPU 執行記憶體中的機器碼，不知道來源檔名。OpenSBI 負責早�
 
 ### UI 與 kernel 的資料通道
 
-以下流程中的 kernel、VirtIO driver 與 UI adapter 都在 S-mode；只有 shell/application 在 U-mode。TTY 將 UI 和既有 console/file descriptor 系統隔開，桌面視窗只負責呈現與輸入轉譯，不擁有核心 input/output ring 或 process 結構。
+以下流程中的 kernel、VirtIO driver 與 UI adapter 都在 S-mode；只有 shell/application 在 U-mode。核心以 generation-checked TTY endpoint 隔離各 session 的輸入輸出；FD 經 OFD 保存 endpoint handle 與引用。桌面視窗只負責呈現與輸入轉譯，不擁有核心 queue 或 process 結構；目前 UI 仍只有一個 Terminal view。
 
 ```mermaid
 flowchart LR
@@ -40,10 +40,11 @@ flowchart LR
   end
   subgraph K[S-mode kernel]
     SY[syscall dispatch]
-    IO[core I/O / console]
-    TTY[TTY input/output rings and session]
+    IO[core I/O / console / FD]
+    OFD[OFD_TTY handle and references]
+    TTY[per-endpoint queues / mode / consumer]
     EV[process loop registered poll/active hooks]
-    SY --> IO --> TTY
+    SY --> IO --> OFD --> TTY
   end
   subgraph D[S-mode drivers]
     IN[VirtIO input driver]
@@ -90,8 +91,8 @@ flowchart LR
 | kernel/ipc/sync.c / sync.h、include/sync_ops.h | 自製 mutex／semaphore、等待佇列與行程離開清理；詳見 Spec 22 |
 | kernel/exec/elf.c / elf.h | 驗證並載入受限 RV64 ELF 段，準備私有 VM；見 Spec 26 |
 | user/shell/sync_demo.c / sync_demo.h | shell 的同步示範：父子行程、等待狀態與資源回收 |
-| kernel/io/io.c / io.h | UART/GUI canonical 與 raw console、FD/OFD、WUFS file descriptor、pipe ring 與 pending I/O |
-| kernel/io/tty.c / tty.h | 核心 GUI TTY input/output rings、session 與輸出 consumer 接點；不含繪圖狀態 |
+| kernel/io/io.c / io.h | FD/OFD、canonical line assembly、WUFS file descriptor、pipe ring、pending I/O 與 TTY FD 路由 |
+| kernel/io/tty.c / tty.h | generation-checked TTY endpoint handles；各 endpoint 獨立 input/output queues、raw owner、CR/LF 狀態、active/session refs 與輸出 consumer；UART 是固定 endpoint，不含繪圖狀態 |
 | kernel/proc/terminal_service.h / event_hooks.h | UI 呼叫的核心 GUI shell service、boot 註冊給 process loop 的 poll/active callbacks |
 | drivers/virtio/block.c / block.h | FDT 裝置探索、VirtIO-MMIO 區塊讀寫佇列 |
 | drivers/virtio/gpu.c / gpu.h | FDT VirtIO GPU 探測、modern control queue、2D 資源／framebuffer／scanout／dirty rectangle 傳輸 |
@@ -180,9 +181,9 @@ GPU 以 B8G8R8X8_UNORM 建立 1280×720 2D resource。`page_alloc_contiguous` �
 
 `drivers/virtio/input.c` 消化 tablet/keyboard event queue，累積 ABS_X／ABS_Y，到 SYN_REPORT 才交出完整 pointer 座標；US key code 到字元/ANSI bytes 的轉譯由 `ui/input/keymap.c` 負責。`ui/desktop/desktop.c` 對桌面圖示、關閉按鈕與 Terminal window 做 hit-test；Terminal 透過 kernel-owned `kernel/proc/terminal_service.h` 請求核心建立 parent PID 為 0 的 shell，將 FD 0/1/2 綁到獨立 GUI TTY endpoint。窗口關閉只隱藏畫面；shell `exit` 後沿用 parent=0 Zombie reaper 路徑回收，下一次點擊再建立 shell。
 
-`kernel/io/tty.c` 擁有 GUI TTY 的 input/output rings 和 session 狀態，`kernel/io/io.c` 保留既有 CR/LF 與 raw input owner。Boot 將 `ui/desktop/desktop.c` 的 output consumer 註冊到 TTY；TTY output 交給 `ui/terminal/vt.c` 更新 ANSI parser、cursor/colors、normal/alternate cells，`ui/terminal/renderer.c` 僅繪製 cells/glyphs/terminal cursor，視窗外框與 dirty composition 仍由 desktop 管理。`kernel/proc/process.c` 不 include UI header；UI event poll/active 由 boot 註冊成一組 callback，process loop 保留 `io_poll` 與 UI poll 的先後。這些 S-mode 元件仍屬同一靜態連結 kernel，不是新 syscall 或 POSIX PTY。
+`kernel/io/tty.c` 擁有 generation handle 對應的 per-endpoint input/output queues、raw owner、CR/LF 狀態與 session refs；UART 使用固定 endpoint。`kernel/io/io.c` 以 `OFD_TTY` 保存 handle，dup/fork 共用 OFD refs，fd 0/1/2 可路由到 endpoint。使用者點擊桌面圖示時，`ui/desktop/desktop.c` 傳入自己的 output consumer/context，呼叫 kernel-owned `process_start_gui_terminal` 建立 shell 與 TTY endpoint；`kernel/boot/main.c` 只初始化 TTY，並註冊 UI poll/active callbacks。TTY output 交給 `ui/terminal/vt.c` 更新 ANSI parser、cursor/colors、normal/alternate cells，`ui/terminal/renderer.c` 僅繪製 cells/glyphs/terminal cursor，視窗外框與 dirty composition 仍由 desktop 管理。`kernel/proc/process.c` 不 include UI header；process loop 保留 `io_poll` 與 UI poll 的先後。關閉視窗只隱藏 view；結束 session 後 stale handle 失效，直到所有 refs 釋放才可回收 slot，重用時 generation 遞增。這些 S-mode 元件仍屬同一靜態連結 kernel，不是新 syscall 或 POSIX PTY。
 
-GUI canonical input 在 Enter 時提交一行，Backspace 編輯目前行，空行 Ctrl-D 產生 EOF；`fan`、`workstate` 使用 raw byte 輸入。GUI 與 UART 各自有輸入 queue、raw owner 與 CR/LF 狀態。shell fd 1/2 直接寫 GUI TTY；`ps`、`pcb`、`vmstat` 這些核心內建查詢只在 syscall 執行其列印函式期間暫時路由到該 shell TTY，boot/driver/scheduler diagnostics 與一般核心 console 輸出仍走 UART。終端支援 ASCII、基本 SGR 與反白、CSI 游標移動/清除、alternate screen 與游標顯示狀態；它不是 POSIX PTY，沒有 resize、drag、clipboard、job control 或 Ctrl+C。詳細邊界及 QEMU 操作證據見 [Spec 30](./SPEC-30-graphical-terminal.md)。
+GUI canonical input 在 Enter 時提交一行，Backspace 編輯目前行，空行 Ctrl-D 產生 EOF；`fan`、`workstate` 使用 raw byte 輸入。每個 GUI session 與固定 UART endpoint 有自己的 input queue、raw owner 與 CR/LF 狀態。`OFD_TTY` 保存 generation handle；dup/fork 共用同一 OFD，fd 1 的 endpoint 決定核心查詢輸出路由。`ps`、`pcb`、`vmstat` 只在 syscall 執行其列印函式期間暫時路由；boot/driver/scheduler diagnostics 與一般核心 console 輸出仍走 UART。UI 目前仍是一個固定 Terminal view，並非多視窗。終端支援 ASCII、基本 SGR 與反白、CSI 游標移動/清除、alternate screen 與游標顯示狀態；它不是 POSIX PTY，沒有 resize、drag、clipboard、job control 或 Ctrl+C。詳細邊界及 QEMU 操作證據見 [Spec 30](./SPEC-30-graphical-terminal.md)。
 
 ## 5. trap.S / trap.c / trap.h：硬體事件到 C
 

@@ -198,18 +198,31 @@ void process_init(void) {
     }
 }
 
-long process_start_gui_terminal(void) {
-    if (tty_gui_session_active()) return 0;
+long process_start_gui_terminal(TtyOutputConsumer consumer, void *context, TtyId *id_out) {
+    if (!consumer || !id_out) return ERR_INVALID;
+    const TtyId id = tty_session_create(consumer, context);
+    if (!id) return ERR_NO_SLOT;
     const long pid = create_process(0, 0, 0);
-    if (pid < 0) return pid;
+    if (pid < 0) {
+        (void)tty_session_close(id);
+        tty_release(id);
+        return pid;
+    }
     Process *process = find_pid(pid);
-    if (!process) return ERR_NO_SLOT;
-    process->fd_table[0] = IO_GUI_CONSOLE_IN;
-    process->fd_table[1] = IO_GUI_CONSOLE_OUT;
-    process->fd_table[2] = IO_GUI_CONSOLE_ERR;
-    process->gui_terminal_leader = 1;
+    if (!process || io_attach_tty(process, id) < 0) {
+        if (process) {
+            io_close_process(process);
+            vm_destroy(process->page_table);
+            process->page_table = 0;
+            transition(process, PROCESS_UNUSED, "terminal descriptors unavailable");
+        }
+        (void)tty_session_close(id);
+        tty_release(id);
+        return ERR_NO_SLOT;
+    }
+    process->terminal_session = id;
     transition(process, PROCESS_READY, "graphical terminal ready");
-    tty_gui_session_begin();
+    *id_out = id;
     return pid;
 }
 
@@ -433,10 +446,11 @@ long process_wait(long pid, uintptr_t status_address) {
 }
 
 static void terminate(Process *process, long status) {
-    const int gui_terminal = process->gui_terminal_leader;
+    const TtyId session = process->terminal_session;
     sync_process_cleanup(process);
     io_cleanup_process_terminal(process, process->program == PROGRAM_FAN || process->program == PROGRAM_WORKSTATE,
-                                gui_terminal);
+                                session);
+    process->terminal_session = TTY_ID_INVALID;
     process->io_operation = IO_NONE;
     process->wait_reason = WAIT_NONE;
     process->channel = 0;
@@ -507,8 +521,7 @@ long process_block_io(IoOperation operation, int fd, uintptr_t buffer, size_t le
     process->io_overflow = 0;
     process->io_result = 0;
     process->wait_reason = WAIT_IO;
-    transition(process, PROCESS_WAITING, (operation == IO_CONSOLE_READ || operation == IO_CONSOLE_RAW ||
-               operation == IO_GUI_CONSOLE_READ || operation == IO_GUI_CONSOLE_RAW) ? "console read" :
+    transition(process, PROCESS_WAITING, (operation == IO_TTY_READ || operation == IO_TTY_RAW) ? "console read" :
                operation == IO_PIPE_READ ? "pipe read" : "pipe write");
     suspend_current();
     return process->io_result;
@@ -540,8 +553,7 @@ static const char *waiting_for(const Process *process) {
     }
     if (process->wait_reason == WAIT_TIMER) return "timer";
     if (process->wait_reason == WAIT_SYNC) return "sync";
-    return (process->io_operation == IO_CONSOLE_READ || process->io_operation == IO_CONSOLE_RAW ||
-            process->io_operation == IO_GUI_CONSOLE_READ || process->io_operation == IO_GUI_CONSOLE_RAW) ? "console" :
+    return (process->io_operation == IO_TTY_READ || process->io_operation == IO_TTY_RAW) ? "console" :
            process->io_operation == IO_PIPE_READ ? "pipe-read" : "pipe-write";
 }
 

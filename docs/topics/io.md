@@ -14,11 +14,11 @@ raw console 同時只能有一個持有者；行程退出、被終止或成功 e
 
 ## 圖形桌面 Terminal
 
-有 VirtIO GPU、tablet 與 keyboard 時，kernel 桌面提供一個固定大小 Terminal 視窗。圖示開啟後建立另一個 shell process，其 FD 0/1/2 綁獨立 GUI console endpoint；UART shell 仍保留。GUI canonical line、raw byte 與 UART 各有自己的輸入佇列、CR/LF 狀態及 raw owner，避免 `fan` 或 `workstate` 讀取 GUI 按鍵時搶走 UART 輸入。Shell `ps`、`pcb`、`vmstat` 的核心列印只在對應 syscall 執行期間暫時路由至 GUI；開機與裝置診斷仍寫 UART。
+有 VirtIO GPU、tablet 與 keyboard 時，kernel 桌面目前提供一個固定大小 Terminal 視窗。圖示開啟後建立另一個 shell process，其 FD 0/1/2 綁到 generation-checked GUI TTY endpoint；UART shell 綁到另一個固定 endpoint。每個 endpoint 各自持有輸入／輸出佇列、raw owner 與 CR/LF 狀態，避免 `fan` 或 `workstate` 讀取 GUI 按鍵時搶走 UART 輸入。Shell `ps`、`pcb`、`vmstat` 的核心列印依 fd 1 的 endpoint 暫時路由；開機與裝置診斷仍寫 UART。UI 目前仍只有一個 Terminal view，尚未提供多視窗。
 
-這是本專案自訂的單一 TTY，不是 PTY master/slave ABI。圖示關閉只隱藏並保留 shell；`exit` 或空行 Ctrl+D 結束 shell。設計與 QEMU 驗收見 [Spec 30](../SPEC-30-graphical-terminal.md)。
+TTY endpoint 是本專案自訂核心物件，不是 PTY master/slave ABI。`OFD_TTY` 持有 generation handle；dup/fork 共用 OFD 引用，session 結束後舊 handle 失效，所有 FD 引用釋放前不重用 endpoint slot，重用時 generation 遞增。圖示關閉只隱藏並保留 shell；`exit` 或空行 Ctrl+D 結束 shell。設計與 QEMU 驗收見 [Spec 30](../SPEC-30-graphical-terminal.md)。
 
-核心 `kernel/io/io.c` 擁有 FD、pipe 與 I/O 路由；GUI TTY 的 rings/session 則由 `kernel/io/tty.c` 擁有。註冊的輸出 consumer 將 GUI console bytes 送到 `ui/terminal/vt.c` 更新 ANSI VT model，再由 `ui/terminal/renderer.c` 繪出字元與終端游標；pipe bytes 不經 GUI TTY。桌面視窗/合成在 `ui/desktop/desktop.c`，鍵盤映射在 `ui/input/keymap.c`；process loop 經 boot 註冊的 callback 輪詢 UI。這些仍在 S-mode 核心內執行。完整模組與資料通道見 [Spec 33](../SPEC-33-module-architecture.md) 及[程式碼架構圖](../CODE_GUIDE.md#ui-與-kernel-的資料通道)。
+核心 `kernel/io/io.c` 擁有 FD/OFD、pipe 與 I/O 路由；`kernel/io/tty.c` 擁有各 endpoint 的 queues、session refs、raw owner、CR/LF 狀態與輸出 consumer。註冊的 consumer 將 GUI console bytes 送到 `ui/terminal/vt.c` 更新 ANSI VT model，再由 `ui/terminal/renderer.c` 繪出字元與終端游標；pipe bytes 不經 GUI TTY。桌面視窗/合成在 `ui/desktop/desktop.c`，鍵盤映射在 `ui/input/keymap.c`；process loop 經 boot 註冊的 callback 輪詢 UI。這些仍在 S-mode 核心內執行。完整模組與資料通道見 [Spec 33](../SPEC-33-module-architecture.md) 及[程式碼架構圖](../CODE_GUIDE.md#ui-與-kernel-的資料通道)。
 
 ## 等待時資料放在哪裡
 

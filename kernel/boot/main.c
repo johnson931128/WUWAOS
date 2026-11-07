@@ -33,7 +33,7 @@ void kernel_main(unsigned long hart_id, const void *fdt) {
     input_set_pointer_bounds(GPU_WIDTH - 1U, GPU_HEIGHT - 1U);
     const int tablet_ready = input_found && input_init() == 0;
     if (desktop_ready) desktop_draw();
-    if (desktop_ready) tty_gui_set_output_consumer(desktop_terminal_output);
+    tty_init();
     if (block_ready && fs_init() < 0) {
         console_puts("[fs] Disk present but WUFS could not be mounted\n");
     }

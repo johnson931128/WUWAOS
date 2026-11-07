@@ -35,6 +35,7 @@ static uint32_t cursor_x, cursor_y, pointer_x = GPU_WIDTH / 2U, pointer_y = GPU_
 static int cursor_visible, terminal_visible, terminal_focused;
 static int mouse_left_down;
 static TerminalModel terminal;
+static TtyId terminal_tty;
 static uint32_t dirty_left, dirty_top, dirty_right, dirty_bottom;
 static int dirty;
 
@@ -119,15 +120,20 @@ static int hit_window(uint32_t x, uint32_t y) {
 }
 
 static void show_terminal(void) {
-    if (!tty_gui_session_active()) {
+    if (!terminal_tty || !tty_session_active(terminal_tty)) {
+        if (terminal_tty) tty_release(terminal_tty);
+        terminal_tty = TTY_ID_INVALID;
         ui_keymap_reset();
         terminal_model_init(&terminal);
         static const unsigned char welcome[] = "WUWAOS Terminal\n";
         for (size_t i = 0; i < sizeof(welcome) - 1U; ++i) terminal_model_feed(&terminal, welcome[i]);
-        const long pid = process_start_gui_terminal();
+        TtyId id = TTY_ID_INVALID;
+        const long pid = process_start_gui_terminal(desktop_terminal_output, &terminal, &id);
         if (pid < 0) {
             static const unsigned char error[] = "Unable to start shell: process table or memory is full.\n";
-            (void)tty_gui_output_write(error, sizeof(error) - 1U);
+            for (size_t i = 0; i < sizeof(error) - 1U; ++i) terminal_model_feed(&terminal, error[i]);
+        } else {
+            terminal_tty = id;
         }
     }
     terminal_visible = 1;
@@ -138,7 +144,8 @@ static void show_terminal(void) {
 static void handle_key(const InputMessage *message) {
     unsigned char bytes[3];
     const size_t length = ui_keymap_translate(message->code, message->value != 0, bytes);
-    if (length && terminal_visible && terminal_focused) (void)tty_gui_input_push(bytes, length);
+    if (length && terminal_visible && terminal_focused && terminal_tty)
+        (void)tty_input_push(terminal_tty, bytes, length);
 }
 
 static void handle_message(const InputMessage *message) {
@@ -172,6 +179,11 @@ void desktop_poll(void) {
     InputMessage message;
     while (input_next_message(&message)) handle_message(&message);
 
+    if (terminal_tty && !tty_session_active(terminal_tty)) {
+        tty_release(terminal_tty);
+        terminal_tty = TTY_ID_INVALID;
+    }
+
     if (cursor_visible && (pointer_x != cursor_x || pointer_y != cursor_y)) {
         mark_dirty(cursor_x, cursor_y, CURSOR_WIDTH, CURSOR_HEIGHT);
         mark_dirty(pointer_x, pointer_y, CURSOR_WIDTH, CURSOR_HEIGHT);
@@ -196,8 +208,8 @@ void desktop_poll(void) {
 int desktop_event_source_active(void) { return cursor_visible; }
 int desktop_terminal_visible(void) { return terminal_visible; }
 
-void desktop_terminal_output(const unsigned char *bytes, size_t length) {
-    if (!bytes) return;
+void desktop_terminal_output(TtyId id, void *context, const unsigned char *bytes, size_t length) {
+    if (id != terminal_tty || context != &terminal || !bytes) return;
     for (size_t i = 0; i < length; ++i) terminal_model_feed(&terminal, bytes[i]);
     if (terminal_visible) mark_dirty(WINDOW_X, WINDOW_Y, WINDOW_WIDTH, WINDOW_HEIGHT);
 }
