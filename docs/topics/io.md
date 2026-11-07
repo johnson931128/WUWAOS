@@ -4,7 +4,7 @@
 
 ## UART 終端
 
-`kernel/console.c` 以 volatile 指標讀寫 `0x10000000` 的 UART（序列埠）裝置暫存器。輸出前輪詢是否可寫；讀取時檢查是否收到資料。volatile 保留硬體存取，不等於鎖或完整記憶體同步。
+`drivers/uart/uart.c` 以 volatile 指標讀寫 `0x10000000` 的 UART（序列埠）裝置暫存器。輸出前輪詢是否可寫；讀取時檢查是否收到資料。`kernel/io/console.c` 負責輸出格式、路由與核心診斷，不直接操作 UART MMIO。volatile 保留硬體存取，不等於鎖或完整記憶體同步。
 
 一般 shell 使用行輸入：收集字元、處理 Backspace，等 Enter 才完成 read。fan 使用 raw console（逐 byte、不回顯輸入），因此按方向鍵不必先按 Enter。
 
@@ -18,9 +18,11 @@ raw console 同時只能有一個持有者；行程退出、被終止或成功 e
 
 這是本專案自訂的單一 TTY，不是 PTY master/slave ABI。圖示關閉只隱藏並保留 shell；`exit` 或空行 Ctrl+D 結束 shell。設計與 QEMU 驗收見 [Spec 30](../SPEC-30-graphical-terminal.md)。
 
+核心 `kernel/io/io.c` 擁有 FD、pipe 與 I/O 路由；GUI TTY 的 rings/session 則由 `kernel/io/tty.c` 擁有。註冊的輸出 consumer 將 GUI console bytes 送到 `ui/terminal/vt.c` 更新 ANSI VT model，再由 `ui/terminal/renderer.c` 繪出字元與終端游標；pipe bytes 不經 GUI TTY。桌面視窗/合成在 `ui/desktop/desktop.c`，鍵盤映射在 `ui/input/keymap.c`；process loop 經 boot 註冊的 callback 輪詢 UI。這些仍在 S-mode 核心內執行。完整模組與資料通道見 [Spec 33](../SPEC-33-module-architecture.md) 及[程式碼架構圖](../CODE_GUIDE.md#ui-與-kernel-的資料通道)。
+
 ## 等待時資料放在哪裡
 
-`kernel/io.c` 不能在核心函式裡一直等到某個行程有資料，否則其他 Ready 行程沒有機會前進。尚未完成的操作會記在 PCB 的 `io_operation`、`io_fd`、`io_buffer`、`io_length`、`io_count`，行程改成 Waiting。
+`kernel/io/io.c` 不能在核心函式裡一直等到某個行程有資料，否則其他 Ready 行程沒有機會前進。尚未完成的操作會記在 PCB 的 `io_operation`、`io_fd`、`io_buffer`、`io_length`、`io_count`，行程改成 Waiting。
 
 行程在 process_block_io 內保存核心上下文，切到獨立排程器堆疊。排程迴圈與返回前的 process_resume 輪詢可完成的 I/O，將結果存入 PCB 的 io_result 並喚醒行程。再次派發後從原核心函式恢復，io_read／io_write 正常回傳結果，再由 syscall_dispatch 填使用者 a0；不再由輪詢端直接代填 a0。使用者資料不一定常駐 RAM，搬移時由安全複製介面逐頁載入，錯誤明確回報。見[核心上下文切換](./processes.md#核心函式如何暫停與恢復)。
 
@@ -43,9 +45,9 @@ raw console 同時只能有一個持有者；行程退出、被終止或成功 e
 換頁操作 → swap.c → block.c → VirtIO queue → 獨立 Swap 磁碟
 ```
 
-`kernel/block.c` 從 FDT 探索現代 VirtIO-MMIO 裝置，每顆磁碟有自己的請求與佇列狀態。以磁碟標頭辨識 WUFS 與 Swap，不依賴裝置順序。目前磁碟請求同步輪詢完成；尚無磁碟排程、非同步請求或快取。
+`drivers/virtio/block.c` 從 FDT 探索現代 VirtIO-MMIO 裝置，每顆磁碟有自己的請求與佇列狀態。以磁碟標頭辨識 WUFS 與 Swap，不依賴裝置順序。目前磁碟請求同步輪詢完成；尚無磁碟排程、非同步請求或快取。
 
-每個已提交的 512-byte 請求以硬體時間計數器計時，預設超過 5 秒且仍未完成，就印出裝置、角色、操作、磁區與等待時間，然後停止核心。逾時不是取消成功，因此不返回上層、不回收或重用請求緩衝區。門檻在 `kernel/block.h` 調整；一次頁面交換含八筆磁區請求，不共用一個 5 秒總預算。這是目前 WUWAOS 的停止策略，尚無裝置重設與恢復。見 [Spec 12](../SPEC-12-block-timeout.md)。
+每個已提交的 512-byte 請求以硬體時間計數器計時，預設超過 5 秒且仍未完成，就印出裝置、角色、操作、磁區與等待時間，然後停止核心。逾時不是取消成功，因此不返回上層、不回收或重用請求緩衝區。門檻在 `drivers/virtio/block.h` 調整；一次頁面交換含八筆磁區請求，不共用一個 5 秒總預算。這是目前 WUWAOS 的停止策略，尚無裝置重設與恢復。見 [Spec 12](../SPEC-12-block-timeout.md)。
 
 ## 在 QEMU 觀察
 

@@ -2,54 +2,68 @@ CC := clang
 QEMU := qemu-system-riscv64
 OBJCOPY := llvm-objcopy
 TARGET := build/kernel.elf
-KERNEL_SOURCES := main console trap sbi timer page swap vm process scheduler sync workstate syscall elf io splash block gpu desktop input fs path memory
-OBJECTS := build/entry.o build/trap_entry.o build/swtch.o build/user_image.o $(addprefix build/kernel_,$(addsuffix .o,$(KERNEL_SOURCES)))
-USER_OBJECTS := build/user_entry.o build/user_api.o build/user_print.o build/user_demo.o build/user_sync_demo.o build/user_shell.o build/user_shell_exec.o
-APP_OBJECTS := build/user_entry.o build/user_api.o build/user_print.o build/user_app.o
-FAN_OBJECTS := build/user_entry.o build/user_api.o build/user_print.o build/user_fan.o
-WORKSTATE_OBJECTS := build/user_entry.o build/user_api.o build/user_print.o build/user_workstate_entry.o build/user_workstate.o
+
+KERNEL_SOURCES := \
+	kernel/boot/main.c drivers/uart/uart.c kernel/io/console.c \
+	arch/riscv/trap.c arch/riscv/sbi.c arch/riscv/timer.c \
+	kernel/mm/page.c kernel/mm/swap.c kernel/mm/vm.c \
+	kernel/proc/process.c kernel/proc/scheduler.c kernel/ipc/sync.c kernel/proc/workstate.c \
+	kernel/syscall/syscall.c kernel/exec/elf.c kernel/io/io.c ui/boot/splash.c \
+	drivers/virtio/block.c drivers/virtio/gpu.c ui/desktop/desktop.c drivers/virtio/input.c \
+	kernel/fs/fs.c kernel/fs/path.c kernel/lib/memory.c kernel/io/tty.c \
+	ui/graphics/primitives.c ui/terminal/vt.c ui/terminal/renderer.c ui/input/keymap.c
+KERNEL_ASM_SOURCES := arch/riscv/entry.S arch/riscv/trap.S arch/riscv/swtch.S kernel/exec/user_image.S
+KERNEL_OBJECTS := $(patsubst %.S,build/obj/%.asm.o,$(KERNEL_ASM_SOURCES)) $(patsubst %.c,build/obj/%.o,$(KERNEL_SOURCES))
+
+USER_COMMON_SOURCES := user/lib/api.c user/lib/print.c
+USER_OBJECTS := build/obj/user/lib/entry.asm.o $(patsubst %.c,build/obj/%.o,$(USER_COMMON_SOURCES)) \
+	build/obj/user/shell/main.o build/obj/user/shell/sync_demo.o \
+	build/obj/user/shell/shell.o build/obj/user/shell/shell_exec.o
+APP_OBJECTS := build/obj/user/lib/entry.asm.o $(patsubst %.c,build/obj/%.o,$(USER_COMMON_SOURCES)) build/obj/user/apps/demo/main.o
+FAN_OBJECTS := build/obj/user/lib/entry.asm.o $(patsubst %.c,build/obj/%.o,$(USER_COMMON_SOURCES)) build/obj/user/apps/fan/main.o
+WORKSTATE_OBJECTS := build/obj/user/lib/entry.asm.o $(patsubst %.c,build/obj/%.o,$(USER_COMMON_SOURCES)) \
+	build/obj/user/apps/workstate/main.o build/obj/user/apps/workstate/workstate.o
+
 ARCH_FLAGS := --target=riscv64-unknown-elf -march=rv64imac_zicsr_zifencei -mabi=lp64 -mcmodel=medany -msmall-data-limit=0 -mno-relax
-CFLAGS := $(ARCH_FLAGS) -std=c11 -O2 -g -Wall -Wextra -Werror -ffreestanding -fno-builtin -fno-stack-protector -fno-pic -fno-pie -Iinclude -MMD -MP
+CFLAGS := $(ARCH_FLAGS) -std=c11 -O2 -g -Wall -Wextra -Werror -ffreestanding -fno-builtin -fno-stack-protector -fno-pic -fno-pie -I. -Iinclude -MMD -MP
 LDFLAGS := $(ARCH_FLAGS) -fuse-ld=lld -nostdlib -static -Wl,--build-id=none
 
 .PHONY: all run run-gui run-gui-vnc run-gui-vnc-session disk-image clean
 all: $(TARGET)
 
-build:
-	mkdir -p build
+build/obj:
+	mkdir -p $@
 
-build/entry.o: kernel/entry.S | build
-	$(CC) $(ARCH_FLAGS) -g -c $< -o $@
-
-build/kernel_%.o: kernel/%.c | build
+build/obj/%.o: %.c
+	mkdir -p $(@D)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-build/trap_entry.o: kernel/trap.S kernel/trap.h | build
-	$(CC) $(ARCH_FLAGS) -g -c $< -o $@
+build/obj/%.asm.o: %.S
+	mkdir -p $(@D)
+	$(CC) $(ARCH_FLAGS) -g -I. -Iinclude -MMD -MP -c $< -o $@
 
-build/swtch.o: kernel/swtch.S kernel/context.h | build
-	$(CC) $(ARCH_FLAGS) -g -c $< -o $@
-
-build/user_entry.o: user/entry.S | build
-	$(CC) $(ARCH_FLAGS) -g -c $< -o $@
-
-build/user_workstate.o: user/workstate.c | build
+build/obj/user/shell/shell.o: user/shell/shell.c
+	mkdir -p $(@D)
 	$(CC) $(CFLAGS) -Oz -c $< -o $@
 
-build/user_sync_demo.o: user/sync_demo.c | build
+build/obj/user/shell/shell_exec.o: user/shell/shell_exec.c
+	mkdir -p $(@D)
 	$(CC) $(CFLAGS) -Oz -c $< -o $@
 
-build/user_shell.o: user/shell.c | build
+build/obj/user/shell/sync_demo.o: user/shell/sync_demo.c
+	mkdir -p $(@D)
 	$(CC) $(CFLAGS) -Oz -c $< -o $@
 
-build/user_shell_exec.o: user/shell_exec.c | build
+build/obj/user/lib/api.o: user/lib/api.c
+	mkdir -p $(@D)
 	$(CC) $(CFLAGS) -Oz -c $< -o $@
 
-build/user_api.o: user/api.c | build
+build/obj/user/apps/workstate/workstate.o: user/apps/workstate/workstate.c
+	mkdir -p $(@D)
 	$(CC) $(CFLAGS) -Oz -c $< -o $@
 
-build/user_%.o: user/%.c | build
-	$(CC) $(CFLAGS) -c $< -o $@
+$(TARGET): $(KERNEL_OBJECTS) arch/riscv/linker.ld
+	$(CC) $(LDFLAGS) -Wl,-T,arch/riscv/linker.ld -Wl,-Map,build/kernel.map $(KERNEL_OBJECTS) -o $@
 
 build/user.elf: $(USER_OBJECTS) user/linker.ld
 	$(CC) $(LDFLAGS) -Wl,-T,user/linker.ld $(USER_OBJECTS) -o $@
@@ -75,11 +89,7 @@ build/fan.bin: build/fan.elf
 build/workstate.bin: build/workstate.elf
 	$(OBJCOPY) -O binary $< $@
 
-build/user_image.o: kernel/user_image.S build/user.bin build/app.bin build/fan.bin build/workstate.bin | build
-	$(CC) $(ARCH_FLAGS) -g -c $< -o $@
-
-$(TARGET): $(OBJECTS) kernel/linker.ld
-	$(CC) $(LDFLAGS) -Wl,-T,kernel/linker.ld -Wl,-Map,build/kernel.map $(OBJECTS) -o $@
+build/obj/kernel/exec/user_image.asm.o: build/user.bin build/app.bin build/fan.bin build/workstate.bin
 
 build/kernel-disk.elf: $(TARGET)
 	$(OBJCOPY) --strip-all $< $@
@@ -102,7 +112,6 @@ GUI_QEMU_COMMAND = $(QEMU) -name $(GUI_VM_NAME) $(if $(GUI_PIDFILE),-pidfile $(G
 run-gui-vnc: $(TARGET) disk-image
 	$(GUI_QEMU_COMMAND)
 
-# Launcher entry after it has built the kernel and selected/prepared its images.
 run-gui-vnc-session: $(TARGET)
 	$(GUI_QEMU_COMMAND)
 
@@ -114,6 +123,7 @@ GUI_SERIAL ?= stdio
 GUI_PIDFILE ?=
 
 clean:
+	if [ -d build/obj ]; then find build/obj -type f \( -name '*.o' -o -name '*.d' \) -delete; fi
 	rm -f build/*.o build/*.d build/kernel.elf build/kernel-disk.elf build/kernel.map build/user.elf build/user.bin build/app.elf build/app.bin build/fan.elf build/fan.bin build/workstate.elf build/workstate.bin
 
--include $(wildcard build/*.d)
+-include $(patsubst %.o,%.d,$(KERNEL_OBJECTS) $(USER_OBJECTS) $(APP_OBJECTS) $(FAN_OBJECTS) $(WORKSTATE_OBJECTS))

@@ -6,7 +6,7 @@
 
 ## Shell 如何執行命令
 
-管理命令 fallback 由 `user/shell.c` 讀入最多 126 個字元，切成最多 4 個 token（以空白分隔的單位）再比對命令。通用 `echo`／`cat`／`ls`／`pwd` pipeline 由 `user/shell_exec.c` 另行解析，最多 3 個 stage、每 stage 8 個參數，支援引號與檔案重導向。整行解析為 O(L)，L 是輸入長度；目前沒有腳本與一般背景工作控制。
+管理命令 fallback 由 `user/shell/shell.c` 讀入最多 126 個字元，切成最多 4 個 token（以空白分隔的單位）再比對命令。通用 `echo`／`cat`／`ls`／`pwd` pipeline 由 `user/shell/shell_exec.c` 另行解析，最多 3 個 stage、每 stage 8 個參數，支援引號與檔案重導向。整行解析為 O(L)，L 是輸入長度；目前沒有腳本與一般背景工作控制。
 
 在提示字元輸入 `help`，每行會列出一個命令及其參數，右側對齊用途說明；行程、檔案與記憶體操作用空白行分隔。`<path>` 可是相對或絕對路徑，`<page>` 從 0 起算。格式與驗收見 [Spec 14](../SPEC-14-shell-help.md)。
 
@@ -58,13 +58,13 @@ flowchart TD
 | `cd -` | 返回前一個目錄並印出路徑 |
 | `ls` | 列出目前目錄 |
 
-提示字元顯示完整目前路徑，例如 `wuwaos/>`、`wuwaos/note>`；若取得目錄失敗則顯示 `wuwaos?>`。初始 shell 從 `/` 開始。spawn、fork 或 pipe 新建的子行程繼承目錄，exec 保留；之後各行程各自管理。目標不存在或不是目錄時不會改變位置。規格與驗收見 [Spec 19](../SPEC-19-cwd-shell.md)。[shell 原始碼](https://github.com/johnson931128/WUWAOS/blob/main/user/shell.c)、[系統呼叫分派](https://github.com/johnson931128/WUWAOS/blob/main/kernel/syscall.c)。
+提示字元顯示完整目前路徑，例如 `wuwaos/>`、`wuwaos/note>`；若取得目錄失敗則顯示 `wuwaos?>`。初始 shell 從 `/` 開始。spawn、fork 或 pipe 新建的子行程繼承目錄，exec 保留；之後各行程各自管理。目標不存在或不是目錄時不會改變位置。規格與驗收見 [Spec 19](../SPEC-19-cwd-shell.md)。[shell 原始碼](https://github.com/johnson931128/WUWAOS/blob/main/user/shell/shell.c)、[系統呼叫分派](https://github.com/johnson931128/WUWAOS/blob/main/kernel/syscall/syscall.c)。
 
 ## 三份獨立使用者映像
 
-Makefile 將 shell、app、fan 分別連結為 ELF，再轉成 binary 嵌入核心。`kernel/user_image.S` 保存原始內容，VM 在需要時載入對應頁面。
+Makefile 將 shell、app、fan 分別連結為 ELF，再轉成 binary 嵌入核心。`kernel/exec/user_image.S` 保存原始內容，VM 在需要時載入對應頁面。
 
-因此 fan 是真正的獨立行程，但還不是由 `/bin/fan` 磁碟執行檔載入。user/entry.S 將初始參數交給 user_main，返回值再交給 exit。
+因此 fan 是真正的獨立行程，但還不是由 `/bin/fan` 磁碟執行檔載入。user/lib/entry.S 將初始參數交給 user_main，返回值再交給 exit。
 
 ## C 程式是在哪裡編譯的？
 
@@ -87,7 +87,7 @@ flowchart LR
 
 ## fan 的文字資料結構
 
-`user/fan.c` 用連續 byte 陣列存放最多 2048 bytes ASCII／LF 文字，cursor（游標）是陣列中的位移。
+`user/apps/fan/main.c` 用連續 byte 陣列存放最多 2048 bytes ASCII／LF 文字，cursor（游標）是陣列中的位移。
 
 例如 `abc` 的游標在 b 前面，插入 X 時，先把後段 `bc` 向右移，再放入 X，得到 `aXbc`。刪除則反方向搬移。插入／刪除最壞 O(N)，對小型文字檔容易理解與管理，不需要複雜樹結構。
 

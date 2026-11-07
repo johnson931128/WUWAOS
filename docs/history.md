@@ -1,6 +1,7 @@
 # 原始規格與驗收紀錄
 
 此處按開發順序保存規格。它們記錄「當時做了什麼」，不一定代表現在的架構；第一次閱讀建議先看左側主題章節。
+Spec 33 以前的歷史 source link 若指向舊 `kernel/` 或 `user/` 路徑，固定指向 2026-11-07 重整前 commit `800a805`，以保留當時程式碼參照；目前目錄與 UI/kernel 邊界見 [Spec 33](./SPEC-33-module-architecture.md)。
 
 | 階段 | 規格與定位 |
 | --- | --- |
@@ -36,6 +37,7 @@
 | 30 | [桌面 Terminal 與圖形 shell](./SPEC-30-graphical-terminal.md)，VirtIO keyboard/tablet、獨立 GUI TTY、ANSI 終端與 QEMU 驗收 |
 | 31 | [WUFS 非空白磁碟保護與固定驗證入口](./SPEC-31-filesystem-initialization-guard.md)，kernel／主機映像工具的格式化條件、獨立磁碟與 SHA-256 檢查；使用者已確認本項驗證 |
 | 32 | [WUFS0002 整磁區 redo journal 與安全儲存](./SPEC-32-wufs-redo-journal.md)，提交順序、重播、WUFS0001 唯讀相容、host image 安全替換與 QEMU fault 驗收 |
+| 33 | [核心模組分層與圖形終端解耦](./SPEC-33-module-architecture.md)，目前 source tree 與 UI、TTY、kernel、driver 的資料通道 |
 
 ## 如何判斷是否驗證過
 

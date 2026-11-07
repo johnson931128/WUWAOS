@@ -51,11 +51,11 @@ WUFS 在第一個磁區開頭使用 8-byte 格式標記（magic）：舊版 `WUF
 
 ## 路徑查找與讀寫
 
-`kernel/fs.c` 從根目錄開始，逐段查找名稱與 inode，最後依檔案內 offset（位移）找直接或間接區塊。建立檔案要配置 inode，擴展內容還要配置資料區塊與必要的間接區塊。`open` 建立的 OFD 保存 inode 和共享 offset，`read`／`write` 逐段存取；`O_APPEND` 寫入時從當下檔尾開始。
+`kernel/fs/fs.c` 從根目錄開始，逐段查找名稱與 inode，最後依檔案內 offset（位移）找直接或間接區塊。建立檔案要配置 inode，擴展內容還要配置資料區塊與必要的間接區塊。`open` 建立的 OFD 保存 inode 和共享 offset，`read`／`write` 逐段存取；`O_APPEND` 寫入時從當下檔尾開始。
 
 由於 inode 為 80 bytes、磁區為 512 bytes，有些 inode 會跨磁區。`inode_read`／`inode_write` 依每個磁區剩餘長度分段搬移；transaction 會在 RAM staging 中以 read-your-writes 覆蓋完整 sector，保護旁邊 inode 並讓掛載後的修改可回復。
 
-核心介面的宣告見 [kernel/fs.h（GitHub）](https://github.com/johnson931128/WUWAOS/blob/main/kernel/fs.h)：初始化、列目錄、建立目錄／檔案、讀寫、刪除與複製。
+核心介面的宣告見 [kernel/fs/fs.h（GitHub）](https://github.com/johnson931128/WUWAOS/blob/main/kernel/fs/fs.h)：初始化、列目錄、建立目錄／檔案、讀寫、刪除與複製。
 
 `rm /absolute/file` 移除一般檔案：從父目錄移掉名稱，再回收檔案的資料區塊與 inode（檔案資訊）。為保持目錄項目連續，核心會把最後一項移到刪除位置；目錄本身的既有資料區塊保留，之後的項目可重用。`rm` 遇到資料夾會顯示路徑和警告，輸入 Y/y 再按 Enter 才刪除該資料夾與所有內容；N/n 或其他輸入取消。根目錄、`.`、`..` 不能刪除，若任何活躍行程正使用該目錄樹中的工作目錄則回傳 -16。詳見 [Spec 20](../SPEC-20-directory-removal.md)。
 

@@ -11,11 +11,11 @@ QEMU virt → OpenSBI → 0x80200000 的 _start
   → process_start → scheduler_loop → shell（UART；圖形桌面另可開 GUI shell）
 ```
 
-OpenSBI（RISC-V 韌體）完成早期準備，將控制權交給 S-mode（監督模式）核心。`kernel/linker.ld` 指定 `_start` 為入口，從 `0x80200000` 放置核心。
+OpenSBI（RISC-V 韌體）完成早期準備，將控制權交給 S-mode（監督模式）核心。`arch/riscv/linker.ld` 指定 `_start` 為入口，從 `0x80200000` 放置核心。
 
 ## entry.S：先準備 C 所需的環境
 
-原始碼：[kernel/entry.S（GitHub）](https://github.com/johnson931128/WUWAOS/blob/main/kernel/entry.S)。
+原始碼：[arch/riscv/entry.S（GitHub）](https://github.com/johnson931128/WUWAOS/blob/main/arch/riscv/entry.S)。
 
 `la sp, __stack_top` 設定 sp（堆疊指標）。C 的函式呼叫與區域資料會用到堆疊，因此必須先準備它。
 
@@ -25,7 +25,7 @@ OpenSBI（RISC-V 韌體）完成早期準備，將控制權交給 S-mode（監�
 
 ## main.c：把子系統串起來
 
-原始碼：[kernel/main.c（GitHub）](https://github.com/johnson931128/WUWAOS/blob/main/kernel/main.c)。
+原始碼：[kernel/boot/main.c（GitHub）](https://github.com/johnson931128/WUWAOS/blob/main/kernel/boot/main.c)。
 
 先安裝 trap（陷阱／例外入口），再顯示 UART 動畫、探索 VirtIO 裝置、建立核心分頁映射與掛載檔案系統。若 FDT 找到 VirtIO GPU、tablet 與 keyboard，核心建立 framebuffer、啟用輸入 queue 後繪製 Terminal 圖示；點擊後由 scheduler 建立獨立的 GUI shell。原始 PID 1 UART shell 仍存在；沒有圖形輸入設備時直接使用 UART。
 
@@ -33,7 +33,7 @@ OpenSBI（RISC-V 韌體）完成早期準備，將控制權交給 S-mode（監�
 
 ## 開機動畫與觀察
 
-`kernel/splash.c` 透過 UART 輸出 ANSI 終端控制碼，以圖案中點為中心逐欄揭露 WUWAOS。字形以 5×7 位元資料表示，再用背景色與空格組成 70 欄實心筆畫，從螢光黃綠漸變到薄荷綠；不依賴特殊字型。這時尚未進入使用者模式；動畫中的忙等不是排程器，也不代表已啟用計時器中斷。色塊版本見 [Spec 13](../SPEC-13-block-splash.md)。
+`ui/boot/splash.c` 透過 UART 輸出 ANSI 終端控制碼，以圖案中點為中心逐欄揭露 WUWAOS。字形以 5×7 位元資料表示，再用背景色與空格組成 70 欄實心筆畫，從螢光黃綠漸變到薄荷綠；不依賴特殊字型。這時尚未進入使用者模式；動畫中的忙等不是排程器，也不代表已啟用計時器中斷。色塊版本見 [Spec 13](../SPEC-13-block-splash.md)。
 
 執行 `make run`，應依序看到字樣、核心與裝置資訊、最後的 `wuwaos>`。`/boot/kernel.elf` 是 WUFS 中的副本；目前真正啟動核心仍由 QEMU 的 `-kernel` 載入。
 
@@ -47,7 +47,7 @@ QEMU 裝上 modern VirtIO GPU 與 tablet 後，kernel 以 FDT 找到裝置 MMIO 
 
 點擊左上角 Terminal 圖示會建立固定大小視窗並啟動原本的 shell user image。VirtIO keyboard 事件轉成 US ASCII，送入獨立的 GUI canonical input；shell 輸出與 ANSI TUI 由 guest kernel 更新終端 cell buffer，再繪製到 framebuffer。關閉視窗只隱藏畫面，點圖示可接續同一個 shell；shell `exit` 後會回收，下次再點才建立新的 session。GUI 輸入／raw owner 與 UART 分開，`make run` 不帶圖形裝置時保留舊 UART shell。
 
-這是小型 kernel TTY，不是 POSIX PTY 或一般視窗系統。視窗固定大小，不能拖曳或縮放；沒有 clipboard、job control 或 Ctrl+C。`fan`、`workstate` 使用 raw keyboard input。設計、驗收影像與限制見 [Spec 30](../SPEC-30-graphical-terminal.md)；GPU 與游標架構仍見 [Spec 28](../SPEC-28-native-desktop.md)。
+這是小型 kernel TTY，不是 POSIX PTY 或一般視窗系統。視窗固定大小，不能拖曳或縮放；沒有 clipboard、job control 或 Ctrl+C。`fan`、`workstate` 使用 raw keyboard input。設計、驗收影像與限制見 [Spec 30](../SPEC-30-graphical-terminal.md)；GPU 與游標架構仍見 [Spec 28](../SPEC-28-native-desktop.md)。TTY、VT 與視窗 renderer 的目前分層見 [Spec 33](../SPEC-33-module-architecture.md)。
 
 Windows portable 環境可直接使用 `.\Start-WUWAOS.cmd gui`，QEMU 會開啟原生視窗，不需要另外的 VNC viewer。WSLg/Linux 圖形工作階段可用 `make run-gui GUI_DISPLAY=gtk`（或 `sdl`）。既有 Windows/WSL1 環境則可從 repo 根目錄以單一 PowerShell 指令啟動背景 QEMU 與原生 VNC viewer：
 

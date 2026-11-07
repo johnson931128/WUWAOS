@@ -16,9 +16,9 @@ User Mode（使用者模式）程式不能直接控制所有硬體。它以 sysc
 
 ## trap.S 與 trap.c 的關係
 
-`kernel/trap.S` 先切換堆疊，將一般暫存器和 CSR（控制與狀態暫存器）存入 288-byte TrapFrame（暫存器保存結構），再呼叫 C 的 `trap_handler`。
+`arch/riscv/trap.S` 先切換堆疊，將一般暫存器和 CSR（控制與狀態暫存器）存入 288-byte TrapFrame（暫存器保存結構），再呼叫 C 的 `trap_handler`。
 
-原始碼：[kernel/trap.c（GitHub）](https://github.com/johnson931128/WUWAOS/blob/main/kernel/trap.c)。
+原始碼：[arch/riscv/trap.c（GitHub）](https://github.com/johnson931128/WUWAOS/blob/main/arch/riscv/trap.c)。
 
 CPU 不會自動幫核心保存全部一般暫存器。若不先保存，C 處理函式就可能破壞使用者原有資料。C 最後回傳要恢復的 TrapFrame，組合語言還原後用 `sret` 返回使用者模式。
 
@@ -32,7 +32,7 @@ shell 呼叫 API → a7 放呼叫編號、a0… 放參數
   → 服務函式 → a0 放結果 → sret
 ```
 
-`user/api.c` 的 `syscall3` 負責暫存器約定，`include/syscall_numbers.h` 定義編號，`kernel/syscall.c` 分派。Shell 的 `cat`、`fan` 是使用者層命令名稱，不等於各自都有同名 syscall。
+`user/lib/api.c` 的 `syscall3` 負責暫存器約定，`include/syscall_numbers.h` 定義編號，`kernel/syscall/syscall.c` 分派。Shell 的 `cat`、`fan` 是使用者層命令名稱，不等於各自都有同名 syscall。
 
 ecall（環境呼叫指令）長度固定 4 bytes；核心將 sepc 加 4，讓返回時從呼叫後繼續。缺頁補頁成功則保留原 sepc，重試同一指令，兩者不可混用。
 

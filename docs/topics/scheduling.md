@@ -25,12 +25,12 @@ flowchart TD
 
 | 模組 | 責任與原始碼 |
 | --- | --- |
-| Clock（硬體時間） | [clock.h](https://github.com/johnson931128/WUWAOS/blob/main/kernel/clock.h)：rdtime、10 MHz 時基、毫秒換算，動畫與磁碟逾時共用 |
-| SBI（韌體介面） | [sbi.c](https://github.com/johnson931128/WUWAOS/blob/main/kernel/sbi.c)：查詢 TIME 支援並設定絕對到期時間 |
-| Timer（計時器） | [timer.c](https://github.com/johnson931128/WUWAOS/blob/main/kernel/timer.c)：設定／停用事件、清除 pending（待處理中斷）、累計中斷數 |
-| Scheduler（排程器） | [scheduler.c](https://github.com/johnson931128/WUWAOS/blob/main/kernel/scheduler.c)：就緒佇列；時間片常數在 scheduler.h |
-| Process（行程管理） | [process.c](https://github.com/johnson931128/WUWAOS/blob/main/kernel/process.c)：狀態、派發、頁表與保存狀態 |
-| Trap（陷阱分派） | [trap.c](https://github.com/johnson931128/WUWAOS/blob/main/kernel/trap.c)：區分系統呼叫、缺頁與計時器中斷 |
+| Clock（硬體時間） | [clock.h](https://github.com/johnson931128/WUWAOS/blob/main/arch/riscv/clock.h)：rdtime、10 MHz 時基、毫秒換算，動畫與磁碟逾時共用 |
+| SBI（韌體介面） | [sbi.c](https://github.com/johnson931128/WUWAOS/blob/main/arch/riscv/sbi.c)：查詢 TIME 支援並設定絕對到期時間 |
+| Timer（計時器） | [timer.c](https://github.com/johnson931128/WUWAOS/blob/main/arch/riscv/timer.c)：設定／停用事件、清除 pending（待處理中斷）、累計中斷數 |
+| Scheduler（排程器） | [scheduler.c](https://github.com/johnson931128/WUWAOS/blob/main/kernel/proc/scheduler.c)：就緒佇列；時間片常數在 scheduler.h |
+| Process（行程管理） | [process.c](https://github.com/johnson931128/WUWAOS/blob/main/kernel/proc/process.c)：狀態、派發、頁表與保存狀態 |
+| Trap（陷阱分派） | [trap.c](https://github.com/johnson931128/WUWAOS/blob/main/arch/riscv/trap.c)：區分系統呼叫、缺頁與計時器中斷 |
 
 ## 就緒佇列與輪轉
 

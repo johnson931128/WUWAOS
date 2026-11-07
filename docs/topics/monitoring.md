@@ -48,4 +48,4 @@ workstate
 
 可以同時看到等待中的 worker 與待回收的 quick。按 q 回 shell 後，以實際 PID 執行 wakeup／wait／kill。既有 counter 會主動 yield，短工作可能在一秒取樣前就結束，不必然顯示高 CPU%。真正無 yield 的觀察驗收使用既有映像中的迴圈與 QEMU 偵錯介面，見 [Spec 17](../SPEC-17-workstate.md)，沒有新增測試程式。
 
-原始碼：[使用者畫面](https://github.com/johnson931128/WUWAOS/blob/main/user/workstate.c)、[核心快照與計時](https://github.com/johnson931128/WUWAOS/blob/main/kernel/workstate.c)、[共用資料格式](https://github.com/johnson931128/WUWAOS/blob/main/include/workstate_info.h)。概念參考 notes/ch3 Process.md、ch5 CPU schedueling.md 與 ch10 Virtual Momory.md。
+原始碼：[使用者畫面](https://github.com/johnson931128/WUWAOS/blob/main/user/apps/workstate/workstate.c)、[核心快照與計時](https://github.com/johnson931128/WUWAOS/blob/main/kernel/proc/workstate.c)、[共用資料格式](https://github.com/johnson931128/WUWAOS/blob/main/include/workstate_info.h)。概念參考 notes/ch3 Process.md、ch5 CPU schedueling.md 與 ch10 Virtual Momory.md。

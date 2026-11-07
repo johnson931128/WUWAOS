@@ -12,6 +12,7 @@ Windows 可先下載 [免安裝完整包](./portable-windows.md)，在 PowerShel
 
 | 想理解什麼 | 從這裡開始 |
 | --- | --- |
+| 原始碼如何分層，UI 如何經 TTY 與 kernel 溝通？ | [程式碼架構](./CODE_GUIDE.md#ui-與-kernel-的資料通道) → [Spec 33](./SPEC-33-module-architecture.md) |
 | entry.S 怎麼進入 C，最後顯示提示字元？ | [開機流程](./topics/boot.md) |
 | 桌面圖示如何開啟 GUI shell？ | [開機流程](./topics/boot.md#桌面-terminal-與-gui-shell) |
 | 使用者程式怎麼請核心幫忙？ | [例外與系統呼叫](./topics/traps.md) |

@@ -15,7 +15,7 @@
 
 ## 補充分頁表記錄什麼
 
-`kernel/vm.c` 的 VmSpace 保存程式來源、heap 結尾與每頁 VmPage；每頁記錄實體位址、交換槽位、修改狀態、入駐次序與暫時固定次數。
+`kernel/mm/vm.c` 的 VmSpace 保存程式來源、heap 結尾與每頁 VmPage；每頁記錄實體位址、交換槽位、修改狀態、入駐次序與暫時固定次數。
 
 | physical | slot | 內容在哪裡 |
 | --- | --- | --- |
@@ -41,9 +41,9 @@ FIFO 掃描補充表，選入駐序號最小且未固定的常駐頁。讀寫命
 
 專用 `build/wuwaos-swap.img` 預設 16 MiB，標頭占 4 KiB，其餘為 4095 個 4 KiB 槽位。它與 WUFS 分開；重啟後不恢復舊行程。
 
-`kernel/swap.c` 用 bitmap（位元圖）管理槽位。槽位從 1 編號，0 代表沒有槽位。槽位 n 從磁區 `8*n` 開始，一頁逐次讀寫八個 512-byte 磁區。
+`kernel/mm/swap.c` 用 bitmap（位元圖）管理槽位。槽位從 1 編號，0 代表沒有槽位。槽位 n 從磁區 `8*n` 開始，一頁逐次讀寫八個 512-byte 磁區。
 
-原始碼：[kernel/swap.c](https://github.com/johnson931128/WUWAOS/blob/main/kernel/swap.c)／[kernel/swap.h](https://github.com/johnson931128/WUWAOS/blob/main/kernel/swap.h)，由 GitHub main 管理，本站不內嵌來源檔。
+原始碼：[kernel/mm/swap.c](https://github.com/johnson931128/WUWAOS/blob/main/kernel/mm/swap.c)／[kernel/mm/swap.h](https://github.com/johnson931128/WUWAOS/blob/main/kernel/mm/swap.h)，由 GitHub main 管理，本站不內嵌來源檔。
 
 換出失敗時，VM 保留原本 RAM 副本；換入失敗時，不公布只讀到一部分的頁面。沒有 Swap 仍可按需配置與丟棄可重建頁，但不能無條件換出修改過的資料。
 

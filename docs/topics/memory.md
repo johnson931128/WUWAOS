@@ -13,11 +13,11 @@ WUWAOS 使用 RISC-V Sv39（39-bit 虛擬位址分頁模式），以 4 KiB 為�
 
 每張表 4096 bytes，每個 PTE（分頁表項）8 bytes，所以有 512 個條目；9 bits 正好可選 0–511。前兩層找到下一張表，最後的有效葉節點指向實體頁框。
 
-`kernel/vm.c` 的 `vm_walk` 在各層用 `(address >> (12 + 9 * level)) & 511` 取得索引。實作只使用 4 KiB 映射，沒有大頁。
+`kernel/mm/vm.c` 的 `vm_walk` 在各層用 `(address >> (12 + 9 * level)) & 511` 取得索引。實作只使用 4 KiB 映射，沒有大頁。
 
 ## 配置實體頁
 
-`kernel/page.c` 將核心結尾至 FDT 之前的整頁串成 Free list（空閒串列），排除韌體、核心、固定堆疊與頂端保留區。
+`kernel/mm/page.c` 將核心結尾至 FDT 之前的整頁串成 Free list（空閒串列），排除韌體、核心、固定堆疊與頂端保留區。
 
 配置時取串列頭，標記 allocated bitmap（已配置位元圖），清零 4096 bytes 後回傳位址。回收檢查範圍、對齊與重複釋放，再放回串列頭。串列操作 O(1)，清零成本與頁大小成正比。
 
