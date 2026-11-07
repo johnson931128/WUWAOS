@@ -105,7 +105,10 @@
 
 ### 2B2. Block 非同步 request
 
-- 進度：未開始；待 2B1 完成、審查及獨立驗收後進入。
+- 進度：暫停；僅完成 `drivers/virtio/block.c` 的 pointer refactor，async request 尚未開始。使用者要求先處理文件與網站工作。
+- 已完成方法與編譯：移除 `active` selector 與欄位 alias macros；`init_device`、`transfer`、flush helper 明確使用 `BlockDevice *`，各裝置 queue index/header/status 由自身物件持有。`make build/obj/drivers/virtio/block.o` 成功。
+- 未完成／NOT_RUN：per-device async Gate、completion event、request 狀態與 bounce buffer、scheduler poll callback、runtime no-wait submit guard、VM async swap 撤銷/回復 PTE 尚未實作；因此未跑 async runtime/QEMU/GDB 驗收，也未編譯整合後的核心。
+- 下一步：恢復程式工作後，先加入明確 runtime-start query 與 block poll hook，實作 per-device request submit/poll/collect 和 boot synchronous fallback，再調整 swap/VM eviction 的取消與 PTE rollback 語意；每步只做必要編譯，依最新使用者指示暫不跑額外驗收矩陣。
 - 實作內容：移除 runtime global active-device request selector；每個 BlockDevice 保存獨立 request/header/status/buffer ownership、gate 及 completion event；scheduler poll 只觀察 VirtIO used ring 並發布完成，不進入 FS/VM/usercopy。
 - 方法與完成判準：每個裝置至多一個 in-flight request，request/buffer 在 completion 前不可釋放或重用。排隊 gate wait 可取消；DMA submit 後進入不可取消 critical depth，kill 只標 pending，待裝置安全完成、清理 request 並逐層釋放 gate 後才於 trap boundary terminate。timeout 目前維持 fail-stop，不提前返回並重用可能仍被 DMA 存取的 buffer；裝置復原留待第 3 階段。
 - 設計前置風險：VM gate 單獨不足以保護即將 swap-out 的 user frame，因其他 U-mode process 仍可能存取被驅逐的實體頁；非同步 swap-out 前須 revoke victim PTE 並 `sfence`，保留 RAM/bounce snapshot，失敗時 restore 原 PTE，且 scheduler reap 的 `vm_destroy` 只能 try/defer，不能睡眠等待 VM gate。Async FS/VM 也會讓 pipe ring 在 usercopy yield 時、共享 OFD offset 在檔案 I/O yield 時被其他 process 改動，因此需 pipe/OFD ownership gate，或在 gate 外先 copy/pin、gate 內 commit；只替 FS/VM 加 gate 不夠。核心診斷 route 應改為 per-Process，避免跨行程的 set/reset 互相清除。建議鎖序：OFD/pipe → FS（含 syscall fs_staging 外層）→ VM → Block；FS 不反向取得 OFD，scheduler poll/reap 不得睡眠。DMA 已提交後的通用 event cancel 不可立即 unwind／釋放 device gate 或 swap slot；2B 要定義不可中斷區或 critical depth，kill 延後至 DMA safe completion 後清理，排 gate 時才可取消。timeout 需裝置安全停止／完成後再發布，否則沿用 fail-stop；UI poll 即使從 process_resume 呼叫也需明確保證 nonblocking，不能等待 VM gate。這些尚屬 2B 設計待辦，未在 2A 實作或驗收。

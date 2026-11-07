@@ -85,19 +85,9 @@ typedef struct {
 } BlockDevice;
 
 static BlockDevice devices[2];
-static BlockDevice *active, *filesystem, *swap_disk;
+static BlockDevice *filesystem, *swap_disk;
 static uintptr_t bases[2];
 static unsigned int device_count;
-/* Single-hart synchronous requests: each disk retains its own queue state. */
-#define device (active->registers)
-#define consumed_used (active->consumed)
-#define queue_size (active->length)
-#define sectors (active->capacity)
-#define descriptors (active->descriptor)
-#define available (active->avail_ring)
-#define used (active->used_ring)
-#define request (active->header)
-#define request_status (active->status)
 
 static uint32_t load_be32(const uint8_t *bytes) {
     return ((uint32_t)bytes[0] << 24) | ((uint32_t)bytes[1] << 16) |
@@ -224,17 +214,18 @@ static int fdt_find_virtio(const void *blob) {
     return device_count == 0 ? -1 : 0;
 }
 
-static void write_address(uint32_t low_register, uintptr_t address) {
-    device[low_register / 4] = (uint32_t)address;
-    device[(low_register + 4) / 4] = (uint32_t)(address >> 32);
+static void write_address(BlockDevice *target, uint32_t low_register, uintptr_t address) {
+    target->registers[low_register / 4] = (uint32_t)address;
+    target->registers[(low_register + 4) / 4] = (uint32_t)(address >> 32);
 }
 
-static int init_device(uintptr_t base) {
-    device = (volatile uint32_t *)base;
+static int init_device(BlockDevice *target, uintptr_t base) {
+    volatile uint32_t *device = (volatile uint32_t *)base;
+    target->registers = device;
     if (device[VIRTIO_MAGIC / 4] != 0x74726976U ||
         device[VIRTIO_VERSION / 4] != 2U || device[VIRTIO_DEVICE_ID / 4] != 2U) {
         console_puts("[block] FDT device is not modern virtio-blk\n");
-        device = 0;
+        target->registers = 0;
         return -1;
     }
 
@@ -245,20 +236,20 @@ static int init_device(uintptr_t base) {
     const uint32_t high_features = device[VIRTIO_DEVICE_FEATURES / 4];
     if ((high_features & 1U) == 0) {
         console_puts("[block] Device lacks VERSION_1 feature\n");
-        device = 0;
+        target->registers = 0;
         return -1;
     }
     device[VIRTIO_DRIVER_FEATURES_SEL / 4] = 0;
     device[VIRTIO_DEVICE_FEATURES_SEL / 4] = 0;
     const uint32_t low_features = device[VIRTIO_DEVICE_FEATURES / 4];
-    active->flush_supported = (low_features & (1U << FEATURE_FLUSH)) != 0;
-    device[VIRTIO_DRIVER_FEATURES / 4] = active->flush_supported ? (1U << FEATURE_FLUSH) : 0;
+    target->flush_supported = (low_features & (1U << FEATURE_FLUSH)) != 0;
+    device[VIRTIO_DRIVER_FEATURES / 4] = target->flush_supported ? (1U << FEATURE_FLUSH) : 0;
     device[VIRTIO_DRIVER_FEATURES_SEL / 4] = 1;
     device[VIRTIO_DRIVER_FEATURES / 4] = 1U << FEATURE_VERSION_1;
     device[VIRTIO_STATUS / 4] |= DEVICE_FEATURES_OK;
     if ((device[VIRTIO_STATUS / 4] & DEVICE_FEATURES_OK) == 0) {
         console_puts("[block] Feature negotiation rejected\n");
-        device = 0;
+        target->registers = 0;
         return -1;
     }
 
@@ -266,14 +257,17 @@ static int init_device(uintptr_t base) {
     const uint32_t maximum = device[VIRTIO_QUEUE_NUM_MAX / 4];
     if (maximum < 3) {
         console_puts("[block] Queue too small\n");
-        device = 0;
+        target->registers = 0;
         return -1;
     }
-    queue_size = maximum < QUEUE_SIZE ? (uint16_t)maximum : QUEUE_SIZE;
-    device[VIRTIO_QUEUE_NUM / 4] = queue_size;
-    write_address(VIRTIO_QUEUE_DESC_LOW, (uintptr_t)descriptors);
-    write_address(VIRTIO_QUEUE_AVAIL_LOW, (uintptr_t)&available);
-    write_address(VIRTIO_QUEUE_USED_LOW, (uintptr_t)&used);
+    target->length = maximum < QUEUE_SIZE ? (uint16_t)maximum : QUEUE_SIZE;
+    target->consumed = 0;
+    target->avail_ring.index = 0;
+    target->used_ring.index = 0;
+    device[VIRTIO_QUEUE_NUM / 4] = target->length;
+    write_address(target, VIRTIO_QUEUE_DESC_LOW, (uintptr_t)target->descriptor);
+    write_address(target, VIRTIO_QUEUE_AVAIL_LOW, (uintptr_t)&target->avail_ring);
+    write_address(target, VIRTIO_QUEUE_USED_LOW, (uintptr_t)&target->used_ring);
     device[VIRTIO_QUEUE_READY / 4] = 1;
     device[VIRTIO_STATUS / 4] |= DEVICE_DRIVER_OK;
 
@@ -286,59 +280,59 @@ static int init_device(uintptr_t base) {
         high = config[1];
         generation_after = device[0xfc / 4];
     } while (generation_before != generation_after);
-    sectors = ((uint64_t)high << 32) | low;
+    target->capacity = ((uint64_t)high << 32) | low;
     console_puts("[block] VirtIO block ready, sectors=");
-    console_number((long)sectors);
+    console_number((long)target->capacity);
     console_putc('\n');
-    return sectors == 0 ? -1 : 0;
+    return target->capacity == 0 ? -1 : 0;
 }
 
-static _Noreturn void transfer_timeout(uint32_t sector, int write, uint64_t elapsed) {
+static _Noreturn void transfer_timeout(BlockDevice *target, uint32_t sector, int write, uint64_t elapsed) {
     console_puts("[block] I/O TIMEOUT device=");
-    console_hex((uintptr_t)device);
+    console_hex((uintptr_t)target->registers);
     console_puts(" role=");
-    console_puts(active == filesystem ? "WUFS" : active == swap_disk ? "swap" : "probe");
+    console_puts(target == filesystem ? "WUFS" : target == swap_disk ? "swap" : "probe");
     console_puts(write ? " op=write" : " op=read");
     console_puts(" sector="); console_number((long)sector);
     console_puts(" elapsed_ms="); console_number((long)(elapsed / (CLOCK_TIMEBASE_HZ / 1000UL)));
     console_puts(" limit_ms="); console_number((long)BLOCK_IO_TIMEOUT_MS);
-    console_puts(" consumed="); console_number(consumed_used);
-    console_puts(" used="); console_number(used.index);
+    console_puts(" consumed="); console_number(target->consumed);
+    console_puts(" used="); console_number(target->used_ring.index);
     console_puts("\n[panic] Outstanding disk request retained; kernel halted. Restart QEMU.\n");
     /* The device may still DMA into the request/buffer. Never return or reuse either. */
     __asm__ volatile("csrci sstatus, 2\ncsrw sie, zero" : : : "memory");
     kernel_idle();
 }
 
-static int transfer(uint32_t sector, void *buffer, int write) {
-    if (device == 0 || buffer == 0 || sector >= sectors) {
+static int transfer(BlockDevice *target, uint32_t sector, void *buffer, int write) {
+    if (target == 0 || target->registers == 0 || buffer == 0 || sector >= target->capacity) {
         return -1;
     }
-    request.type = write ? 1U : 0U;
-    request.reserved = 0;
-    request.sector = sector;
-    request_status = 0xffU;
-    descriptors[0] = (VirtqDescriptor){ (uintptr_t)&request, sizeof(request), 1U, 1U };
-    descriptors[1] = (VirtqDescriptor){ (uintptr_t)buffer, 512U,
+    target->header.type = write ? 1U : 0U;
+    target->header.reserved = 0;
+    target->header.sector = sector;
+    target->status = 0xffU;
+    target->descriptor[0] = (VirtqDescriptor){ (uintptr_t)&target->header, sizeof(target->header), 1U, 1U };
+    target->descriptor[1] = (VirtqDescriptor){ (uintptr_t)buffer, 512U,
         (uint16_t)(1U | (write ? 0U : 2U)), 2U };
-    descriptors[2] = (VirtqDescriptor){ (uintptr_t)&request_status, 1U, 2U, 0U };
-    const uint16_t index = available.index;
-    available.ring[index % queue_size] = 0;
+    target->descriptor[2] = (VirtqDescriptor){ (uintptr_t)&target->status, 1U, 2U, 0U };
+    const uint16_t index = target->avail_ring.index;
+    target->avail_ring.ring[index % target->length] = 0;
     const uint64_t start = clock_ticks();
     __asm__ volatile("fence rw, w" : : : "memory");
-    available.index = (uint16_t)(index + 1U);
+    target->avail_ring.index = (uint16_t)(index + 1U);
     __asm__ volatile("fence w, o" : : : "memory");
-    device[VIRTIO_QUEUE_NOTIFY / 4] = 0;
-    while (used.index == consumed_used) {
+    target->registers[VIRTIO_QUEUE_NOTIFY / 4] = 0;
+    while (target->used_ring.index == target->consumed) {
         const uint64_t elapsed = clock_ticks() - start;
         if (elapsed >= clock_ms_ticks(BLOCK_IO_TIMEOUT_MS) &&
-            used.index == consumed_used) {
-            transfer_timeout(sector, write, elapsed);
+            target->used_ring.index == target->consumed) {
+            transfer_timeout(target, sector, write, elapsed);
         }
     }
     __asm__ volatile("fence r, rw" : : : "memory");
-    const int result = request_status == 0 ? 0 : -1;
-    ++consumed_used;
+    const int result = target->status == 0 ? 0 : -1;
+    ++target->consumed;
     return result;
 }
 
@@ -355,24 +349,24 @@ int block_init_from_fdt(const void *fdt) {
     BlockDevice *unmarked = 0;
     unsigned int unknown_count = 0;
     for (unsigned int i = 0; i < device_count; ++i) {
-        active = &devices[i];
-        if (init_device(bases[i]) < 0) continue;
+        BlockDevice *target = &devices[i];
+        if (init_device(target, bases[i]) < 0) continue;
         uint8_t header[512];
-        if (transfer(0, header, 0) < 0) continue;
+        if (transfer(target, 0, header, 0) < 0) continue;
         if (has_magic(header, "WUSWAP01")) {
             if (swap_disk != 0) {
                 console_puts("[block] Duplicate swap disks; refusing boot\n");
                 kernel_idle();
             }
-            swap_disk = active;
+            swap_disk = target;
         } else if (has_magic(header, "WUFS0001") || has_magic(header, "WUFS0002")) {
             if (filesystem != 0) {
                 console_puts("[block] Duplicate WUFS disks; refusing boot\n");
                 kernel_idle();
             }
-            filesystem = active;
+            filesystem = target;
         } else {
-            unmarked = active;
+            unmarked = target;
             ++unknown_count;
         }
     }
@@ -385,40 +379,36 @@ int block_init_from_fdt(const void *fdt) {
 unsigned int block_mmio_count(void) { return device_count; }
 uintptr_t block_mmio_base(unsigned int index) { return index < device_count ? bases[index] : 0; }
 int block_read(uint32_t sector, void *buffer) {
-    active = filesystem;
-    return active == 0 ? -1 : transfer(sector, buffer, 0);
+    return transfer(filesystem, sector, buffer, 0);
 }
 int block_write(uint32_t sector, const void *buffer) {
-    active = filesystem;
-    if (active == 0) return -1;
-    return transfer(sector, (void *)buffer, 1);
+    return transfer(filesystem, sector, (void *)buffer, 1);
 }
-int block_flush(void) {
-    active = filesystem;
-    if (active == 0) return -1;
-    if (!active->flush_supported) return -1;
-    request_status = 0xffU;
-    active->header.type = 4U;
-    active->header.reserved = 0;
-    active->header.sector = 0;
-    descriptors[0] = (VirtqDescriptor){ (uintptr_t)&active->header, sizeof(active->header), 1U, 1U };
-    descriptors[1] = (VirtqDescriptor){ (uintptr_t)&request_status, 1U, 2U, 0U };
-    const uint16_t index = available.index;
-    available.ring[index % queue_size] = 0;
+static int flush_device(BlockDevice *target) {
+    if (target == 0 || target->registers == 0 || !target->flush_supported) return -1;
+    target->status = 0xffU;
+    target->header.type = 4U;
+    target->header.reserved = 0;
+    target->header.sector = 0;
+    target->descriptor[0] = (VirtqDescriptor){ (uintptr_t)&target->header, sizeof(target->header), 1U, 1U };
+    target->descriptor[1] = (VirtqDescriptor){ (uintptr_t)&target->status, 1U, 2U, 0U };
+    const uint16_t index = target->avail_ring.index;
+    target->avail_ring.ring[index % target->length] = 0;
     const uint64_t start = clock_ticks();
     __asm__ volatile("fence rw, w" : : : "memory");
-    available.index = (uint16_t)(index + 1U);
+    target->avail_ring.index = (uint16_t)(index + 1U);
     __asm__ volatile("fence w, o" : : : "memory");
-    device[VIRTIO_QUEUE_NOTIFY / 4] = 0;
-    while (used.index == consumed_used) {
+    target->registers[VIRTIO_QUEUE_NOTIFY / 4] = 0;
+    while (target->used_ring.index == target->consumed) {
         const uint64_t elapsed = clock_ticks() - start;
-        if (elapsed >= clock_ms_ticks(BLOCK_IO_TIMEOUT_MS) && used.index == consumed_used)
-            transfer_timeout(0, 1, elapsed);
+        if (elapsed >= clock_ms_ticks(BLOCK_IO_TIMEOUT_MS) && target->used_ring.index == target->consumed)
+            transfer_timeout(target, 0, 1, elapsed);
     }
     __asm__ volatile("fence r, rw" : : : "memory");
-    ++consumed_used;
-    return request_status == 0 ? 0 : -1;
+    ++target->consumed;
+    return target->status == 0 ? 0 : -1;
 }
+int block_flush(void) { return flush_device(filesystem); }
 int block_flush_supported(void) {
     return filesystem != 0 && filesystem->flush_supported;
 }
@@ -426,12 +416,10 @@ uint32_t block_sector_count(void) {
     return filesystem == 0 ? 0 : filesystem->capacity > UINT32_MAX ? UINT32_MAX : (uint32_t)filesystem->capacity;
 }
 int block_swap_read(uint32_t sector, void *buffer) {
-    active = swap_disk;
-    return active == 0 ? -1 : transfer(sector, buffer, 0);
+    return transfer(swap_disk, sector, buffer, 0);
 }
 int block_swap_write(uint32_t sector, const void *buffer) {
-    active = swap_disk;
-    return active == 0 ? -1 : transfer(sector, (void *)buffer, 1);
+    return transfer(swap_disk, sector, (void *)buffer, 1);
 }
 uint32_t block_swap_sector_count(void) {
     return swap_disk == 0 ? 0 : swap_disk->capacity > UINT32_MAX ? UINT32_MAX : (uint32_t)swap_disk->capacity;
