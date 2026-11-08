@@ -146,25 +146,60 @@ static int evict_one(void) {
         after = victim->arrival;
         uint64_t *entry = vm_walk(owner->root, page_address(selected), 0);
         if (entry == 0 || !(*entry & PTE_V)) vm_panic("Resident metadata/PTE mismatch");
-        const int dirty = victim->dirty || (*entry & PTE_D);
+        const uint64_t saved_entry = *entry;
+        const int dirty = victim->dirty || (saved_entry & PTE_D);
         unsigned int slot = victim->slot;
+        int allocated_slot = 0;
         if (dirty) {
-            if (slot == 0) slot = swap_alloc();
+            if (slot == 0) {
+                slot = swap_alloc();
+                allocated_slot = slot != 0;
+            }
             if (slot == 0) continue;
+
+            /* Keep the whole revoke/write/restore-or-commit sequence atomic
+               with respect to cancellation. Other processes that touch this
+               address fault on the missing PTE and wait for vm_gate. */
+            const int defer_enter_error = process_cancel_defer_enter();
+            if (defer_enter_error < 0) {
+                if (allocated_slot) swap_free(slot);
+                return defer_enter_error;
+            }
+            ++victim->pins;
+            *entry = 0;
+            flush();
             if (swap_write(slot, victim->physical) < 0) {
-                if (victim->slot == 0) swap_free(slot);
+                *entry = saved_entry;
+                flush();
+                victim->dirty = 1;
+                --victim->pins;
+                if (allocated_slot) swap_free(slot);
                 ++stats.io_errors;
                 error = ERR_IO;
-                continue; /* Keep the valid RAM copy; try another candidate. */
+                const int defer_error = process_cancel_defer_leave();
+                if (defer_error < 0) return defer_error;
+                continue; /* RAM remains authoritative and dirty. */
             }
             victim->slot = slot;
             ++stats.outs;
-        } else ++stats.drops;
+            victim->dirty = 0;
+            page_free(victim->physical);
+            victim->physical = 0;
+            --resident;
+            --victim->pins;
+            const int defer_error = process_cancel_defer_leave();
+            if (defer_error < 0) vm_panic("Cancel defer imbalance after swap-out");
+            return 0;
+        }
+
+        ++victim->pins;
         *entry = 0;
         flush(); /* Revoke the old virtual mapping before reusing its frame. */
+        ++stats.drops;
         page_free(victim->physical);
         victim->physical = 0;
         victim->dirty = 0;
+        --victim->pins;
         --resident;
         return 0;
     }
@@ -273,6 +308,22 @@ void vm_enable(uintptr_t root) {
     __asm__ volatile("csrw satp, %0\nsfence.vma zero, zero\nfence.i" : : "r"(satp) : "memory");
 }
 void vm_use_kernel(void) { vm_enable(kernel_root); }
+
+int vm_unmap_kernel_guard(uintptr_t address) {
+    if (kernel_root == 0 || (address & (PAGE_SIZE - 1)) != 0 ||
+        address < KERNEL_BASE || address >= RAM_END) return ERR_INVALID;
+    const int enter_error = vm_scope_enter();
+    if (enter_error < 0) return enter_error;
+    uint64_t *entry = vm_walk(kernel_root, address, 0);
+    if (entry == 0 || !(*entry & PTE_V) || !(*entry & PTE_LEAF) ||
+        entry_address(*entry) != address) {
+        (void)vm_scope_leave();
+        return ERR_INVALID;
+    }
+    *entry = 0;
+    flush(); /* Kernel branches are shared directly by every process root. */
+    return vm_scope_leave();
+}
 
 void vm_init(const void *fdt) {
     for (long program = 0; program <= PROGRAM_WORKSTATE; ++program) {

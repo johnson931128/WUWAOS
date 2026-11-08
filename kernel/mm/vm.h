@@ -13,6 +13,9 @@
 #define USER_STACK_TOP (USER_STACK + PAGE_SIZE)
 
 void vm_init(const void *fdt);
+/* Remove one page from the shared identity-mapped kernel RAM range. Call for
+   page-aligned guard addresses before constructing process address spaces. */
+int vm_unmap_kernel_guard(uintptr_t address);
 int vm_scope_enter(void);
 int vm_scope_leave(void);
 void vm_map_mmio(uintptr_t base);
