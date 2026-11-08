@@ -1,5 +1,6 @@
 #include "user/lib/api.h"
 #include "user/lib/print.h"
+#include "syscall_numbers.h"
 #include <stddef.h>
 
 #define LIMIT 2048U
@@ -11,6 +12,7 @@ enum { UP = 256, DOWN, LEFT, RIGHT, HOME, END, DELETE, PAGE_UP, PAGE_DOWN };
 static char text[LIMIT + 1]; /* Extra byte detects oversized existing files. */
 static size_t length, cursor, goal, top, left;
 static int dirty, confirming;
+static int save_uncertain;
 static const char *filename;
 static const char *message = "Ready";
 static long save_error;
@@ -169,9 +171,14 @@ static void render(void) {
 }
 
 static int save(void) {
-    const long result = fs_writefile(filename, text, length);
+    if (save_uncertain) {
+        message = "Save uncertain; reopen file to confirm";
+        return 0;
+    }
+    const long result = fs_replacefile(filename, text, length);
     if (result < 0 || (size_t)result != length) {
-        message = "Save failed; buffer kept";
+        save_uncertain = result == ERR_UNCERTAIN;
+        message = save_uncertain ? "Save uncertain; reopen file to confirm" : "Save failed; buffer kept";
         save_error = result < 0 ? result : -5;
         return 0;
     }
@@ -234,6 +241,10 @@ static int handle(int key) {
         if (key == 'n' || key == 'N') return 0;
         if (key == 'y' || key == 'Y') {
             confirming = 0;
+            if (save_uncertain) {
+                message = "Reopen file to confirm saved state";
+                return 1;
+            }
             return save() ? 0 : 1;
         }
         if (key == 'c' || key == 'C' || key == 24 || key == 27) {
@@ -242,8 +253,8 @@ static int handle(int key) {
         }
         return 1;
     }
-    message = "Ready";
-    save_error = 0;
+    message = save_uncertain ? "Reopen file to confirm saved state" : "Ready";
+    if (!save_uncertain) save_error = 0;
     switch (key) {
     case 15: save(); break; /* Ctrl+O */
     case 24: /* Ctrl+X */
@@ -275,6 +286,7 @@ static int handle(int key) {
 
 long user_main(long program, const char *path) {
     (void)program;
+    save_uncertain = 0;
     filename = path;
     if (path == 0 || path[0] != '/') {
         user_puts("fan: an absolute file path is required.\n");

@@ -15,6 +15,7 @@ long fs_touch(const char *path);
 long fs_size(const char *path);
 long fs_read(const char *path, size_t offset, void *buffer, size_t length);
 long fs_write(const char *path, const void *buffer, size_t length);
+long fs_replace(const char *path, const void *buffer, size_t length);
 long fs_remove(const char *path);
 long fs_remove_tree(const char *path);
 long fs_copy(const char *source, const char *destination);

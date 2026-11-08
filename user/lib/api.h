@@ -46,6 +46,7 @@ long fs_mkdir(const char *path);
 long fs_touch(const char *path);
 long fs_readfile(const char *path, char *buffer, unsigned long capacity);
 long fs_writefile(const char *path, const char *buffer, unsigned long length);
+long fs_replacefile(const char *path, const char *buffer, unsigned long length);
 long fs_remove(const char *path);
 long fs_remove_tree(const char *path);
 long fs_copy(const char *source, const char *destination);

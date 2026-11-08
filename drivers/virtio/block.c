@@ -2,6 +2,7 @@
 #include "kernel/io/console.h"
 #include "kernel/proc/gate.h"
 #include "kernel/proc/process.h"
+#include "kernel/io/diagnostic.h"
 #include "syscall_numbers.h"
 #include "arch/riscv/clock.h"
 #include <stddef.h>
@@ -110,6 +111,8 @@ typedef struct {
     long request_result;
     long reset_result;
     unsigned offline : 1;
+    unsigned diagnostic_pending : 1;
+    unsigned diagnostic_uncertain : 1;
 } BlockDevice;
 
 static BlockDevice devices[2];
@@ -321,6 +324,8 @@ static int init_device(BlockDevice *target, uintptr_t base) {
 }
 
 static _Noreturn void reset_fail_stop(BlockDevice *target) {
+    kernel_diagnostic("block", "reset-unconfirmed", ERR_IO, 1,
+                      (uintptr_t)target->request_sector);
     console_puts("[block] RESET NOT CONFIRMED device=");
     console_hex((uintptr_t)target->registers);
     console_puts(" role=");
@@ -346,8 +351,11 @@ static void begin_reset(BlockDevice *target, long result) {
 
 static void poll_reset(BlockDevice *target) {
     if (target->registers[VIRTIO_STATUS / 4] == 0U) {
+        __asm__ volatile("fence iorw, iorw" : : : "memory");
         target->offline = 1;
         target->request_result = target->reset_result;
+        target->diagnostic_pending = 1;
+        target->diagnostic_uncertain = target->operation != BLOCK_OP_READ;
         target->request_state = BLOCK_REQUEST_DONE;
         event_source_notify(&target->completion, target->request_result);
         return;
@@ -385,6 +393,10 @@ static void poll_device(BlockDevice *target) {
         }
         ++target->consumed;
         target->request_result = status == 0U ? 0 : ERR_IO;
+        if (target->request_result < 0) {
+            target->diagnostic_pending = 1;
+            target->diagnostic_uncertain = target->operation != BLOCK_OP_READ;
+        }
         target->request_state = BLOCK_REQUEST_DONE;
         event_source_notify(&target->completion, target->request_result);
         return;
@@ -473,6 +485,15 @@ static int submit_request(BlockDevice *target, uint32_t sector, const void *buff
     }
 
     const int result = (int)target->request_result;
+    if (target->diagnostic_pending) {
+        const char *operation_name = target->operation == BLOCK_OP_READ ? "read" :
+                                     target->operation == BLOCK_OP_WRITE ? "write" : "flush";
+        kernel_diagnostic("block", operation_name, result,
+                          target->diagnostic_uncertain,
+                          (uintptr_t)target->request_sector);
+        target->diagnostic_pending = 0;
+        target->diagnostic_uncertain = 0;
+    }
     if (result == 0 && operation == BLOCK_OP_READ) {
         uint8_t *destination = (uint8_t *)buffer;
         for (unsigned int i = 0; i < sizeof(target->bounce); ++i) destination[i] = target->bounce[i];

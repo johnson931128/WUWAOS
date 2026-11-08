@@ -95,6 +95,9 @@ long fs_readfile(const char *path, char *buffer, unsigned long capacity) {
 long fs_writefile(const char *path, const char *buffer, unsigned long length) {
     return syscall3(SYS_FS_WRITE, (long)path, (long)buffer, (long)length);
 }
+long fs_replacefile(const char *path, const char *buffer, unsigned long length) {
+    return syscall3(SYS_FS_REPLACE, (long)path, (long)buffer, (long)length);
+}
 
 _Noreturn void exit(long status) {
     syscall3(SYS_EXIT, status, 0, 0);

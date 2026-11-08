@@ -42,6 +42,7 @@
 #define SYS_PIPE 38
 #define SYS_DUP 39
 #define SYS_IS_CONSOLE 40
+#define SYS_FS_REPLACE 41
 
 #define FD_O_RDONLY 0x01
 #define FD_O_WRONLY 0x02
@@ -71,5 +72,6 @@
 #define ERR_BAD_FD (-9L)
 #define ERR_INTERRUPTED (-4L)
 #define ERR_TIMED_OUT (-110L)
+#define ERR_UNCERTAIN (-200L)
 
 #endif

@@ -4,7 +4,9 @@
 #include "kernel/io/console.h"
 #include "kernel/proc/process.h"
 #include "kernel/io/io.h"
+#include "kernel/io/diagnostic.h"
 #include "kernel/mm/page.h"
+#include "syscall_numbers.h"
 #include <stdint.h>
 
 #define FS_MAGIC "WUFS0001"
@@ -121,6 +123,10 @@ static int transaction_commit(void) {
     uint32_t crc = 0xffffffffU;
     if (transaction_error) return transaction_error;
     if (transaction_count == 0) return 0;
+    const int defer_error = process_cancel_defer_enter();
+    if (defer_error < 0) return defer_error;
+    int header_attempted = 0;
+    long result = 0;
     /* Journal target table is always written in full, with unused entries zeroed. */
     for (uint32_t i = 0; i < transaction_count; ++i)
         ((uint32_t *)targets)[i] = transaction_targets[i];
@@ -137,18 +143,25 @@ static int transaction_commit(void) {
     crc = crc32_update(crc, targets, sizeof(targets));
     crc = crc32_update(crc, transaction_payload, (size_t)transaction_count * FS_SECTOR_SIZE);
     ((uint32_t *)header)[5] = ~crc;
+    header_attempted = 1;
     if (raw_write_sector(FS_JOURNAL_START, header) < 0 || block_flush() < 0) goto io_failure;
     for (uint32_t i = 0; i < transaction_count; ++i)
         if (raw_write_sector(transaction_targets[i], transaction_payload + (size_t)i * FS_SECTOR_SIZE) < 0) goto io_failure;
     if (block_flush() < 0) goto io_failure;
     for (unsigned int i = 0; i < FS_SECTOR_SIZE; ++i) header[i] = 0;
     if (raw_write_sector(FS_JOURNAL_START, header) < 0 || block_flush() < 0) goto io_failure;
-    return 0;
+    goto finish;
 io_failure:
     offline = 1;
     mounted = 0;
-    console_puts("[fs] Transaction I/O failed; volume offline until restart/recovery\n");
-    return -5;
+    result = header_attempted ? ERR_UNCERTAIN : ERR_IO;
+    kernel_diagnostic("fs", "commit", result, header_attempted,
+                      (uintptr_t)FS_JOURNAL_START);
+finish: {
+        const int leave_error = process_cancel_defer_leave();
+        if (leave_error < 0 && result == 0) result = leave_error;
+    }
+    return (int)result;
 }
 
 static int transaction_end(long operation_result) {
@@ -1090,6 +1103,85 @@ discard:
     return error;
 }
 
+static long fs_replace_impl(const char *path, const void *buffer, size_t length) {
+    const size_t maximum = (FS_DIRECT + FS_INDIRECT * FS_POINTERS_PER_SECTOR) * FS_SECTOR_SIZE;
+    if (length > maximum) return -27;
+    if (length && !buffer) return ERR_ADDRESS;
+
+    uint32_t parent_number, index = 0;
+    char name[FS_NAME_SIZE] = {0};
+    int error = parent_lookup(path, &parent_number, name);
+    if (error < 0) return error;
+    if (special_name(name)) return ERR_INVALID;
+
+    Inode parent, old = {0};
+    DirectoryEntry entry;
+    if (inode_read(parent_number, &parent) < 0) return ERR_IO;
+    if (parent.type != FS_TYPE_DIRECTORY) return -20;
+    error = directory_find_entry(&parent, name, &index, &entry);
+    const int exists = error == 0;
+    if (error != 0 && error != -2) return error;
+    if (exists) {
+        if (io_inode_is_open(entry.inode)) return ERR_BUSY;
+        if (inode_read(entry.inode, &old) < 0) return ERR_IO;
+        if (old.type != FS_TYPE_FILE) return -21;
+    }
+
+    const long allocated = inode_allocate(FS_TYPE_FILE);
+    if (allocated < 0) return allocated;
+    Inode fresh = { .type = FS_TYPE_FILE };
+    const uint8_t *source = buffer;
+    for (size_t position = 0; position < length;) {
+        uint32_t sector;
+        uint8_t data[FS_SECTOR_SIZE] = {0};
+        const uint32_t block = (uint32_t)(position / FS_SECTOR_SIZE);
+        if (inode_block(&fresh, block, 1, &sector) < 0 || sector == 0) {
+            error = transaction_error ? transaction_error : -28;
+            goto replace_abort;
+        }
+        size_t amount = length - position;
+        if (amount > FS_SECTOR_SIZE) amount = FS_SECTOR_SIZE;
+        for (size_t i = 0; i < amount; ++i) data[i] = source[position + i];
+        if (write_sector(sector, data) < 0) {
+            error = transaction_error ? transaction_error : ERR_IO;
+            goto replace_abort;
+        }
+        position += amount;
+    }
+    fresh.size = (uint32_t)length;
+    if (inode_write((uint32_t)allocated, &fresh) < 0) {
+        error = transaction_error ? transaction_error : ERR_IO;
+        goto replace_abort;
+    }
+
+    if (exists) {
+        const uint32_t old_number = entry.inode;
+        const uint32_t parent_size = parent.size;
+        entry.inode = (uint32_t)allocated;
+        if (dir_entry_write(&parent, index, &entry) < 0) {
+            error = transaction_error ? transaction_error : ERR_IO;
+            goto replace_abort;
+        }
+        parent.size = parent_size;
+        if (inode_write(parent_number, &parent) < 0) {
+            error = transaction_error ? transaction_error : ERR_IO;
+            goto replace_abort;
+        }
+        if (inode_release(old_number, &old) < 0) {
+            error = transaction_error ? transaction_error : ERR_IO;
+            goto replace_abort;
+        }
+    } else {
+        error = directory_add(parent_number, name, (uint32_t)allocated);
+        if (error < 0) goto replace_abort;
+    }
+    return (long)length;
+
+replace_abort:
+    /* The enclosing redo transaction is discarded; no staged link reaches disk. */
+    return error;
+}
+
 static long fs_size_impl(const char *path) {
     uint32_t number;
     int error = path_lookup(path, &number);
@@ -1293,6 +1385,16 @@ long fs_write(const char *path, const void *buffer, size_t length) {
     error = transaction_begin();
     if (error < 0) return fs_scope_finish(error);
     const long result = fs_write_impl(path, buffer, length);
+    error = transaction_end(result);
+    return fs_scope_finish(error < 0 ? error : result);
+}
+
+long fs_replace(const char *path, const void *buffer, size_t length) {
+    int error = fs_scope_enter();
+    if (error < 0) return error;
+    error = transaction_begin();
+    if (error < 0) return fs_scope_finish(error);
+    const long result = fs_replace_impl(path, buffer, length);
     error = transaction_end(result);
     return fs_scope_finish(error < 0 ? error : result);
 }

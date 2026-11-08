@@ -259,6 +259,25 @@ void syscall_dispatch(TrapFrame *frame) {
         if (result >= 0 && release_error < 0) result = release_error;
         break;
     }
+    case SYS_FS_REPLACE: {
+        Process *process = process_current();
+        char path[FS_PATH_MAX];
+        const uintptr_t user_buffer = frame->registers[11];
+        const size_t length = (size_t)frame->registers[12];
+        const int path_error = copy_fs_path(process->page_table, frame->registers[10], path);
+        if (path_error < 0 || length > sizeof(fs_staging) ||
+            !user_readable(process->page_table, user_buffer, length)) {
+            result = path_error < 0 ? path_error : ERR_ADDRESS;
+            break;
+        }
+        const int scope_error = fs_scope_enter();
+        if (scope_error < 0) { result = scope_error; break; }
+        result = user_copy_from(process->page_table, fs_staging, user_buffer, length);
+        if (result == 0) result = fs_replace(path, fs_staging, length);
+        const int release_error = fs_scope_leave();
+        if (result >= 0 && release_error < 0) result = release_error;
+        break;
+    }
     default:
         result = ERR_NO_SYSCALL;
         break;
