@@ -13,6 +13,20 @@
 
 原因 12 是取指令缺頁，13 是讀取缺頁，15 是寫入缺頁。非法位址和寫入唯讀頁不會因為「發生缺頁」就獲准配置。
 
+## 互動：挑選 victim 與換出
+
+下方固定資料互動展示 FIFO 候選與 dirty page 換出成功或 I/O 失敗。這是固定資料教學示意，不會呼叫核心或磁碟；QEMU runtime 與瀏覽器操作驗收均為 NOT_RUN。
+
+<script setup>
+import PagingLab from '../.vitepress/theme/components/PagingLab.vue'
+</script>
+
+<PagingLab />
+
+示意假設 victim 為 dirty、沒有既有 Swap 副本，開始交易時配置新 slot 12；失敗情境模擬第 3 個 sector 出錯，實際故障可能在任一 sector。clean 且可由映像／零頁重建的頁可直接丟棄；已有有效 Swap 副本則可重用，不需另配 slot。
+
+核心的 `vm_handle_fault` 取得 VM Gate 後會跨越可能睡眠的 `swap_write`。原 fault caller 等待磁碟時，另一個 process 若也發生 page fault，會等待同一 Gate；scheduler/UI poll 是 no-wait context，若配置需要置換，會在修改 PTE 或送 I/O 前回 `ERR_BUSY`。互動中的失敗情境假設沒有其他 eligible victim；實際 `evict_one` 在某頁寫失敗並 rollback 後，還會繼續掃描下一個候選，僅當沒有其他候選可用時才回 `ERR_IO`。換出成功或回復完成後，Gate 仍由外層 fault scope 持有，直到外層處理完需求頁或錯誤才 leave。模型只表現這些同步關係，不代表 process 可任意操作 VM metadata。
+
 ## 補充分頁表記錄什麼
 
 `kernel/mm/vm.c` 的 VmSpace 保存程式來源、heap 結尾與每頁 VmPage；每頁記錄實體位址、交換槽位、修改狀態、入駐次序與暫時固定次數。
@@ -46,6 +60,36 @@ FIFO 掃描補充表，選入駐序號最小且未固定的常駐頁。讀寫命
 `kernel/mm/swap.c` 用 bitmap（位元圖）管理槽位。槽位從 1 編號，0 代表沒有槽位。槽位 n 從磁區 `8*n` 開始，一頁逐次讀寫八個 512-byte 磁區。
 
 原始碼：[kernel/mm/swap.c](https://github.com/johnson931128/WUWAOS/blob/main/kernel/mm/swap.c)／[kernel/mm/swap.h](https://github.com/johnson931128/WUWAOS/blob/main/kernel/mm/swap.h)，由 GitHub main 管理，本站不內嵌來源檔。
+
+## 欄位、限制與主要函式
+
+課程以 FIFO queue 解釋「最早進入 frame 的頁面先離開」；WUWAOS 沒有每行程的實體 FIFO queue，而是掃描補充記錄中的 `arrival`，取最小且未 pin 的常駐頁。
+觀念參考：[`notes/ch10 Virtual Momory.md` · 缺頁處理、dirty bit、§10.4.2 FIFO](https://github.com/johnson931128/WUWAOS/blob/main/notes/ch10%20Virtual%20Momory.md)。
+
+| WUWAOS 欄位 | 用途與本實作語意 |
+| --- | --- |
+| `VmPage.physical` | 非 0 表示目前有 RAM frame；為 0 時可能在 Swap，也可能由映像／零頁重建。 |
+| `VmPage.slot` | 1-based Swap slot；0 表示沒有已指派 slot。新 slot 先配置，I/O 成功後才寫進 page metadata。 |
+| `VmPage.arrival` | 頁面進入 RAM 時遞增；FIFO 命中不更新。跨所有 `VmSpace` 比較。 |
+| `VmPage.pins` | 非 0 時不可置換。fault handler 也會 pin 可能跨頁的指令 code page。 |
+| `VmPage.dirty`、PTE `D` | 軟體修改狀態與硬體 dirty bit 合併判定；dirty 頁不能直接丟棄。 |
+| `saved_entry` | 暫存 victim leaf PTE；I/O 失敗時還原並執行 `sfence.vma`。 |
+| `resident`、`frame_limit` | 全系統常駐頁數與預算。預設 64 頁，最小預算 8 頁。 |
+| Swap bitmap | `swap.c` 的槽位配置圖；slot 由 1 起算，0 不代表磁碟位置。 |
+
+主要函式（精確型別見標頭檔）：
+
+| 函式 | 參數與回傳 |
+| --- | --- |
+| `int vm_handle_fault(uintptr_t root, uintptr_t address, unsigned long cause, uintptr_t pc)` | 處理 user page fault；cause 12/13/15 是取指令／讀／寫。回 0 表示頁面已備妥，負值為錯誤碼；返回 trap 後 CPU 重試原指令。 |
+| `int vm_scope_enter(void)` / `int vm_scope_leave(void)` | 進入／離開 VM Gate；enter 可能等待另一個 VM 操作，no-wait context 不能等待時回錯。 |
+| `long vm_sbrk(uintptr_t root, long increment)` | 調整 heap 合法範圍，回傳舊 break 或負錯誤；頁框在首次存取時才配置。 |
+| `long vm_control(long limit)` | 查詢或設定全系統 resident budget；0 查詢，非 0 值受最小值與可用資源限制。 |
+| `int vm_get_usage(uintptr_t root, VmUsage *usage)` | 寫入該空間的 resident/swapped page 數及 heap bytes；錯誤時回負值。 |
+| `unsigned int swap_alloc(void)` / `void swap_free(unsigned int slot)` | 配置 1-based slot；無可用槽回 0。 |
+| `int swap_write(unsigned int slot, uintptr_t page)` / `int swap_read(unsigned int slot, uintptr_t page)` | 在已配置 slot 與對齊的 4 KiB 頁間傳輸 8 個 sector；成功回 0，參數錯誤或 I/O 失敗回負值。 |
+
+來源：[vm.c](https://github.com/johnson931128/WUWAOS/blob/main/kernel/mm/vm.c) · [vm.h](https://github.com/johnson931128/WUWAOS/blob/main/kernel/mm/vm.h) · [swap.c](https://github.com/johnson931128/WUWAOS/blob/main/kernel/mm/swap.c) · [swap.h](https://github.com/johnson931128/WUWAOS/blob/main/kernel/mm/swap.h) · [vm_limits.h](https://github.com/johnson931128/WUWAOS/blob/main/include/vm_limits.h)
 
 換出失敗時，VM 保留原本 RAM 副本；換入失敗時，不公布只讀到一部分的頁面。沒有 Swap 仍可按需配置與丟棄可重建頁，但不能無條件換出修改過的資料。
 
@@ -89,4 +133,4 @@ vmstat limit 64
 
 沒有 COW、mmap、共享頁與動態核心 heap。縮小 heap 只釋放不再涵蓋的整頁；部分頁縮小再擴張不保證清零。常駐頁保留交換區副本、空 heap L0 表保留至空間銷毀，都是仍有所有權的資源。
 
-觀念參考：`notes/ch10 Virtual Momory.md` 的缺頁處理步驟與 §10.4.2 FIFO。WUWAOS 目前實作及資源不足、唯讀交換區、非法存取等既有驗收見 [Spec 10](../SPEC-10-demand-paging.md)；未實際耗盡全部 128 MiB，也未注入部分磁區讀取失敗。
+觀念參考：[`notes/ch10 Virtual Momory.md` · 缺頁處理步驟與 §10.4.2 FIFO](https://github.com/johnson931128/WUWAOS/blob/main/notes/ch10%20Virtual%20Momory.md)。WUWAOS 目前實作及資源不足、唯讀交換區、非法存取等既有驗收見 [Spec 10](../SPEC-10-demand-paging.md)；未實際耗盡全部 128 MiB，也未注入部分磁區讀取失敗。
