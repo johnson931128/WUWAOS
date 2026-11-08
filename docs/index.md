@@ -1,3 +1,7 @@
+---
+aside: false
+---
+
 <script setup lang="ts">
 import SystemOverview from './.vitepress/theme/components/SystemOverview.vue'
 </script>

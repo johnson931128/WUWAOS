@@ -12,6 +12,10 @@
   --os-panel: #ffffff;
   --os-line: #d5dddc;
   --os-soft: #eaf0ee;
+  --os-text: var(--os-ink);
+  --os-surface: var(--os-panel);
+  --os-border: var(--os-line);
+  --os-accent: var(--vp-c-brand-1);
   --vp-c-brand-1: #28674e;
   --vp-c-brand-2: #358660;
   --vp-c-brand-3: #246348;
@@ -33,6 +37,10 @@
   --os-panel: #1e2629;
   --os-line: #3b4848;
   --os-soft: #283333;
+  --os-text: var(--os-ink);
+  --os-surface: var(--os-panel);
+  --os-border: var(--os-line);
+  --os-accent: var(--vp-c-brand-1);
   --vp-c-brand-1: #8ed7ac;
   --vp-c-brand-2: #69bc90;
   --vp-c-brand-3: #408a64;
@@ -52,14 +60,14 @@ body:has(.system-overview) .VPDoc .content-container { max-width: none; }
 body:has(.system-overview) .vp-doc { color: var(--os-ink); }
 body:has(.system-overview) .vp-doc h1, body:has(.system-overview) .vp-doc h2, body:has(.system-overview) .vp-doc h3 { color: var(--os-ink); }
 .editorial-hero {
-  position: relative; overflow: hidden; margin: 0 0 2.5rem; padding: clamp(2rem, 6vw, 5.25rem);
+  position: relative; overflow: hidden; margin: 0 0 1rem; padding: clamp(1.5rem, 3vw, 2rem);
   border: 1px solid var(--os-line); border-radius: 1.5rem;
   background: radial-gradient(ellipse at 90% 0%, color-mix(in srgb, var(--os-memory) 15%, transparent), transparent 48%), var(--os-panel);
 }
 .editorial-hero .eyebrow { color: var(--os-memory); font: 700 .78rem/1.2 var(--vp-font-family-mono); letter-spacing: .14em; text-transform: uppercase; }
-.editorial-hero h1 { max-width: 15ch; margin: .7rem 0 1rem; font-size: clamp(2.5rem, 6vw, 5rem); line-height: 1.08; }
-.editorial-hero p { max-width: 68ch; color: var(--os-muted); font-size: clamp(1.05rem, 1.6vw, 1.25rem); }
-.editorial-hero .hero-meta { display: flex; flex-wrap: wrap; gap: .6rem; margin-top: 1.5rem; }
+.editorial-hero h1 { max-width: 18ch; margin: .45rem 0 .7rem; font-size: clamp(2rem, 3vw, 3rem); line-height: 1.12; }
+.editorial-hero p { max-width: 68ch; margin: .45rem 0; color: var(--os-muted); font-size: clamp(1rem, 1.3vw, 1.15rem); }
+.editorial-hero .hero-meta { display: flex; flex-wrap: wrap; gap: .6rem; margin-top: .8rem; }
 .hero-meta span { border: 1px solid var(--os-line); border-radius: 99px; padding: .35rem .7rem; color: var(--os-muted); font: .8rem var(--vp-font-family-mono); }
 .spec-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .7rem; margin: 1.25rem 0 2rem; }
 .spec-strip div { padding: 1rem; border: 1px solid var(--os-line); border-radius: .8rem; background: var(--os-panel); }

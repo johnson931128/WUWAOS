@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import DiagramFrame from './DiagramFrame.vue'
 
 const modules = [
   { id: 'cpu', label: 'CPU', eyebrow: 'RV64 · 單核心', x: 42, y: 42, w: 205, h: 94, role: 'cpu', definition: 'QEMU virt 提供一顆 RV64 CPU。CPU 執行 S-mode 核心與 U-mode 使用者程式；它是硬體資源，不是 kernel 的子模組。', source: 'Makefile：-machine virt -smp 1', href: '../topics/getting-started', chapter: '平台與建置' },
@@ -28,7 +29,12 @@ function onKey(event: KeyboardEvent, id: string) {
       </div>
       <p>選取圖中的模組，查看它的角色、實際來源與對應章節。</p>
     </div>
-    <div class="overview-scroll" role="region" aria-label="WUWAOS 系統架構圖，可水平捲動" tabindex="0">
+    <DiagramFrame
+      title="WUWAOS QEMU 系統分層圖"
+      description="選取圖中模組查看定義、實際來源與對應章節。箭頭呈現韌體交接與 ecall 邊界，不代表一次 QEMU 執行追蹤。"
+      kind="SYSTEM MAP · SOURCE-BASED"
+      :zoomable="true"
+    >
       <svg class="system-svg" viewBox="0 0 1090 580" role="group" aria-labelledby="system-svg-title system-svg-desc">
         <title id="system-svg-title">WUWAOS QEMU 系統分層架構</title>
         <desc id="system-svg-desc">QEMU 虛擬硬體提供 CPU、RAM、VirtIO 裝置和磁碟。OpenSBI 韌體交接給 S-mode WUWAOS 核心；核心內含桌面服務。核心啟動 U-mode 使用者行程，行程透過 ecall 使用核心服務。</desc>
@@ -73,7 +79,8 @@ function onKey(event: KeyboardEvent, id: string) {
         <text class="flow-label return-label" x="915" y="423" transform="rotate(-90 915 423)">系統呼叫進入核心</text>
         <text class="diagram-note" x="23" y="573">圖示為依目前 source 繪製的靜態分層；箭頭表示啟動交接與 syscall 邊界，不代表執行追蹤。</text>
       </svg>
-    </div>
+      <template #caption>硬體、韌體、S-mode 核心與 U-mode 程序依目前 source 分層；可在圖框中局部放大／縮小，不會放大整頁。</template>
+    </DiagramFrame>
     <div class="module-detail" aria-live="polite" aria-atomic="true">
       <div class="detail-role" :class="`text-${selected.role}`">已選取 · {{ selected.label }}</div>
       <p>{{ selected.definition }}</p>
@@ -90,7 +97,6 @@ function onKey(event: KeyboardEvent, id: string) {
 .overview-heading h3 { margin: .2rem 0; font-size: 1.35rem; }
 .overview-heading p { max-width: 40ch; margin: 0; color: var(--os-muted); font-size: .9rem; }
 .overview-kicker { margin: 0; color: var(--os-memory); font: 700 .7rem var(--vp-font-family-mono); letter-spacing: .12em; }
-.overview-scroll { overflow-x: auto; border: 1px solid var(--os-line); border-radius: .8rem; background: var(--os-panel); scrollbar-color: var(--os-line) transparent; }
 .system-svg { display: block; width: 100%; min-width: 760px; height: auto; color: var(--os-ink); }
 .qemu-boundary { fill: var(--os-soft); stroke: var(--os-line); stroke-width: 1.5; stroke-dasharray: 6 5; }
 .boundary-label, .module-eyebrow, .flow-label, .diagram-note { fill: var(--os-muted); font-family: var(--vp-font-family-mono); }
