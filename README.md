@@ -20,16 +20,16 @@ WUWAOS is a small operating system written in **C and RISC-V assembly** that boo
 | Processes and scheduling | Up to 16 processes, process control blocks, fork, built-in and path-based exec, wait, exit, and timer-driven round-robin scheduling |
 | Synchronization and IPC | Custom mutexes and semaphores, sleep/wakeup, per-process file descriptors, and multi-stage pipes |
 | Virtual memory | Sv39 three-level page tables, demand paging, FIFO page replacement, and swap |
-| File system | VirtIO block device and the custom WUFS file system, with persistent files, shared open-file offsets, and shell redirection |
-| User interface | UART shell, `fan` text editor and `workstate` monitor; optional VirtIO GPU/tablet desktop with a fixed Terminal window and keyboard-operated shell |
+| File system | Event-waiting VirtIO block requests, WUFS redo journal, atomic file replacement, shared open-file offsets, and shell redirection |
+| User interface | UART shell, `fan` and `workstate`; optional VirtIO desktop with up to four independent Terminal windows, focus, dragging, and viewport resizing |
 
-WUWAOS focuses on fundamental operating system mechanisms and is not Linux-compatible. QEMU currently loads the kernel using `-kernel`. A restricted static RV64 ELF loader can run compatible WUWAOS programs from WUFS; general ELF/Linux compatibility, command-line arguments for external ELF programs, compiling C inside WUWAOS, networking, general window management, and a file manager are not supported. The graphical desktop provides one fixed-size Terminal window connected to the existing shell; `make run` remains the UART workflow. See the [documentation](https://johnson931128.github.io/WUWAOS/) and [Spec 21](docs/SPEC-21-native-compilation.md) for limitations and future plans.
+WUWAOS focuses on fundamental operating system mechanisms and is not Linux-compatible. QEMU currently loads the kernel using `-kernel`. A restricted static RV64 ELF loader can run compatible WUWAOS programs from WUFS; general ELF/Linux compatibility, external ELF arguments, compiling C inside WUWAOS, networking, and a file manager are not supported. Window resizing changes the viewport of a fixed 100×30 terminal model; it does not resize the TTY or reflow text. `make run` remains the UART workflow. See the [documentation](https://johnson931128.github.io/WUWAOS/) and [Spec 21](docs/SPEC-21-native-compilation.md) for limitations and future plans.
 
 ## Current Development Status
 
-The current source has isolated TTY sessions, event-based waits, and owner-aware kernel gates protecting shared OFD/pipe operations, WUFS transactions, and VM state. Kernel code can cooperatively sleep and resume its caller stack, although timer preemption still applies only to user mode. These changes prepare the kernel for asynchronous device I/O.
+The 2026-11-08 implementation adds asynchronous Block requests and swap PTE rollback, nonblocking GPU presentation with bounded recovery, kernel stack guard pages, four independent Terminal windows, and atomic file replacement used by `fan`. Existing isolated TTY sessions, event waits, and owner-aware gates protect shared state. Kernel code can cooperatively sleep and resume its caller stack; timer preemption still applies only to user mode.
 
-Block I/O still busy-polls synchronously and stops the kernel on timeout. The latest Block change only makes device pointers explicit; asynchronous requests, device recovery, and multi-window management remain unfinished. Implementation is paused while documentation is updated. See the [detailed implementation plan](plan.md) and [compact progress list](plan_current.md) for completed steps, methods, and validation limits. These source changes are not included in the existing portable v1 ZIP.
+These new paths have not been runtime-tested at the user's direction. Boot device setup still polls synchronously. Block reset acknowledgement permits isolating a failed disk; an unconfirmed reset still stops the kernel. GPU recovery can disable the GUI, and stack guards do not provide an emergency trap stack. See the [detailed implementation plan](plan.md) and [compact progress list](plan_current.md) for algorithms, build results, and limits. The existing portable v1 ZIP does not include these source changes.
 
 ## Demo Video
 
@@ -47,13 +47,13 @@ The video follows a live QEMU session through the shell, processes, synchronizat
 
 ## Graphical Desktop
 
-When QEMU has a VirtIO GPU, tablet, and keyboard, WUWAOS draws a 1280×720 desktop with a Terminal icon. Click the icon to open a fixed-size window connected to the existing WUWAOS shell. The guest kernel handles keyboard input, line editing, ANSI screen updates, and window rendering; closing the window hides the session, while `exit` ends the shell. The original UART shell remains available in `make run`.
+When QEMU has a VirtIO GPU, tablet, and keyboard, WUWAOS draws a 1280×720 desktop with a Terminal icon. Each click opens a new shell window, up to four. Click a window to focus and raise it, drag its title to move it, and drag its lower-right corner to resize its viewport. Closing a window closes its TTY session; `exit` ends the shell and leaves its last display until the window is closed. The original UART shell remains available in `make run`.
 
 ![WUWAOS guest-rendered desktop Terminal showing shell commands](docs/images/wuwaos-terminal.png)
 
-The current source removes the solid offset shadow along the window's right and bottom edges. The screenshot and portable v1 release show the earlier styling; acceptance checks for this source adjustment are pending.
+The screenshot and portable v1 show the earlier single-window implementation and styling. The current multi-window and asynchronous rendering paths have not undergone visual or runtime validation.
 
-The Terminal accepts US keyboard input including Shift, Enter, Backspace, Tab, Ctrl+D, and arrow keys. It supports a fixed 100×30 character area and a subset of ANSI cursor, erase, color, alternate-screen, and visibility controls. It is a small kernel TTY, not a POSIX PTY. It has no resize, drag, clipboard, job control, or Ctrl+C support. [Graphical Terminal design and QEMU evidence](docs/SPEC-30-graphical-terminal.md) · [workstate screenshot](docs/images/wuwaos-terminal-workstate.png).
+The Terminal accepts US keyboard input including Shift, Enter, Backspace, Tab, Ctrl+D, and arrow keys. Its model remains 100×30 with a subset of ANSI cursor, erase, color, alternate-screen, and visibility controls. Smaller viewports clip cells; larger ones do not add rows or columns. It is a small kernel TTY with no POSIX PTY, clipboard, job control, or Ctrl+C support. [Historical Terminal design and QEMU evidence](docs/SPEC-30-graphical-terminal.md) · [workstate screenshot](docs/images/wuwaos-terminal-workstate.png).
 
 With the Windows portable release, open the desktop from PowerShell using `./Start-WUWAOS.cmd gui`. QEMU runs natively on Windows; a VNC viewer is not needed. See the [portable guide](docs/portable-windows.md) for extraction and build instructions.
 

@@ -40,6 +40,8 @@ CPU 依 PTE 檢查指令／資料存取。核心替使用者搬資料時，也�
 
 映射改變後以 sfence.vma（分頁轉譯同步指令）使舊轉譯失效；不能在 CPU 仍可能使用舊轉譯時把頁框交給別人。
 
+Process 與 scheduler 的核心 stack 下方各有一頁 4 KiB 未映射 guard，藉由真正的頁面存取故障阻止向下越界。這些頁面位於常駐 kernel storage，不加入 free list；初始化也不清除已取消映射的 guard。尚無 emergency trap stack，若越界時連 TrapFrame 都無法保存，仍可能遞迴 fault；本輪未執行 overflow 測試。
+
 ## 在 QEMU 觀察
 
 執行 `ps` 看底層可配置頁數，再執行 `vmstat` 看使用者常駐頁。QEMU RAM 仍是 128 MiB，但核心、頁表與保留區會占用一部分；兩份統計的範圍不同。

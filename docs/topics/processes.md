@@ -10,7 +10,7 @@
 
 `kernel/proc/gate.c` 的 owner-aware recursive Gate 由 PCB/PID 記錄持有者與深度，等待者以 event sequence 防止漏喚醒。FS、VM、各 OFD 與各 pipe 使用不同 scope；runtime caller 可在等待 Gate 時讓出核心 stack，scheduler/UI poll 不可睡眠。新 PCB 保留 `PROCESS_NEW` slot 等頁表/frame 初始化完成，`pcb` 對 null frame 顯示 initializing。
 
-`ready_next` 是指向下一個 Ready PCB 的指標，不是另一份行程副本。核心堆疊每欄固定 16 KiB；使用者頁面則由 VM 按需要配置。
+`ready_next` 是指向下一個 Ready PCB 的指標，不是另一份行程副本。每個核心堆疊有 16 KiB 可用空間，下方另留一頁 4 KiB guard，從共用核心頁表取消映射；scheduler stack 亦採相同保護。初始化只清可用 stack，不碰未映射 guard。使用者頁面則由 VM 按需要配置。
 
 ## 核心函式如何暫停與恢復
 
@@ -46,7 +46,9 @@ Running／Ready／Waiting → exit／kill → Zombie → wait → Unused
 
 Zombie（已退出、待回收）仍保留結束結果與資源，讓父行程能透過 wait 取得結果。它已不再執行，也不在 Ready queue（就緒佇列）裡。
 
-`kill` 遇到仍在 syscall/fault/timer kernel call stack 上的目標時，先標記 `kill_pending`；可取消的 event、channel、child 或 sync wait 會喚醒原 stack 供其 unwind。正在 cancel-defer cleanup scope 的呼叫不會被直接取消，須完成 cleanup、釋放 Gate 後才在 trap return 邊界處理 kill。這避免丟棄仍需 unwind 的核心堆疊與局部暫存。一般不持有 suspended kernel call stack 的目標仍可直接終止。此行為配合現行單 hart、核心不可搶占設計，尚不是任意核心工作安全點或 DMA request cancellation；Block DMA critical integration 尚未實作。
+`kill` 遇到仍在 syscall/fault/timer kernel call stack 上的目標時，先標記 `kill_pending`；可取消的 event、channel、child 或 sync wait 會喚醒原 stack 供其 unwind。cancel-defer 保護 cleanup、已提交 Block request 與 VM swap-out 的撤銷／回復範圍，須到裝置完成或確認 reset、釋放 Gate 並完成清理後，才在 trap return 邊界處理 kill。一般不持有 suspended kernel call stack 的目標仍可直接終止；這不是可隨時中斷 DMA 的任意取消機制。
+
+Guard page 命中且成功進入 C trap handler 時會印 PID／stack 範圍並停機；若 stack 已不足以讓 `trap.S` 保存 TrapFrame，仍可能再次 fault，尚未設 emergency trap stack。這項保護及本輪取消路徑只完成實作，runtime 驗證為 NOT_RUN。
 
 ## 建立、複製與替換
 

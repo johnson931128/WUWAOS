@@ -53,7 +53,7 @@ WUFS 在第一個磁區開頭使用 8-byte 格式標記（magic）：舊版 `WUF
 
 `kernel/fs/fs.c` 從根目錄開始，逐段查找名稱與 inode，最後依檔案內 offset（位移）找直接或間接區塊。建立檔案要配置 inode，擴展內容還要配置資料區塊與必要的間接區塊。`open` 建立的 OFD 保存 inode 和共享 offset，`read`／`write` 逐段存取；`O_APPEND` 寫入時從當下檔尾開始。
 
-runtime FS 操作由可重入 filesystem scope 保護共享 metadata 與 redo transaction staging；SYS_FS_READ／WRITE 的 scope 也涵蓋共用 `fs_staging` 和 usercopy，`elf_load` 則跨檔案大小查詢與全部 segment 讀取持有同一 scope。這讓同時執行的核心呼叫不會混用 transaction buffer 或載入不同版本的 ELF。`fs_init` 是 boot-only 的一次性 mount/format/replay，並非 runtime remount API。已接入的 Gate 順序為 OFD/Pipe → FS → VM；per-device Block Gate 尚未接入，Block I/O 仍在持有上層 scope 時同步 busy-poll。FS 的 inode-open 檢查不等待 OFD Gate。
+runtime FS 操作由可重入 filesystem scope 保護共享 metadata 與 redo transaction staging；SYS_FS_READ／WRITE／REPLACE 的 scope 也涵蓋共用 `fs_staging` 和 usercopy，`elf_load` 則跨檔案大小查詢與全部 segment 讀取持有同一 scope。`fs_init` 是 boot-only 的一次性 mount/format/replay，並非 runtime remount API。Gate 順序為 OFD/Pipe → FS → VM → Block；磁碟完成等待會讓出 CPU，但 FS scope 保留至原呼叫完成，避免其他行程混用 transaction。FS 的 inode-open 檢查不等待 OFD Gate。
 
 由於 inode 為 80 bytes、磁區為 512 bytes，有些 inode 會跨磁區。`inode_read`／`inode_write` 依每個磁區剩餘長度分段搬移；transaction 會在 RAM staging 中以 read-your-writes 覆蓋完整 sector，保護旁邊 inode 並讓掛載後的修改可回復。
 
@@ -61,9 +61,17 @@ runtime FS 操作由可重入 filesystem scope 保護共享 metadata 與 redo tr
 
 `rm /absolute/file` 移除一般檔案：從父目錄移掉名稱，再回收檔案的資料區塊與 inode（檔案資訊）。為保持目錄項目連續，核心會把最後一項移到刪除位置；目錄本身的既有資料區塊保留，之後的項目可重用。`rm` 遇到資料夾會顯示路徑和警告，輸入 Y/y 再按 Enter 才刪除該資料夾與所有內容；N/n 或其他輸入取消。根目錄、`.`、`..` 不能刪除，若任何活躍行程正使用該目錄樹中的工作目錄則回傳 -16。詳見 [Spec 20](../SPEC-20-directory-removal.md)。
 
-`cp /absolute/source /absolute/destination` 用 512-byte 緩衝區在同一 transaction 內建立新 inode、複製、發佈目錄項並回收舊目的檔。交易提交前的空間不足會回 `-28` 並保留舊目的檔內容；同一 inode 複製仍被拒絕。每筆最多觸及 1152 個不同磁區，超出上限整筆拒絕。`remove_tree` 也以單一 bounded transaction 提交，磁碟 I/O 錯誤不會留下只刪一部分的目錄樹。
+`cp /absolute/source /absolute/destination` 用 512-byte 緩衝區在同一 transaction 內建立新 inode、複製、發佈目錄項並回收舊目的檔。交易提交前的空間不足會回 `-28` 並保留舊目的檔內容；同一 inode 複製仍被拒絕。每筆最多觸及 1152 個不同磁區，超出上限整筆拒絕。`remove_tree` 也以單一 bounded transaction 提交；若提交途中 I/O 失敗，volume 會 offline，重啟後由有效 journal replay 完成整筆交易，回錯不等於操作一定未發生。
 
-Shell 同時保留 path-based（直接以路徑呼叫）的 `fs_readfile`／整檔 `fs_writefile`，並新增通用 open／close／read／write 描述號介面。`dup`、`dup2` 與 fork 共用同一 OFD offset；不提供 seek，描述號採固定容量。一般整檔覆寫、truncate、rm、rm tree 和 cp 覆寫若目標 inode 正被開啟，回 busy（-16）；本版不支援 unlink 後延遲回收。整檔 `fs_write`／fan save 以一筆 full-sector redo transaction 原子提交；FD 每次 write 最多 512 bytes，各自獨立提交。`O_TRUNC` 與後續 FD write 不是一筆交易，因此 shell `>` truncate 成功後若後續寫入失敗，不會還原舊內容。
+Shell 同時保留 path-based 的 `fs_readfile`／整檔 `fs_writefile` 與 open／close／read／write 描述號介面。`dup`、`dup2` 與 fork 共用同一 OFD offset；不提供 seek。一般覆寫、truncate、移除或替換若目標 inode 正被開啟，回 busy（-16）；尚不支援 unlink 後延遲回收。FD 每次 write 最多 512 bytes，各自獨立提交；`O_TRUNC` 與後續 FD write 不是一筆交易，因此 shell `>` 不會在後續失敗時還原舊內容。
+
+## 安全替換與不確定結果
+
+`fs_replace`／使用者 API `fs_replacefile`（syscall 41）在單一交易中配置新 inode、寫完新資料，再切換目錄項並回收舊 inode，不先清空舊檔。缺檔時建立，資料夾或開啟中的目標拒絕替換；新舊資料同時存在於 staging，所需磁碟空間與 journal 容量可能高於一般覆寫。容量不足時整筆 abort，不能宣稱支援任意大小的原子替換。`fan` 儲存改用此介面。
+
+交易提交依序為 payload → flush → commit header → flush → home sectors → flush → clear header → flush。整個 commit 延後取消，避免 kill 中斷持久性協定。header 開始嘗試寫入前的 I/O 失敗回 `ERR_IO`（-5）；從 header 寫入嘗試開始，失敗一律保守回 `ERR_UNCERTAIN`（-200）並令 FS offline。此時可能已提交，需重啟讓 journal replay 後重新讀取確認，不能直接重試或宣稱一定保存失敗。
+
+Fan 收到不確定結果時保留未儲存 buffer，提示重新開啟確認並阻止再次存檔。Block／FS／GPU 關鍵故障使用統一 UART 診斷格式，包含 subsystem、operation、error、uncertain 與 detail，不經可能失效的 GUI TTY。這些 2026-11-08 新路徑未執行 runtime 或故障注入測試（NOT_RUN）。
 
 ## 在 QEMU 操作
 

@@ -9,13 +9,17 @@ Spec 33 以前的歷史 source link 若指向舊 `kernel/` 或 `user/` 路徑，
 
 | 工作 | 目前狀態與紀錄 |
 | --- | --- |
-| 第 1 階段：多 TTY/session | 已完成 endpoint 世代 handle、獨立佇列與 OFD 路由；UI 仍只有單一 Terminal view（[d89a8a7](https://github.com/johnson931128/WUWAOS/commit/d89a8a7)） |
+| 第 1 階段：多 TTY/session | 已完成 endpoint 世代 handle、獨立佇列與 OFD 路由；當時 UI 為單一 Terminal view（[d89a8a7](https://github.com/johnson931128/WUWAOS/commit/d89a8a7)） |
 | 2A：事件等待 | 已完成 TTY／pipe 的 caller-stack 等待與 idle 喚醒，scheduler poll 不執行 usercopy（[f9e092b](https://github.com/johnson931128/WUWAOS/commit/f9e092b)） |
 | 2B1：核心 gate | 已完成 owner-aware gate、OFD／pipe、FS／VM 保護與延後取消；增量建置及基本 GUI smoke 已執行，額外邊界矩陣未執行（[aa480e3](https://github.com/johnson931128/WUWAOS/commit/aa480e3)） |
-| 2B2：非同步 Block | 暫停；只完成明確 BlockDevice 指標整理及該物件檔編譯，非同步 request／swap 尚未完成（[6cda03e](https://github.com/johnson931128/WUWAOS/commit/6cda03e)） |
-| 2C、第 3–6 階段 | 未開始：GPU 非阻塞 present、裝置復原、資源／堆疊保護、多視窗、原子替換與診斷 |
+| 2B2：非同步 Block | 已實作 per-device gate／event／bounce、runtime 等待與 VM PTE rollback（[eb84ff7](https://github.com/johnson931128/WUWAOS/commit/eb84ff7)、[7e0f826](https://github.com/johnson931128/WUWAOS/commit/7e0f826)） |
+| 2C：GPU 非阻塞 present | 已實作 CPU shadow／DMA backing 分離、dirty merge、transfer／flush poll（[ea6671e](https://github.com/johnson931128/WUWAOS/commit/ea6671e)） |
+| 第 3 階段：裝置復原 | 已實作 Block reset 後隔離、GPU 有界 reset／重建／停用（[19be53a](https://github.com/johnson931128/WUWAOS/commit/19be53a)、[e48845b](https://github.com/johnson931128/WUWAOS/commit/e48845b)） |
+| 第 4 階段：堆疊與生命週期 | 已實作 process／scheduler 未映射 guard page；生命週期靜態 review，沒有 emergency trap stack（[b555d29](https://github.com/johnson931128/WUWAOS/commit/b555d29)） |
+| 第 5 階段：四視窗 | 已實作獨立 TTY、z-order／focus、drag、裁切 viewport 與 close；固定 100×30 model（[05b8124](https://github.com/johnson931128/WUWAOS/commit/05b8124)） |
+| 第 6 階段：安全替換與診斷 | 已實作 fs_replace／Fan、新 ERR_UNCERTAIN 與 UART 診斷（[496b757](https://github.com/johnson931128/WUWAOS/commit/496b757)）；後續故障輸出整理見 [6ef3029](https://github.com/johnson931128/WUWAOS/commit/6ef3029)、[3bc436d](https://github.com/johnson931128/WUWAOS/commit/3bc436d) |
 
-目前先更新文件與網站；本次文件建置不代表重新執行以上 OS 驗收。各項演算法與驗收限制以詳細計畫為準。
+2026-11-08 的 2B2、2C 與第 3–6 階段已完成一次必要整合編譯。依使用者要求未執行任何測試、未新增測試程式碼；所有新增 runtime／GUI／裝置故障與復原／重播均為 NOT_RUN。本次文件建置亦不代表 OS 驗收，詳細算法與限制以計畫為準。
 
 ## 原始規格
 

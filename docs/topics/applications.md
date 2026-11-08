@@ -22,6 +22,8 @@
 
 命令和 syscall 沒有一對一關係。以 fan 為例，一次編輯操作可能多次讀取按鍵、輸出控制碼，最後才寫入檔案。圖形桌面 Terminal 也啟動同一份 shell image，只是將 FD 0/1/2 綁到 GUI TTY；fan 與 workstate 不必改成圖形程式，就能在該視窗以 raw byte 模式運作。
 
+Fan 現在透過 `fs_replacefile` 安全替換整份檔案：核心先建立完整新內容，再於同一 journal transaction 切換名稱。一般錯誤保留 buffer；若回報 `Save uncertain`，代表可能已提交，編輯器保留 dirty 狀態並禁止再次儲存，需重啟／重新開啟確認實際內容。這項 2026-11-08 修改未執行操作測試；舊 [Spec 09](../SPEC-09-fan.md) 的驗收不涵蓋此路徑。
+
 ## 命令是如何被「吃進去」的？
 
 以在 `/home/user` 輸入 `cat note.txt` 為例：

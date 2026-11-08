@@ -17,7 +17,7 @@
 
 `kernel/mm/vm.c` 的 VmSpace 保存程式來源、heap 結尾與每頁 VmPage；每頁記錄實體位址、交換槽位、修改狀態、入駐次序與暫時固定次數。
 
-VM 的可重入 scope 序列化頁表與 resident metadata 的建立、複製、fault、置換及查詢；scheduler/UI poll 是 no-wait context，若配置必須置換會在修改 PTE 或送出磁碟 I/O 前回 BUSY。Dirty page 目前先同步寫完 Swap，再撤銷舊 PTE 並 `sfence.vma` 後回收 frame；非同步 swap-out 的先撤 PTE／失敗復原流程尚未實作。
+VM 的可重入 scope 序列化頁表與 resident metadata 的建立、複製、fault、置換及查詢；scheduler/UI poll 是 no-wait context，若配置必須置換會在修改 PTE 或送出磁碟 I/O 前回 BUSY。Dirty page 換出前先保存並撤銷舊 PTE、執行 `sfence.vma`，再進行可能睡眠的 Swap I/O；其他行程碰到該頁會 fault 並等候 VM Gate。失敗時恢復原 PTE，保留 dirty RAM 作有效副本。
 
 | physical | slot | 內容在哪裡 |
 | --- | --- | --- |
@@ -35,7 +35,7 @@ FIFO 掃描補充表，選入駐序號最小且未固定的常駐頁。讀寫命
 
 - clean（未修改）且可從映像／零頁重建：直接丟棄。
 - clean 且已有 Swap 副本：保留槽位，不必重寫。
-- dirty（已修改）：先完整寫入 8 個磁區，再撤銷 PTE、同步轉譯並回收頁框。
+- dirty（已修改）：先 pin 並撤銷 PTE、同步轉譯，再完整寫入 8 個磁區；成功才公布 swap metadata 並回收頁框，失敗則恢復映射與 dirty RAM。撤銷到還原／提交之間延後 kill，避免半途丟棄狀態。
 
 修改狀態合併軟體記錄與硬體 PTE_D（已寫入標記）。缺頁處理會暫時 pin（固定、禁止換出）當前指令可能跨越的程式碼頁，避免資源不足時指令頁與資料頁互相淘汰、永遠無法完成重試。
 
@@ -85,7 +85,7 @@ vmstat limit 64
 
 ## 錯誤與限制
 
-非法缺頁回 -14，沒有資源回 -12，已完成請求的磁碟錯誤回 -5；無法補頁就結束該行程。磁碟讀寫是同步輪詢，期間不切換其他行程。單筆磁區請求超過 5 秒仍未完成，則印出診斷並停止整個核心，不當成普通錯誤返回，避免重用仍可能被裝置寫入的緩衝區；詳見 [Spec 12](../SPEC-12-block-timeout.md)。
+非法缺頁回 -14，沒有資源回 -12，Swap I/O 失敗回 -5；無法補頁就結束該行程。runtime 磁碟等待會讓出 CPU；逾時後先要求 reset，確認安全停止才隔離裝置並回錯，不能確認則停機保留 DMA storage。Swap-out 失敗會恢復 victim 的 RAM 映射，但裝置 offline 後，已經只存在 Swap 的其他頁仍可能無法換入。2026-11-08 的非同步換頁與故障路徑未執行 runtime 驗證（NOT_RUN）；詳見[實作計畫](https://github.com/johnson931128/WUWAOS/blob/main/plan.md)。
 
 沒有 COW、mmap、共享頁與動態核心 heap。縮小 heap 只釋放不再涵蓋的整頁；部分頁縮小再擴張不保證清零。常駐頁保留交換區副本、空 heap L0 表保留至空間銷毀，都是仍有所有權的資源。
 

@@ -1,13 +1,13 @@
 - 詳細步驟與方法：[plan.md](./plan.md)
-- 整體進度：第 1 階段完成；第 2 階段 2A、2B1 完成；2B2 暫停於 Block pointer refactor，async 尚未完成；2C 與第 3–6 階段未開始。
-- 第 1 階段：完成，多 TTY/session 物件化；generation handle、per-endpoint queues/mode/lifecycle、OFD/process 路由及單一 GUI view 已實作並經 GDB、GUI 與 UART QEMU 驗收；限制與演算法見 [plan.md](./plan.md)。
-- 第 2 階段：進行中（2A、2B1 owner-aware gate/共享狀態保護完成；2B2 僅完成部分 pointer refactor，Block 非同步與 2C GPU 非阻塞 present 未完成）；方法、驗收及限制見 [plan.md](./plan.md)。
-- 第 3 階段：未開始，GPU 錯誤降級與裝置復原。
-- 第 4 階段：未開始，資源所有權／引用回收與核心堆疊保護。
-- 第 5 階段：未開始，多視窗管理。
-- 第 6 階段：未開始，檔案原子替換／錯誤語意與統一診斷。
+- 整體進度：第 1 階段、2A、2B1 保留既有驗收；2026-11-08 的 2B2、2C 與第 3–6 階段已實作、整合編譯成功，runtime NOT_RUN。
+- 第 1 階段：多 TTY/session 已完成並有既有 QEMU/GDB 驗收；後續四視窗見第 5 階段。
+- 第 2 階段：已實作 Block gate/event/bounce 非同步請求、Swap PTE 撤銷／回復、GPU shadow/backing 與非阻塞 present；runtime NOT_RUN。
+- 第 3 階段：已實作 Block 安全 reset／offline 與 GPU 有界復原／降級；故障路徑 NOT_RUN。
+- 第 4 階段：已實作 process/scheduler 真實 guard page，生命週期靜態 review；尚無 emergency trap stack，runtime NOT_RUN。
+- 第 5 階段：已實作四視窗、焦點／z-order／拖曳／viewport resize／session close；VT 仍固定 100×30，GUI NOT_RUN。
+- 第 6 階段：已實作 fs_replace／Fan 安全替換、ERR_UNCERTAIN 與 UART 統一診斷；儲存／故障／重播 NOT_RUN。
 - 已完成：Spec 33 原始碼分層。
-- 依使用者指示優先實作、更新進度與分階段推送；額外測試暫緩，僅記錄實際 build/smoke，未跑項目標示 NOT_RUN。
+- 依使用者指示分階段 agent 自行 commit，主代理整合 review／分批 push；未跑項目一律保留 NOT_RUN。
 - 2026-11-08：恢復剩餘 2B2、2C 與第 3–6 階段；實際演算法與依賴見 [plan.md](./plan.md#2026-11-08-剩餘階段執行規格與實際演算法)。
 - 本輪不執行測試、不新增測試程式碼；僅做必要整合編譯與文件部署建置，runtime 驗證標示 NOT_RUN。
-- 文件／網站：導覽與主題章節已分批推送，README／首頁／歷程摘要已同步；文件建置成功，gh-pages `1f99d02` 已發布，公開首頁內容已確認，詳細紀錄見 [plan.md](./plan.md)。
+- 文件／網站：本輪 CODE_GUIDE／topics／README／首頁／歷程同步中，待文件建置與部署；前次發布為 `1f99d02`，詳見 [plan.md](./plan.md)。

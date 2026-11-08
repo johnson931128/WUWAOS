@@ -39,15 +39,17 @@ OpenSBI（RISC-V 韌體）完成早期準備，將控制權交給 S-mode（監�
 
 ## VirtIO 圖形桌面
 
-QEMU 裝上 modern VirtIO GPU 與 tablet 後，kernel 以 FDT 找到裝置 MMIO 位址，不假設它們在固定 VirtIO slot。GPU 建立 B8G8R8X8 2D resource，掛上一段連續的 1280×720 framebuffer RAM，再設定 scanout 並提交像素；桌面是淡藍底和白色 `WUWAOS` 字樣。VirtIO tablet 提供絕對 X/Y 座標，核心依裝置範圍縮放、夾限到畫面內，於同步事件後更新游標。游標移動只重送舊位置與新位置覆蓋的矩形區域。
+QEMU 裝上 modern VirtIO GPU 與 tablet 後，kernel 以 FDT 找到裝置 MMIO 位址，不假設固定 VirtIO slot。GPU 建立 B8G8R8X8 的 1280×720 2D resource；CPU 繪製 shadow framebuffer，裝置使用另一段持久 DMA backing。Boot 資源建立仍同步等待，runtime 的 transfer／flush 改由 `gpu_poll` 分步完成，期間新 dirty 區域合併到下一次請求，不覆寫裝置仍在使用的 backing。VirtIO tablet 的絕對座標會縮放並夾限到畫面內。
 
 ### 桌面 Terminal 與 GUI shell
 
-目前原始碼的視窗只繪製邊框與內容，已移除右移 6 像素、下移 8 像素的深色實心陰影；重繪與背景還原範圍同步改為視窗實際尺寸。這項後續修正尚待編譯與互動驗證；既有截圖及 portable v1 仍是先前外觀，詳見 [Spec 30 後續調整](../SPEC-30-graphical-terminal.md#移除視窗硬陰影)。
+目前視窗只繪製邊框與內容，沒有舊版深色實心陰影；既有截圖及 portable v1 保留先前單視窗外觀，詳見 [Spec 30](../SPEC-30-graphical-terminal.md)。2026-11-08 的多視窗與 GPU 復原尚未執行互動／視覺驗證（NOT_RUN）。
 
-點擊左上角 Terminal 圖示會建立固定大小視窗並啟動原本的 shell user image。VirtIO keyboard 事件轉成 US ASCII，送入獨立的 GUI canonical input；shell 輸出與 ANSI TUI 由 guest kernel 更新終端 cell buffer，再繪製到 framebuffer。關閉視窗只隱藏畫面，點圖示可接續同一個 shell；shell `exit` 後會回收，下次再點才建立新的 session。GUI 輸入／raw owner 與 UART 分開，`make run` 不帶圖形裝置時保留舊 UART shell。
+每次點擊左上角 Terminal 圖示會建立一個新 shell 視窗，最多四個；各有獨立 TTY、ANSI cell buffer 與輸入狀態。點擊視窗會置頂並取得鍵盤焦點，拖曳標題列移動，拖曳右下角調整視窗大小。畫面依 wallpaper → 底至頂的視窗 → cursor 合成，再提交 dirty 區域。視窗滿額或 shell 建立失敗會在桌面顯示提示。
 
-這是小型 kernel TTY，不是 POSIX PTY 或一般視窗系統。視窗固定大小，不能拖曳或縮放；沒有 clipboard、job control 或 Ctrl+C。`fan`、`workstate` 使用 raw keyboard input。設計、驗收影像與限制見 [Spec 30](../SPEC-30-graphical-terminal.md)；GPU 與游標架構仍見 [Spec 28](../SPEC-28-native-desktop.md)。TTY、VT 與視窗 renderer 的目前分層見 [Spec 33](../SPEC-33-module-architecture.md)。
+關閉按鈕現在會關閉該 session，不再只隱藏：解除輸出 consumer、喚醒阻塞讀取並釋放 UI 引用；shell 收到終端關閉錯誤後退出。持有該 TTY 的其他 OFD 仍須正常釋放才能回收 endpoint。shell `exit` 後保留最後畫面，視窗可手動關閉。UART shell 仍由 `make run` 提供，與 GUI raw owner／輸入分開。
+
+這是小型 kernel TTY，沒有 POSIX PTY、clipboard、job control 或 Ctrl+C。視窗大小調整只是裁切 viewport；終端模型仍固定 100×30，不會重排文字、通知 shell 改變列數或提供捲動檢視。GPU 故障會嘗試有界 reset／重建資源；無法復原時停用 GUI、保留 DMA storage，UART 路徑保留。架構分層見 [Spec 33](../SPEC-33-module-architecture.md)，本輪演算法與未驗證限制見[計畫](https://github.com/johnson931128/WUWAOS/blob/main/plan.md)；舊 [Spec 28](../SPEC-28-native-desktop.md)／[Spec 30](../SPEC-30-graphical-terminal.md) 保留當時驗收。
 
 Windows portable 環境可直接使用 `.\Start-WUWAOS.cmd gui`，QEMU 會開啟原生視窗，不需要另外的 VNC viewer。WSLg/Linux 圖形工作階段可用 `make run-gui GUI_DISPLAY=gtk`（或 `sdl`）。既有 Windows/WSL1 環境則可從 repo 根目錄以單一 PowerShell 指令啟動背景 QEMU 與原生 VNC viewer：
 

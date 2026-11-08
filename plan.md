@@ -1,10 +1,10 @@
 # 後續實作計畫
 
-目前整體狀態：第 1 階段、2A 與 2B1 完成；2026-11-08 恢復 2B2、2C 與第 3–6 階段實作。各階段以功能實現與必要依賴為主，依使用者指示不執行測試、不撰寫測試程式碼；新增功能只能記為「已實作、未經 runtime 驗證」。Spec 33 的原始碼分層工作已完成。
+目前整體狀態：第 1 階段、2A 與 2B1 有既有驗收紀錄；2026-11-08 的 2B2、2C 與第 3–6 階段已實作並完成一次必要整合編譯，未經 runtime 驗證。依使用者指示不執行測試、不撰寫測試程式碼，不以編譯成功代替功能驗收。演算法、各階段提交及限制見本檔末段。Spec 33 的原始碼分層工作已完成。
 
 ## 1. 多 TTY 與 session 物件化
 
-- 進度：完成；目前 UI 仍是單一 Terminal view。
+- 進度：完成；本階段驗收時 UI 為單一 Terminal view，後續第 5 階段已實作四視窗（runtime NOT_RUN）。
 - 實作內容：`kernel/io/tty.c` 管理 16 個 endpoint slot：slot 0 是固定 UART，slot 1–15 可建立 GUI session。每個 endpoint 獨立保存 input/output ring、active 狀態、raw owner、CR/LF 狀態、consumer/context 與引用數。handle 的低 32 位編碼 slot+1，高 32 位為 generation；generation 不回繞，達上限的 slot 不再配置。`OFD_TTY` 保存 handle；同一 OFD 的 dup/fork 增加 OFD refs，只有 OFD 首次建立時 retain TTY，最終 close 時 release TTY。GUI 的 fd 0 使用可讀 OFD，fd 1/2 共用可寫 OFD；核心診斷只按 fd 1 的 TTY endpoint 路由。process/session service 位於 kernel，UI 只提供 output consumer 和視圖 context。
 - 解決觀念與演算法：把可變 endpoint 身分與儲存 slot 分開，handle 每次重用都帶新世代，避免舊 FD/consumer 對新 session 生效。endpoint 結束時先標 inactive、解除 consumer 並清除輸入/raw 狀態；既有 OFD refs 仍可安全釋放，但讀寫會回錯，slot 直到最後一個 ref 離開才回收。callback 呼叫後重新驗證 handle、active 與 consumer/context，避免 callback 關閉或重用 slot 後寫到新 endpoint。輸入、輸出 ring 都以每端點 read/write counters 索引；輸出先進 endpoint ring，再由已綁定 consumer 分段批次 drain，滿載回短寫／錯誤，不跨端點 fallback。raw owner 與 canonical CR/LF 過濾狀態也依 endpoint 查找。
 - 核心流程虛擬碼：
@@ -42,7 +42,7 @@
 
 ### 2A. 事件框架、TTY/pipe 等待與 idle
 
-- 進度：完成實作與本階段驗收；第 2 階段整體仍進行中，2B1 已完成，2B2 暫停，2C 未開始。
+- 進度：完成實作與本階段驗收；2B2／2C 後續已實作，但不沿用此處的 runtime 驗收。
 - 實作內容：`kernel/proc/event.c` 提供帶 generation/sequence 的 event source 與 per-process WaitRecord；完成、deadline timeout、cancel 結果均存於 PCB。TTY/pipe 改由原 syscall caller stack try/wait/retry；scheduler `io_poll` 僅 harvest UART 並通知事件，不做 usercopy／VM／swap。kill 對仍持有 kernel call stack 的行程延後至安全 unwind。移除舊 `process_block_io`／`process_complete_io`、`WAIT_IO`／`WAIT_TIMER` 及不再使用的 PCB io buffer 欄位；`pcb` 改顯示實際 WaitRecord 與 kill 狀態。Idle 在 SIE=0、sie.STIE=1 下以有限 SBI 絕對 deadline 加 WFI；醒來 stop/ack timer 後再 poll。
 - 解決觀念與演算法：source 在固定 storage 中保存 generation、sequence、active/retired；init 只允許 inactive source 以更大 generation 重用，generation／sequence 不允許繞回。waiter 註冊前先 snapshot sequence，再檢查 readiness；原核心不可搶佔區內若 source 已關閉或 generation 不合回 `ERR_IO`，若 sequence 已改變立即回 0 讓 caller 重試，否則寫入 PCB WaitRecord、改 WAIT_EVENT 並切換。notify 先遞增 sequence，再以 source pointer+generation 找相符 waiter，將結果存入 PCB 並喚醒；close 在 source 失效前以 `ERR_IO` 完成既有 waiter。恢復後只讀 PCB result 並清 WaitRecord，不再解參考 source，故即使 slot 已重用亦不 alias。deadline 掃描以硬體 time 做 wrap-safe 到期比較；只有無 Ready process 且仍有 event/UI poll work 才以固定短絕對 deadline WFI，spurious wake 不重算延後原 deadline。
 - Pipe read/write 演算法：
@@ -77,7 +77,7 @@
 
 ### 2B1. 可重入 gate 與共享狀態保護
 
-- 進度：完成；2B2 Block 非同步仍未開始，不能視為第 2 階段整體完成。
+- 進度：完成；此處保留 2B1 當時的同步 Block 驗收，後續 2B2 非同步另記實作與未驗證範圍。
 - 實作內容：`KernelGate` 以目前 PCB/PID 作 owner、遞迴深度和 event source；每個 OFD offset/data、每個 Pipe copy/commit 各自序列化。FS scope 保護 metadata、redo transaction staging、syscall 的 `fs_staging` 全段及 `io_open` 的查找/截斷/發布；`elf_load` 整段持有 FS scope，避免分段讀取混合不同 ELF 版本。VM scope 保護 address-space 建立、複製、fault、eviction、查詢等共享頁表與 resident metadata。console route 改存每個 Process。`fs_init` 仍是 boot-only 一次性 mount/format/replay，並非 runtime remount API；Block I/O 在本步仍同步。
 - 取得與釋放演算法：
 
@@ -105,45 +105,51 @@
 
 ### 2B2. Block 非同步 request
 
-- 進度：暫停；僅完成 `drivers/virtio/block.c` 的 pointer refactor，async request 尚未開始。使用者要求先處理文件與網站工作。
+- 進度：2026-11-08 功能已實作，整合編譯成功，runtime NOT_RUN。Block／VM agents 按本檔末段演算法分工；先前暫停點為 pointer refactor。
 - 已完成方法與編譯：移除 `active` selector 與欄位 alias macros；`init_device`、`transfer`、flush helper 明確使用 `BlockDevice *`，各裝置 queue index/header/status 由自身物件持有。`make build/obj/drivers/virtio/block.o` 成功。
-- 未完成／NOT_RUN：per-device async Gate、completion event、request 狀態與 bounce buffer、scheduler poll callback、runtime no-wait submit guard、VM async swap 撤銷/回復 PTE 尚未實作；因此未跑 async runtime/QEMU/GDB 驗收，也未編譯整合後的核心。
-- 下一步：恢復程式工作後，先加入明確 runtime-start query 與 block poll hook，實作 per-device request submit/poll/collect 和 boot synchronous fallback，再調整 swap/VM eviction 的取消與 PTE rollback 語意；每步只做必要編譯，依最新使用者指示暫不跑額外驗收矩陣。
+- 本輪成果：per-device Gate／completion event／bounce buffer、request state、scheduler poll、runtime no-wait guard 與 VM swap PTE 撤銷／回復皆已實作；提交 `7e0f826`、`eb84ff7`，故障隔離另見 `19be53a`。只完成編譯與靜態 review，未跑 async runtime／QEMU／GDB 驗收。
+- 後續限制：boot 保留同步 fallback，每裝置一次一筆請求；不是多 queue block scheduler。安全 reset 後隔離裝置，不自動重試或 runtime remount；已換出且只存在故障 Swap 裝置的頁面仍可能無法讀回。
 - 實作內容：移除 runtime global active-device request selector；每個 BlockDevice 保存獨立 request/header/status/buffer ownership、gate 及 completion event；scheduler poll 只觀察 VirtIO used ring 並發布完成，不進入 FS/VM/usercopy。
 - 方法與完成判準：每個裝置至多一個 in-flight request，request/buffer 在 completion 前不可釋放或重用。排隊 gate wait 可取消；DMA submit 後進入不可取消 critical depth，kill 只標 pending，待裝置安全完成、清理 request 並逐層釋放 gate 後才於 trap boundary terminate。timeout 目前維持 fail-stop，不提前返回並重用可能仍被 DMA 存取的 buffer；裝置復原留待第 3 階段。
 - 設計前置風險：VM gate 單獨不足以保護即將 swap-out 的 user frame，因其他 U-mode process 仍可能存取被驅逐的實體頁；非同步 swap-out 前須 revoke victim PTE 並 `sfence`，保留 RAM/bounce snapshot，失敗時 restore 原 PTE，且 scheduler reap 的 `vm_destroy` 只能 try/defer，不能睡眠等待 VM gate。Async FS/VM 也會讓 pipe ring 在 usercopy yield 時、共享 OFD offset 在檔案 I/O yield 時被其他 process 改動，因此需 pipe/OFD ownership gate，或在 gate 外先 copy/pin、gate 內 commit；只替 FS/VM 加 gate 不夠。核心診斷 route 應改為 per-Process，避免跨行程的 set/reset 互相清除。建議鎖序：OFD/pipe → FS（含 syscall fs_staging 外層）→ VM → Block；FS 不反向取得 OFD，scheduler poll/reap 不得睡眠。DMA 已提交後的通用 event cancel 不可立即 unwind／釋放 device gate 或 swap slot；2B 要定義不可中斷區或 critical depth，kill 延後至 DMA safe completion 後清理，排 gate 時才可取消。timeout 需裝置安全停止／完成後再發布，否則沿用 fail-stop；UI poll 即使從 process_resume 呼叫也需明確保證 nonblocking，不能等待 VM gate。這些尚屬 2B 設計待辦，未在 2A 實作或驗收。
 
 ### 2C. GPU 非阻塞 present
 
-- 進度：未開始；須待 2B 共用事件/取消語意穩定。
+- 進度：2026-11-08 已實作（`ea6671e`），整合編譯成功，runtime NOT_RUN；CPU shadow 與 DMA backing 分離，poll 驅動 transfer／flush，後續 dirty 合併待下一次。
 - 實作內容：將 GPU transfer/flush 拆成 request state machine，由 UI 保留 dirty 區域直到 completion，GPU command/response buffer 在完成前有明確 owner。
 - 方法與完成判準：scheduler/UI poll 不 busy-wait；錯誤及 timeout 時不重用 DMA 仍可存取的記憶體。本步只實作安全非阻塞與錯誤傳遞，不宣稱 device reset 復原；復原策略屬第 3 階段。
 
 ## 3. GPU 錯誤降級與裝置復原
 
-- 進度：未開始。
+- 進度：2026-11-08 已實作（Block `19be53a`、GPU `e48845b`），整合編譯成功，timeout／reset／復原結果 NOT_RUN。
+- 實際方法：Block 逾時或 malformed completion 進 RESETTING，poll 逐次確認 status=0，100 ms 仍未確認則 fail-stop；確認後 offline 並完成錯誤，不重試寫入。GPU 最多兩次 reset 重建，逐 poll 完成協商／create／attach／scanout，成功後全畫面重送；只有 present flush 成功才重置 retry 計數。耗盡重試停用 GUI，保留可能被 DMA 存取的 storage，UART 路徑保留。`6ef3029`／`3bc436d` 將關鍵診斷改為 raw UART，避免 poll 進入 TTY callback。
 - 實作內容：處理 GPU 錯誤並保留 dirty 區域以便重畫，建立裝置復原與明確診斷路徑。
 - 方法與完成判準：DMA／佇列確認安全停止後才 reset/recover，否則保守停用裝置或停機；驗證故障不會誤報成功、不會重用裝置仍在存取的緩衝區，並且磁碟提交後不盲目重試。
 
 ## 4. 資源所有權、引用回收與核心堆疊保護
 
-- 進度：未開始。
+- 進度：2026-11-08 已實作 stack guard（`b555d29`），整合編譯成功；生命週期只做靜態 review，runtime NOT_RUN。
+- 實際方法與限制：process/scheduler 各保留一頁 4 KiB 未映射 guard + 16 KiB 可用 stack，共享 kernel mapping 對所有 process roots 生效。只清 stack，避免寫 guard。TTY/event/OFD/exit/exec 沿用已有 close/ref/defer 邏輯，本輪未聲稱全面證明所有回收邊界。C trap handler 可辨識 guard 並輸出 PID／範圍，但沒有 emergency trap stack；若 trap.S 儲存 TrapFrame 時已踩 guard，仍可能遞迴 fault，不能保證診斷可達或復原。
 - 實作內容：整理 TTY、事件與同步資源所有權／引用計數，驗證 exit/exec 清理，為核心堆疊加入 guard page。
 - 方法與完成判準：透過實際頁表映射變更實作 guard page；驗證最後一個引用離開後回收資源，越界核心堆疊存取會觸發保護故障。
 
 ## 5. 視窗管理
 
-- 進度：未開始。
+- 進度：2026-11-08 已實作（`05b8124`），整合編譯成功，GUI／輸入／多視窗 runtime NOT_RUN。
+- 實際方法：固定 4 個 view slot，各有 TerminalModel／TTY handle／geometry，z-order 底到頂合成、頂到底 hit-test。點圖示建立新 window，點視窗置頂／focus，標題 drag／右下角 resize 夾限畫面；鍵盤 keymap 全域保存但只向 focused TTY 投遞。重畫整個 shadow scene，再提交 dirty 聯集，避開複雜遮擋增量演算法。
+- 關閉與限制：close 改為關閉 session、解除 consumer、釋放一次 UI ref；shell 遇到 ERR_IO／ERR_BAD_FD 退出，避免關閉後無限 yield 重試。shell exit 後畫面保留至手動 close。resize 是固定 100×30 VT 的裁切 viewport，不重排文字、沒有 TTY resize ABI／捲動檢視／最小化；放大不增加列數。建立 shell 仍受全域 PCB/OFD/記憶體容量限制。
 - 實作內容：在 TTY/session 分離後加入多視窗管理：建立／關閉、焦點、拖曳、縮放、遮擋與合成。
 - 方法與完成判準：讓各視窗分別綁定 endpoint；驗證視窗顯示、焦點輸入及畫面更新互不混淆。
 
 ## 6. 檔案原子替換、錯誤語意與統一診斷
 
-- 進度：未開始；此工作不屬於第 1 階段。
+- 進度：2026-11-08 已實作（`496b757`），整合編譯成功，儲存／取消／故障／重播 runtime NOT_RUN。
+- 實際方法：`fs_replace`／`SYS_FS_REPLACE=41`／`fs_replacefile` 在 FS scope 與同一 redo transaction 中配置新 inode/data，完整 staged 後才切換 dir entry、回收舊 inode；目標 open 回 BUSY，directory 拒絕，容量超出則整筆 abort。需要保留新舊資料所需空間，仍受 1152-sector journal 上限限制。Fan save 使用此 API。
+- Commit 結果：cancel-defer 跨完整持久化 commit；header 寫嘗試前錯誤為 ERR_IO，開始嘗試 header 後任一失敗保守回 `ERR_UNCERTAIN=-200` 並 FS offline。Fan 保留 dirty buffer、阻止再次 save，要求重啟／重新開啟確認，不把回錯當成一定未存檔。一般 FD write/O_TRUNC 仍是各自交易，不提供整段 shell redirection rollback。統一診斷 header 直出 raw UART（subsystem／operation／error／uncertain／detail），Block/GPU/FS 關鍵故障已接入。
 - 實作內容：整理檔案安全暫存與原子替換路徑、寫入錯誤語意，統一核心與裝置診斷資訊。
 - 方法與完成判準：替換結果只呈現完整舊版或完整新版；提交後回錯時，明確回報結果不確定狀態及診斷資訊。
 
-## 文件與網站同步（程式實作暫停期間）
+## 前次文件與網站同步（2026-11-07，程式實作暫停期間）
 
 - 目標與範圍：依目前原始碼同步程式碼導覽、主題章節、README、網站首頁與歷程摘要；保留舊規格驗收、特殊事蹟與媒體，不修改核心程式。
 - 方法：以第 1 階段、2A、2B1 已實作內容為現況，將 2B2 pointer refactor 與尚未實作的非同步 request／復原清楚區分。細節連回本計畫，避免網站另維護一份不同步的演算法紀錄。
@@ -153,7 +159,7 @@
 
 ## 2026-11-08 剩餘階段執行規格與實際演算法
 
-以下是本輪 WUWAOS 的實作方案，並非宣稱已完成或已驗收。目標為實現剩餘階段的功能；不擴充網路、POSIX ABI 或任意硬體支援。Luna high agents 按檔案所有權平行工作，各階段自行提交精確檔案；主代理負責依賴整合、review、必要修正、分批 push，最後更新文件網站並部署。
+以下是本輪開始前先行定案的實作方案；實際成果、提交與限制另見各階段及收尾紀錄，不等同已驗收。目標為實現剩餘階段的功能；不擴充網路、POSIX ABI 或任意硬體支援。Luna high agents 按檔案所有權平行工作，各階段自行提交精確檔案；主代理負責依賴整合、review、必要修正、分批 push，最後更新文件網站並部署。
 
 ### 共用約束與依賴
 
@@ -224,6 +230,14 @@
 - 每位 agent 完成階段後自行 commit 精確檔案，不 push，不將其他 agent 變更混入 commit。共用 plan 的狀態由主代理統一寫入，agent 回報實際演算法、檔案與限制以便合併。
 - 主代理 review 跨階段依賴：poll context、gate order、DMA lifetime、VM PTE rollback、window/TTY refs、FS commit uncertainty；必要修改後做一次整合編譯，不跑測試。
 - 依實際程式更新 CODE_GUIDE、topics、README/index/history、plan_current/plan；保留舊規格證據、媒體與 portable v1 差異。以既有 GitHub Pages 工具建置部署；本輪網站不執行瀏覽器／操作測試，發布狀態與 build 結果如實記錄。
+
+### 本輪實際執行紀錄
+
+- 演算法規格先以 `0f1ec8b` 提交，再由三位 Luna high agents 依檔案所有權實作；各階段自行 commit，主代理分批 push。上述各階段條目列有對應提交及實際限制。
+- 主代理 review 修正的功能依賴：Block 競爭者須先等 Gate 而非因 IN_FLIGHT 提前回錯；read IOERR 允許短 used length；reset ACK 後加 I/O acquire fence；GPU retry 計數要到成功 flush 才清；closed TTY 必須讓 shell 退出，避免無限重試占 PCB；關鍵 poll 故障診斷直走 UART，不進 TTY callback。這些均為靜態差異 review，非執行測試。
+- 必要整合編譯：在 WSL Ubuntu 執行 `make -j2 all build/user.bin build/app.bin build/fan.bin build/workstate.bin build/kernel-disk.elf`，退出碼 0，kernel 與四個 user images 連結成功；沒有執行 disk-image／run 目標，不掛載或更新 guest 磁碟。
+- 測試：依使用者明確要求，沒有執行測試、QEMU、GDB、故障注入、GUI／瀏覽器操作，也沒有新增測試程式碼。不得將上述功能稱為已通過 runtime 驗收。
+- 文件／部署：CODE_GUIDE、主題章節、README、首頁與歷程已依實際功能同步，文件發布建置待執行；完成後更新此處與 plan_current。
 
 ## 進度維護
 

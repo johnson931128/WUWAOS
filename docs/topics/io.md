@@ -14,9 +14,9 @@ raw console 同時只能有一個持有者；行程退出、被終止或成功 e
 
 ## 圖形桌面 Terminal
 
-有 VirtIO GPU、tablet 與 keyboard 時，kernel 桌面目前提供一個固定大小 Terminal 視窗。圖示開啟後建立另一個 shell process，其 FD 0/1/2 綁到 generation-checked GUI TTY endpoint；UART shell 綁到另一個固定 endpoint。每個 endpoint 各自持有輸入／輸出佇列、raw owner 與 CR/LF 狀態，避免 `fan` 或 `workstate` 讀取 GUI 按鍵時搶走 UART 輸入。Shell `ps`、`pcb`、`vmstat` 的核心列印依 fd 1 的 endpoint 暫時路由；開機與裝置診斷仍寫 UART。UI 目前仍只有一個 Terminal view，尚未提供多視窗。
+有 VirtIO GPU、tablet 與 keyboard 時，kernel 桌面提供最多四個 Terminal 視窗，每次點圖示建立新的 shell process，其 FD 0/1/2 綁到獨立 generation-checked GUI TTY；UART shell 使用固定 endpoint。每個 endpoint 各自持有輸入／輸出佇列、raw owner 與 CR/LF 狀態，鍵盤只送 focused 視窗。Shell `ps`、`pcb`、`vmstat` 的核心列印依 fd 1 的 endpoint 暫時路由；關鍵裝置故障診斷直接寫 UART。視窗關閉會結束 endpoint，持有引用的程式收到錯誤後再清理資源；視窗操作見[開機與桌面](./boot.md#桌面-terminal-與-gui-shell)。
 
-TTY endpoint 是本專案自訂核心物件，不是 PTY master/slave ABI。`OFD_TTY` 持有 generation handle；dup/fork 共用 OFD 引用，session 結束後舊 handle 失效，所有 FD 引用釋放前不重用 endpoint slot，重用時 generation 遞增。圖示關閉只隱藏並保留 shell；`exit` 或空行 Ctrl+D 結束 shell。設計與 QEMU 驗收見 [Spec 30](../SPEC-30-graphical-terminal.md)。
+TTY endpoint 是本專案自訂核心物件，不是 PTY master/slave ABI。`OFD_TTY` 持有 generation handle；dup/fork 共用 OFD 引用，session 結束後舊 handle 失效，所有 FD 引用釋放前不重用 endpoint slot，重用時 generation 遞增。視窗 close 現在會關閉 endpoint；`exit` 或空行 Ctrl+D 也可結束 shell。舊 [Spec 30](../SPEC-30-graphical-terminal.md) 保存單視窗 hide 行為與當時 QEMU 驗收，不涵蓋本輪 close 語意。
 
 核心 `kernel/io/io.c` 擁有 FD/OFD、pipe 與 I/O 路由；`kernel/io/tty.c` 擁有各 endpoint 的 queues、session refs、raw owner、CR/LF 狀態與輸出 consumer。註冊的 consumer 將 GUI console bytes 送到 `ui/terminal/vt.c` 更新 ANSI VT model，再由 `ui/terminal/renderer.c` 繪出字元與終端游標；pipe bytes 不經 GUI TTY。桌面視窗/合成在 `ui/desktop/desktop.c`，鍵盤映射在 `ui/input/keymap.c`；process loop 經 boot 註冊的 callback 輪詢 UI。這些仍在 S-mode 核心內執行。完整模組與資料通道見 [Spec 33](../SPEC-33-module-architecture.md) 及[程式碼架構圖](../CODE_GUIDE.md#ui-與-kernel-的資料通道)。
 
@@ -24,11 +24,11 @@ TTY endpoint 是本專案自訂核心物件，不是 PTY master/slave ABI。`OFD
 
 TTY 與 pipe 的阻塞讀寫保留在原 syscall/kernel stack：呼叫端先讀 event sequence，再嘗試操作；沒有資料或空間時登記該 generation/sequence 的 wait，切換出去。TTY/pipe 狀態改變時只增加 sequence 並喚醒 waiters；行程回到原 stack 後重試，並由 caller 執行 usercopy。Pipe 一次最多以 256-byte stack staging buffer 搬移；usercopy 成功後才更新 ring 索引並通知另一端，失敗則不提交該次 ring 變更。
 
-`scheduler` 的 `io_poll()` 只輪詢 UART 並通知 TTY input event，不複製使用者記憶體，也不完成高層 pipe 操作。事件 wait 結果存於 PCB，因此 source 關閉或 slot 後續重用時，已喚醒的行程不會再解參考舊 source。kill 對仍持有 syscall stack 的行程延後到安全返回邊界清理；deadline/取消也透過同一 wait result 返回。這是目前單 hart、核心不可搶佔下的 caller-stack 設計，並非非同步裝置請求。
+`scheduler` 的 `io_poll()` 只輪詢 UART 並通知 TTY input event；另外呼叫 `block_poll()` 收取裝置完成結果。poller 不複製使用者記憶體，也不完成高層 pipe 操作。事件 wait 結果存於 PCB，因此 source 關閉或 slot 後續重用時，已喚醒的行程不會再解參考舊 source。kill 對仍持有 syscall stack 的行程延後到安全返回邊界清理；已提交的 Block request 以 cancel-defer 保留 caller 與緩衝區至安全完成。
 
-每個 OFD 的可重入 Gate 保護共享 file offset／資料操作；每個 pipe 的 Gate 保護 ring copy/commit。FS scope 會涵蓋 metadata／交易 staging。目前已接入的 Gate 順序為 OFD/Pipe → FS → VM；per-device Block Gate 尚未接入。scheduler/UI poll 是 no-wait context，競爭中的 Gate 不會讓 poller 睡眠；Block request 目前尚未接上 scheduler event poll。
+每個 OFD 的可重入 Gate 保護共享 file offset／資料操作；每個 pipe 的 Gate 保護 ring copy/commit。FS scope 涵蓋 metadata／交易 staging，Block 每裝置亦有獨立 Gate。取得順序為 OFD/Pipe → FS → VM → Block。scheduler/UI poll 是 no-wait context，不等待 Gate，也不能提交可能睡眠的 Block 操作。
 
-沒有 Ready 行程而存在 event/UI poll work 時，scheduler 以有限的絕對 SBI timer deadline、SIE=0/STIE=1 與 WFI 等待；醒來後停止/確認 timer、輪詢並檢查 timeout。UART 仍由輪詢觀察，不是中斷驅動。事件框架與目前實作進度見[後續計畫](https://github.com/johnson931128/WUWAOS/blob/main/plan.md#2-統一事件等待與非同步-io)。
+沒有 Ready 行程而存在 event/UI/Block poll work 時，scheduler 以有限的絕對 SBI timer deadline、SIE=0/STIE=1 與 WFI 等待；醒來後停止/確認 timer、輪詢並檢查 timeout。UART／VirtIO 完成仍由輪詢觀察，不是裝置中斷驅動。事件框架與目前實作進度見[後續計畫](https://github.com/johnson931128/WUWAOS/blob/main/plan.md#2-統一事件等待與非同步-io)。
 
 ## 真實的位元組管道
 
@@ -47,9 +47,11 @@ TTY 與 pipe 的阻塞讀寫保留在原 syscall/kernel stack：呼叫端先讀 
 換頁操作 → swap.c → block.c → VirtIO queue → 獨立 Swap 磁碟
 ```
 
-`drivers/virtio/block.c` 從 FDT 探索現代 VirtIO-MMIO 裝置，每顆磁碟有自己的請求與佇列狀態；初始化、transfer 與 flush 明確傳遞 `BlockDevice *`，不靠全域 active-device selector。以磁碟標頭辨識 WUFS 與 Swap，不依賴裝置順序。目前磁碟請求仍由呼叫者同步 busy-poll 完成；非同步請求與 scheduler completion poll 尚未實作，也沒有快取。
+`drivers/virtio/block.c` 從 FDT 探索現代 VirtIO-MMIO 裝置，以磁碟標頭辨識 WUFS 與 Swap，不依賴裝置順序。每顆裝置保存獨立 Gate、completion event、佇列與 512-byte bounce buffer，最多一筆 in-flight request。runtime 呼叫者提交後在原核心 stack 上等待事件；scheduler poll 只讀 used ring 並喚醒 caller，讀取成功後由 caller 複製 bounce 到目的地。對外 read/write/flush 仍在完成後才返回，boot 初始化則保留同步輪詢 fallback。沒有 block cache 或一般磁碟排程演算法。
 
-每個已提交的 512-byte 請求以硬體時間計數器計時，預設超過 5 秒且仍未完成，就印出裝置、角色、操作、磁區與等待時間，然後停止核心。逾時不是取消成功，因此不返回上層、不回收或重用請求緩衝區。門檻在 `drivers/virtio/block.h` 調整；一次頁面交換含八筆磁區請求，不共用一個 5 秒總預算。這是目前 WUWAOS 的停止策略，尚無裝置重設與恢復。見 [Spec 12](../SPEC-12-block-timeout.md)。
+每筆請求預設超過 5 秒未完成，或收到不合法的完成資訊時，會要求裝置 reset。poll 每次只查一次狀態，設定 100 ms 的 reset acknowledgement 期限，實際檢查時機依 scheduler poll；確認 status=0 後將該裝置隔離為 offline，回錯並喚醒 caller，不自動重試寫入或重新掛載。若逾期仍無法確認 reset，保留 DMA storage 並停止核心。一次頁面交換含八筆磁區請求，不共用一個 5 秒總預算。[Spec 12](../SPEC-12-block-timeout.md) 保存舊版直接 fail-stop 的歷史設計。
+
+上述非同步與 reset 流程於 2026-11-08 實作；依使用者指示未執行 runtime／故障注入測試（NOT_RUN）。實際演算法與限制見[詳細計畫](https://github.com/johnson931128/WUWAOS/blob/main/plan.md)。
 
 ## 在 QEMU 觀察
 
