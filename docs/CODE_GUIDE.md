@@ -63,7 +63,7 @@ flowchart LR
   EV -->|poll / active| WIN
 ```
 
-`kernel/boot/main.c` 組裝這些既有模組：註冊 TTY 輸出 consumer 與 process event callbacks，並將 GPU pointer bounds 傳給 input driver。視窗啟動透過 kernel-owned terminal service 建立原本的 GUI shell；process cleanup 透過 core I/O/TTY 還原 session，不直接進入 UI renderer。這是目前單一靜態連結 kernel 的程式碼分層，不代表動態模組、微核心或新的 PTY/window manager。
+`kernel/boot/main.c` 組裝這些既有模組：註冊 TTY 輸出 consumer 與 process event callbacks，並將 GPU pointer bounds 傳給 input driver。視窗啟動透過 kernel-owned terminal service 建立原本的 GUI shell；process cleanup 透過 core I/O/TTY 還原 session，不直接進入 UI renderer。這是目前單一靜態連結 kernel 的程式碼分層，不代表動態模組、微核心、POSIX PTY 或通用視窗協定。
 
 ## 2. 所有程式碼檔案
 
@@ -354,7 +354,7 @@ swap.c 驗證 4 KiB slot 標頭與磁碟容量，以 bitmap 配置 1-based slot�
 
 driver 協商 VERSION_1 與裝置提供的 FLUSH feature，選 queue 0。每個 BlockDevice 保存 Gate、completion event、request/header/status、512-byte bounce buffer、state 與 deadline；每裝置同時最多一個 request，狀態為 IDLE → IN_FLIGHT → DONE → IDLE。讀寫/flush 對上層保留同步回傳介面：runtime 在 event wait 讓出 CPU，boot/pre-scheduler 用相同 submit/poll/collect 狀態機同步輪詢。寫入 submit 前複製 caller bytes 到持久 bounce，讀取只在成功 collect 後複製回 caller；DMA 不直達 user frame 或 caller stack。runtime no-wait caller 在 gate／queue mutation 前回 BUSY。Block poll 只 harvest used ring、檢查 deadline/status、更新 state 並 notify，不呼叫高層 I/O。無 IOMMU 或 block cache；WUFS0002 commit 使用 VirtIO FLUSH 作持久性屏障，不提供 FLUSH 的裝置只能唯讀掛載乾淨的 WUFS0002。
 
-單次 request 的 BLOCK_IO_TIMEOUT_MS 預設 5000 ms；到期或 completion malformed 時先進 RESETTING、寫 VirtIO status=0，再以 100 ms 上限等 reset acknowledgement。確認 status==0 後才將原 request 以錯誤完成、標記裝置 offline 並喚醒 caller；不自動重送、不 runtime remount。reset 未確認則保留所有 DMA storage 並 fail-stop。錯誤細節與 write/flush 結果 uncertain 標記由 owner 收集 request 時經 UART 輸出，poll context 不列印。這是每筆 512-byte request 的期限，不是整檔／整頁總期限。2026-11-08 Block async/reset runtime NOT_RUN；早期同步 timeout 設計證據保留於 [Spec 12](./SPEC-12-block-timeout.md)。
+單次 request 的 BLOCK_IO_TIMEOUT_MS 預設 5000 ms；到期或 completion malformed 時先進 RESETTING、寫 VirtIO status=0，再以 100 ms 上限等 reset acknowledgement。確認 status==0 後才將原 request 以錯誤完成、標記裝置 offline 並喚醒 caller；不自動重送、不 runtime remount。reset 未確認則保留所有 DMA storage 並 fail-stop，此路徑直接經 UART 輸出診斷。一般 poll completion 只更新 state 並 notify，不列印；錯誤細節與 write/flush 結果 uncertain 標記由 owner collect request 時經 UART 輸出。這是每筆 512-byte request 的期限，不是整檔／整頁總期限。2026-11-08 Block async/reset runtime NOT_RUN；早期同步 timeout 設計證據保留於 [Spec 12](./SPEC-12-block-timeout.md)。
 
 WUFS0002 在 LBA 0 存 superblock；LBA 1 是 journal header，LBA 2–10 是 1152 個 redo LBA 的表，LBA 11–1162 是各 512 bytes 的 payload；其後為 inode bitmap (1163)、block bitmap (1164–1171)、固定 inode 表 (1172–1191) 與資料區 (1192 起)。inode 80 bytes，含類型、檔案長度、8 個直接區塊和 8 個單層索引區塊；每檔上限 (8 + 8×128)×512 = 528384 bytes。inode 表固定 128 個項目；16 MiB 磁碟有 32768 個 sector。WUFS0001 保持舊版布局且唯讀掛載，不做原地升級。
 
@@ -462,7 +462,7 @@ all 建置、run 啟動、clean 清理 build 產物。更改 flags（編譯選�
 早期行程驗收與 QEMU monitor 證據在 SPEC.md；VirtIO／WUFS 磁碟重啟持久性在 SPEC-06；FIFO 與 Ready 行程移除驗收在 SPEC-07；動態頁面／三級表的初期驗收在 SPEC-08，fan 互動操作在 SPEC-09，現行按需分頁／Swap／回收及失敗路徑在 SPEC-10；一般 FD／管道驗收見 SPEC-27；VirtIO GPU/tablet、桌面畫素與游標移動見 SPEC-28。ps／pcb 讀取真實 PCB 與就緒佇列；`writer | reader` 示範需超過 256-byte ring capacity 才能觀察阻塞。
 2026-11-08 必要整合編譯已由主代理執行成功：`make -j2 all build/user.bin build/app.bin build/fan.bin build/workstate.bin build/kernel-disk.elf`。未建立 disk image，未啟動 QEMU，未跑測試。Block/VM 非同步 I/O 與 swap rollback、GPU async/reset、kernel stack guard、四視窗、fs_replace 與 uncertain diagnostics 的 runtime／視覺／故障復原均 NOT_RUN。過往 SPEC 的測試結果只代表當時版本，不能當作本輪新路徑的驗收。
 未完成 runtime 驗證的邊界不可等同已測試；沒有新增未經同意的測試程式碼。
-可先照 README 操作 worker，對照 saved sepc（保存指令位置）說明恢復後從哪裡繼續；再追蹤 writer 滿管道時的 buffer 位址如何留在 PCB。
+可先照 README 操作 worker，對照 saved sepc（保存指令位置）說明恢復後從哪裡繼續；再追蹤 writer 滿管道時 caller stack 如何保留待重試 buffer，以及 event WaitRecord 如何在資料或空間通知後喚醒等待者。
 
 計時器與 RR 已在 Spec 15 實作；仍無核心內搶占、多核心、優先權、seek、通用 shell/job control、外部 ELF argv 與前景 Ctrl+C 取消。描述號／OFD／pipe 表固定容量，shell 最多三 stage。若 shell wait 一個永遠不會收到事件的子行程，也無其他行程能通知，會阻塞；先 wakeup 再 wait。
 
