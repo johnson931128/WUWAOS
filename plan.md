@@ -1,6 +1,6 @@
 # 後續實作計畫
 
-目前整體狀態：第 1 階段、2A 與 2B1 完成；2B2 暫停於 Block pointer refactor，非同步 request 尚未完成；2C 與第 3–6 階段未開始。Spec 33 的原始碼分層工作已完成。程式實作暫停，先更新文件與網站。
+目前整體狀態：第 1 階段、2A 與 2B1 完成；2026-11-08 恢復 2B2、2C 與第 3–6 階段實作。各階段以功能實現與必要依賴為主，依使用者指示不執行測試、不撰寫測試程式碼；新增功能只能記為「已實作、未經 runtime 驗證」。Spec 33 的原始碼分層工作已完成。
 
 ## 1. 多 TTY 與 session 物件化
 
@@ -150,6 +150,80 @@
 - 步驟與進度：第一批導覽／主題文件已以 `1e08d74` 提交並 push；第二批 README／首頁／歷程摘要與本計畫同步於本批提交。既有工具已將網站建置並發布到 gh-pages `1f99d02`，公開頁面已更新。
 - 驗收方式：文件建置與線上頁面內容快速確認；本輪不新增測試程式碼，不重新執行 OS runtime／QEMU／GDB 或測試矩陣。
 - 實際結果：VitePress 建置成功（僅有 bundle size 提示）；公開首頁 HTTP 200，已包含「目前開發進度」與 2B2 暫停內容，並保留「特殊事蹟」。此次只核對線上 HTML 內容，未做瀏覽器視覺驗收，未重跑 OS 測試。
+
+## 2026-11-08 剩餘階段執行規格與實際演算法
+
+以下是本輪 WUWAOS 的實作方案，並非宣稱已完成或已驗收。目標為實現剩餘階段的功能；不擴充網路、POSIX ABI 或任意硬體支援。Luna high agents 按檔案所有權平行工作，各階段自行提交精確檔案；主代理負責依賴整合、review、必要修正、分批 push，最後更新文件網站並部署。
+
+### 共用約束與依賴
+
+- Block agent：`drivers/virtio/block.*` 與 `kernel/proc/process.*` 的 runtime query／poll hook。VM agent：`kernel/mm/vm.*`、swap 相關與後續 guard API。GPU/UI agent：`drivers/virtio/gpu.*`、`ui/desktop/*`、terminal model/renderer。FS 階段在 Block agent 完成後接續，避免同時改同檔。
+- 既有 gate 次序 OFD/Pipe → FS → VM → Block；poll 不進 FS/VM、不 usercopy、不睡眠。Boot 允許同步初始化，runtime no-wait context 在 submit 之前回 BUSY。
+- 2B2 的 Block 與 VM 撤銷保護必須一起整合後，才能把 runtime 路徑視為已實作。GPU 2C 完成後才接入復原與多視窗。第 4 階段修改 process stack 時須等 Block agent 釋放 `process.*`。
+- 不跑單元、整合、QEMU、GDB、操作或故障注入測試，不新增任何測試程式碼。只允許整合所必需的編譯及文件發布建置；所有 runtime／視覺／故障復原結果標示 NOT_RUN。Review 只檢查實際差異與相依介面，不宣稱可執行驗收。
+
+### 2B2：每裝置單一 request、completion poll 與 swap 撤銷
+
+- BlockDevice 長期保存 Gate、event、512-byte bounce buffer、header/status、request state、deadline/result。狀態為 IDLE → IN_FLIGHT → DONE → IDLE，timeout 不得直接重用 buffer。對外 read/write/flush 保留同步函式介面，但 runtime caller 在內部 event wait 讓出 CPU。
+- 寫入先把 caller bytes 搬到 device bounce，讀取完成後才從 bounce 複製回 caller；裝置不直接 DMA 到可回收的 user frame 或暫時 stack。每裝置 Gate 持有至 collect 結束，wait 排隊可取消；submit 前進入 cancel-defer，直到 completion、collect、離開 Gate 後才結束 defer。
+- runtime 開始後，沒有可等待的 process context 一律在任何 queue mutation 前回 BUSY；boot/pre-scheduler 用同一 submit/poll/collect 狀態機同步輪詢。scheduler source poll 掃兩顆裝置，僅 harvest used ring、檢查 status/deadline、更新 state 並 notify，不遞迴呼叫高層 I/O。
+
+  ```text
+  transfer(device, op, caller):
+      reject runtime no-wait context
+      enter device gate; begin cancel-defer
+      prepare persistent header/status/bounce; snapshot completion event
+      publish descriptors + avail index with memory fences; state = IN_FLIGHT
+      while state == IN_FLIGHT:
+          runtime: wait_event(snapshot); refresh snapshot
+          boot: poll_device()
+      collect result; successful read copies bounce -> caller
+      state = IDLE; leave gate; end cancel-defer; return result
+
+  poll_device():
+      if used index advanced: acquire fence; validate head/status; state = DONE; notify
+      else if deadline reached: retain DMA storage; fail-stop (until stage 3 safe reset)
+  ```
+
+- VM eviction 持 VM scope 選 victim，保存完整 PTE，先 clear PTE 並 `sfence.vma`，pin victim 再做可能睡眠的 swap I/O。其他行程碰到該頁會進 fault 並等 VM Gate；不能趁 DMA 期間寫 victim。成功才公布 swap metadata、釋放 frame；失敗恢復原 PTE／sfence、保留 dirty RAM，釋放新配 slot。整段撤銷至 restore/commit 使用 cancel-defer，避免 kill 在還原前截斷流程。既有 swap slot 失敗可能部分覆寫，但 RAM 仍為唯一有效副本，必須保持 dirty，不能視該 slot 為乾淨 backing。
+
+### 2C：GPU 非阻塞 transfer／flush
+
+- GPU 長期保存 request/response、in-flight rectangle、start/deadline；runtime `gpu_present` 排入 dirty rectangle，不在 UI poll 忙等。poll 狀態機 IDLE → TRANSFER → FLUSH → IDLE；每次 poll 最多完成有限步數，未完成直接返回。
+- CPU 繪製 shadow framebuffer，DMA backing 為獨立固定記憶體；IDLE 才把 dirty rectangle 從 shadow 複製到 backing，TRANSFER/FLUSH 期間不覆寫 backing，後續 dirty 合併待下一次 submit。完成 flush 才清除 in-flight ownership；錯誤保留重畫需求。
+- Boot resource setup 可用有界同步 command；runtime 不將 stack 指標放入 descriptor。UI 需持續呼叫 gpu_poll，即使當下沒有新 dirty。
+
+### 第 3 階段：安全停止、GPU 降級／復原與 Block 隔離
+
+- timeout 或 malformed completion 先進 RESETTING，寫 VirtIO status=0 並在有界期限觀察 status==0，取得 reset acknowledgement 後才允許清 queue 或重用 DMA storage。未確認 reset：GPU 停用但保留所有 buffer；Block 維持 fail-stop，不能偽造安全取消。
+- GPU reset 成功後重新協商、建 queue/resource/scanout，保留 shadow framebuffer 並要求全畫面重送；重試次數有界，失敗降級為 UART 可用、GUI disabled，不讓 scheduler 無限忙等。恢復 poll 各步有界，不從 UI callback 進入同步等待。
+- Block reset 確認後將該裝置標 offline，以錯誤完成原 request 並喚醒 caller，不自動重送寫入、不 runtime remount；FS 原有 offline/journal boot replay 決定重啟後內容。寫入結果可能不確定，需留給第 6 階段統一錯誤語意。Swap 失敗由 VM 還原 RAM/PTE。
+
+### 第 4 階段：生命週期與真實 guard page
+
+- 逐一檢查 exit/exec、TTY owner/OFD refs、event source close 與 gate/defer balance；只修正實際 ownership 缺口，不增加通用大型框架。TTY generation/refs 保持原設計，window 的 owner ref 只釋放一次，callback detach 後才可重用 view storage。
+- 每 process stack 改為 page-aligned storage：一頁 guard + 16 KiB stack；scheduler stack 同樣配置 guard。boot 建立共用核心頁表後移除 guard 虛擬頁的 leaf PTE，所有 process root 共用該核心 mapping。初始化只清 stack 範圍，絕不 memset 已取消映射的 guard。
+- guard 是實際不可存取映射，非 canary；正常 stack top/trap frame layout 不變。trap 診斷辨識 guard 地址後輸出目前 PID／stack 範圍並停止，避免故障 handler 遞迴破壞記憶體；不宣稱能從已耗盡的 stack 恢復。
+
+### 第 5 階段：有界多視窗、焦點、拖曳與縮放
+
+- 固定上限 window slots，每 slot 保存獨立 TerminalModel、TTY handle、幾何、visible/focus、session 狀態；z-order 陣列由底到頂排列，輸入從頂往底 hit-test，鍵盤只送 focused TTY。每次點 Terminal icon 建立新視窗，容量滿時有明確回饋。
+- 點 body/title 置頂並 focus；title drag 以滑鼠與原始位置差更新，clamp 在 desktop；resize grip 更新有界幾何。縮放若先採固定 100×30 內容的 viewport／顯示縮放，必須明確記錄，不能宣稱已有 TTY resize ABI 或 shell SIGWINCH。
+- 簡單軟體合成：有 dirty 時依序重畫 wallpaper → 所有可見視窗（底到頂、裁切）→ cursor，再交給非同步 gpu_present。先使用全畫面 dirty 保證遮擋／移動後背景正確，暫不做複雜區域最佳化。
+- 關閉採明確語意：關閉視窗會關閉 session endpoint、解除 callback 並 release UI ref；已持 OFD 的程式讀寫收到錯誤，直到最後引用離開才釋放 endpoint。隱藏與關閉需有不同操作或只提供關閉，文件說清楚改變。
+
+### 第 6 階段：單次交易的安全替換與診斷
+
+- 新增 `fs_replace(path, bytes, length)`，在同一 FS scope／redo transaction 內建立新 inode/data、寫完整內容、原子切換 directory entry，再回收舊 inode。禁止替換 directory、拒絕仍被 open OFD 引用的目標（先保留簡單安全語意，不實作 unlink-open inode）。journal 容量不足時整筆 abort，舊名稱仍指向舊檔。
+- 不使用可碰撞的暫存路徑：新 inode 在 transaction staging 內建立，只有完成才發布 dir entry。缺檔可建立；用 SYS_FS_REPLACE/user API 讓 fan 儲存採用此機制，既有一般 FD write 維持原語意。
+- Commit 依序 journal payload → flush → commit header → flush → home writes → flush → clear header → flush。commit header 發布前失敗與發布後失敗分開回報；一旦 header write 嘗試開始而失敗，保守回 `ERR_UNCERTAIN`，FS offline，不能說操作一定未發生；重啟 replay 決定完整版本。kill 不可截斷已開始的持久性 commit，整段 commit 使用 cancel-defer。
+- 統一最小診斷 API／格式，記錄 subsystem、operation、error、結果是否 uncertain、device/sector 或 PID；以 UART 輸出避免向失效 GUI 遞迴診斷。只整合 Block/GPU/FS 的關鍵故障，不為一般使用者流程加入內部實作術語。
+
+### 收尾：review、文件、部署
+
+- 每位 agent 完成階段後自行 commit 精確檔案，不 push，不將其他 agent 變更混入 commit。共用 plan 的狀態由主代理統一寫入，agent 回報實際演算法、檔案與限制以便合併。
+- 主代理 review 跨階段依賴：poll context、gate order、DMA lifetime、VM PTE rollback、window/TTY refs、FS commit uncertainty；必要修改後做一次整合編譯，不跑測試。
+- 依實際程式更新 CODE_GUIDE、topics、README/index/history、plan_current/plan；保留舊規格證據、媒體與 portable v1 差異。以既有 GitHub Pages 工具建置部署；本輪網站不執行瀏覽器／操作測試，發布狀態與 build 結果如實記錄。
 
 ## 進度維護
 
