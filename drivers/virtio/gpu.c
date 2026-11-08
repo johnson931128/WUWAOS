@@ -2,6 +2,7 @@
 #include "arch/riscv/clock.h"
 #include "kernel/io/console.h"
 #include "kernel/mm/page.h"
+#include "kernel/proc/process.h"
 #include <stddef.h>
 
 #define FDT_MAGIC 0xd00dfeedU
@@ -42,6 +43,14 @@
 #define GPU_RESP_OK_NODATA 0x1100U
 #define GPU_FORMAT_B8G8R8X8_UNORM 2U
 #define GPU_RESOURCE_ID 1U
+#define GPU_RECOVERY_RETRIES 2U
+
+typedef enum {
+    GPU_IDLE, GPU_TRANSFER, GPU_FLUSH,
+    GPU_RECOVERY_RESET_WAIT, GPU_RECOVERY_CREATE, GPU_RECOVERY_CREATE_WAIT,
+    GPU_RECOVERY_ATTACH, GPU_RECOVERY_ATTACH_WAIT,
+    GPU_RECOVERY_SCANOUT, GPU_RECOVERY_SCANOUT_WAIT, GPU_DISABLED
+} GpuState;
 
 typedef struct {
     uint64_t address;
@@ -79,8 +88,9 @@ typedef union {
 
 typedef struct {
     volatile uint32_t *registers;
-    uintptr_t base, framebuffer_physical;
-    uint32_t *framebuffer;
+    uintptr_t base, framebuffer_physical, shadow_physical;
+    uint32_t *framebuffer; /* CPU-owned shadow surface */
+    uint32_t *backing;      /* persistent DMA backing attached to the resource */
     size_t framebuffer_pages;
     uint16_t consumed, queue_length;
     VirtqDescriptor descriptors[QUEUE_SIZE] __attribute__((aligned(16)));
@@ -88,6 +98,11 @@ typedef struct {
     VirtqUsed used __attribute__((aligned(4)));
     GpuCommand command __attribute__((aligned(16)));
     GpuHeader response __attribute__((aligned(16)));
+    GpuState state;
+    GpuRectangle inflight, pending;
+    uint64_t state_started;
+    unsigned int recovery_attempts;
+    int pending_valid, initialized, resource_attached;
 } GpuDevice;
 static GpuDevice gpu;
 
@@ -180,31 +195,41 @@ static void write_address(uint32_t offset, uintptr_t address) {
     gpu.registers[offset / 4] = (uint32_t)address;
     gpu.registers[(offset + 4) / 4] = (uint32_t)(address >> 32);
 }
-static int command(GpuCommand *request, size_t request_size) {
+static void queue_command(size_t request_size) {
     gpu.response = (GpuHeader){0};
-    gpu.descriptors[0] = (VirtqDescriptor){ (uintptr_t)request, (uint32_t)request_size, 1U, 1U };
+    gpu.descriptors[0] = (VirtqDescriptor){ (uintptr_t)&gpu.command, (uint32_t)request_size, 1U, 1U };
     gpu.descriptors[1] = (VirtqDescriptor){ (uintptr_t)&gpu.response, sizeof(gpu.response), 2U, 0U };
     const uint16_t index = gpu.available.index;
     gpu.available.ring[index % gpu.queue_length] = 0;
-    const uint64_t start = clock_ticks();
     __asm__ volatile("fence rw, w" : : : "memory");
     gpu.available.index = (uint16_t)(index + 1U);
     __asm__ volatile("fence w, o" : : : "memory");
     gpu.registers[VIRTIO_QUEUE_NOTIFY / 4] = 0;
-    while (gpu.used.index == gpu.consumed) {
+}
+
+/* Returns 0 while pending, 1 for a valid completion, and -1 for device error. */
+static int command_completion(void) {
+    if (gpu.used.index == gpu.consumed) return 0;
+    __asm__ volatile("fence r, rw" : : : "memory");
+    ++gpu.consumed;
+    if (gpu.response.type != GPU_RESP_OK_NODATA) {
+        console_puts("[gpu] Command failed, response="); console_hex(gpu.response.type); console_putc('\n');
+        return -1;
+    }
+    return 1;
+}
+
+static int command_sync(size_t request_size) {
+    queue_command(request_size);
+    const uint64_t start = clock_ticks();
+    int result;
+    while ((result = command_completion()) == 0) {
         if (clock_ticks() - start >= clock_ms_ticks(REQUEST_TIMEOUT_MS)) {
             console_puts("[gpu] Command timed out after 5000 ms; halting to protect DMA buffers\n");
             kernel_idle();
         }
     }
-    __asm__ volatile("fence r, rw" : : : "memory");
-    ++gpu.consumed;
-    if (gpu.response.type != GPU_RESP_OK_NODATA) {
-        console_puts("[gpu] Command failed, type="); console_hex(request->header.type);
-        console_puts(" response="); console_hex(gpu.response.type); console_putc('\n');
-        return -1;
-    }
-    return 0;
+    return result < 0 ? -1 : 0;
 }
 
 static GpuHeader header(uint32_t type) { return (GpuHeader){ .type = type }; }
@@ -212,29 +237,67 @@ static int create_resource(void) {
     gpu.command.create = (GpuCreateCommand){ .header = header(GPU_CMD_RESOURCE_CREATE_2D),
         .resource_id = GPU_RESOURCE_ID, .width = GPU_WIDTH, .height = GPU_HEIGHT,
         .format = GPU_FORMAT_B8G8R8X8_UNORM };
-    if (command(&gpu.command, sizeof(gpu.command.create)) < 0) return -1;
+    if (command_sync(sizeof(gpu.command.create)) < 0) return -1;
     gpu.command.attach = (GpuAttachCommand){ .header = header(GPU_CMD_RESOURCE_ATTACH_BACKING),
         .resource_id = GPU_RESOURCE_ID, .entries = 1,
         .memory = { gpu.framebuffer_physical, GPU_WIDTH * GPU_HEIGHT * 4U, 0 } };
-    if (command(&gpu.command, sizeof(gpu.command.attach)) < 0) return -1;
+    if (command_sync(sizeof(gpu.command.attach)) < 0) return -1;
     gpu.command.scanout = (GpuSetScanoutCommand){ .header = header(GPU_CMD_SET_SCANOUT),
         .resource_id = GPU_RESOURCE_ID, .scanout_id = 0,
         .rectangle = { .x = 0, .y = 0, .width = GPU_WIDTH, .height = GPU_HEIGHT } };
-    if (command(&gpu.command, sizeof(gpu.command.scanout)) < 0) return -1;
+    if (command_sync(sizeof(gpu.command.scanout)) < 0) return -1;
     return 0;
+}
+
+static void merge_rectangle(GpuRectangle *target, int *valid, uint32_t x, uint32_t y,
+                            uint32_t width, uint32_t height) {
+    const uint32_t right = x + width, bottom = y + height;
+    if (!*valid) { *target = (GpuRectangle){ x, y, width, height }; *valid = 1; return; }
+    const uint32_t old_right = target->x + target->width, old_bottom = target->y + target->height;
+    const uint32_t left = x < target->x ? x : target->x;
+    const uint32_t top = y < target->y ? y : target->y;
+    const uint32_t merged_right = right > old_right ? right : old_right;
+    const uint32_t merged_bottom = bottom > old_bottom ? bottom : old_bottom;
+    *target = (GpuRectangle){ left, top, merged_right - left, merged_bottom - top };
+}
+
+static void copy_shadow_to_backing(const GpuRectangle *rectangle) {
+    for (uint32_t row = 0; row < rectangle->height; ++row) {
+        const size_t offset = (size_t)(rectangle->y + row) * GPU_WIDTH + rectangle->x;
+        for (uint32_t column = 0; column < rectangle->width; ++column)
+            gpu.backing[offset + column] = gpu.framebuffer[offset + column];
+    }
+}
+
+static void start_transfer(void) {
+    gpu.inflight = gpu.pending;
+    gpu.pending_valid = 0;
+    copy_shadow_to_backing(&gpu.inflight);
+    gpu.command.transfer = (GpuTransferCommand){ .header = header(GPU_CMD_TRANSFER_TO_HOST_2D),
+        .offset = ((uint64_t)gpu.inflight.y * GPU_WIDTH + gpu.inflight.x) * 4U,
+        .resource_id = GPU_RESOURCE_ID, .rectangle = gpu.inflight };
+    queue_command(sizeof(gpu.command.transfer));
+    gpu.state = GPU_TRANSFER;
+    gpu.state_started = clock_ticks();
 }
 
 int gpu_present(uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
     if (!gpu.framebuffer || width == 0 || height == 0 || x >= GPU_WIDTH || y >= GPU_HEIGHT ||
         width > GPU_WIDTH - x || height > GPU_HEIGHT - y) return -1;
+    if (gpu.state == GPU_DISABLED) return -1;
+    if (process_runtime_started()) {
+        merge_rectangle(&gpu.pending, &gpu.pending_valid, x, y, width, height);
+        return 0;
+    }
+    const GpuRectangle rectangle = { x, y, width, height };
+    copy_shadow_to_backing(&rectangle);
     gpu.command.transfer = (GpuTransferCommand){ .header = header(GPU_CMD_TRANSFER_TO_HOST_2D),
         .offset = ((uint64_t)y * GPU_WIDTH + x) * 4U, .resource_id = GPU_RESOURCE_ID,
-        .rectangle = { .x = x, .y = y, .width = width, .height = height } };
-    if (command(&gpu.command, sizeof(gpu.command.transfer)) < 0) return -1;
+        .rectangle = rectangle };
+    if (command_sync(sizeof(gpu.command.transfer)) < 0) return -1;
     gpu.command.flush = (GpuFlushCommand){ .header = header(GPU_CMD_RESOURCE_FLUSH),
-        .resource_id = GPU_RESOURCE_ID,
-        .rectangle = { .x = x, .y = y, .width = width, .height = height } };
-    return command(&gpu.command, sizeof(gpu.command.flush));
+        .resource_id = GPU_RESOURCE_ID, .rectangle = rectangle };
+    return command_sync(sizeof(gpu.command.flush));
 }
 
 uint32_t *gpu_framebuffer(void) { return gpu.framebuffer; }
@@ -271,11 +334,43 @@ int gpu_init(void) {
     gpu.registers[VIRTIO_STATUS / 4] |= DEVICE_DRIVER_OK;
     gpu.framebuffer_pages = (GPU_WIDTH * GPU_HEIGHT * 4U + PAGE_SIZE - 1) / PAGE_SIZE;
     gpu.framebuffer_physical = page_alloc_contiguous(gpu.framebuffer_pages);
-    if (!gpu.framebuffer_physical) { console_puts("[gpu] Cannot allocate contiguous framebuffer RAM\n"); return -1; }
-    gpu.framebuffer = (uint32_t *)gpu.framebuffer_physical;
+    gpu.shadow_physical = page_alloc_contiguous(gpu.framebuffer_pages);
+    if (!gpu.framebuffer_physical || !gpu.shadow_physical) { console_puts("[gpu] Cannot allocate contiguous framebuffer RAM\n"); return -1; }
+    gpu.backing = (uint32_t *)gpu.framebuffer_physical;
+    gpu.framebuffer = (uint32_t *)gpu.shadow_physical;
     const uint32_t pixel = 0x00d0b070U;
     for (size_t i = 0; i < GPU_WIDTH * GPU_HEIGHT; ++i) gpu.framebuffer[i] = pixel;
     if (create_resource() < 0 || gpu_present(0, 0, GPU_WIDTH, GPU_HEIGHT) < 0) return -1;
+    gpu.initialized = 1;
+    gpu.state = GPU_IDLE;
     console_puts("[gpu] 1280x720 VirtIO 2D scanout ready\n");
     return 0;
+}
+
+void gpu_poll(void) {
+    if (!gpu.initialized || gpu.state == GPU_DISABLED) return;
+    if (gpu.state == GPU_IDLE) {
+        if (gpu.pending_valid) start_transfer();
+        return;
+    }
+    if (gpu.state != GPU_TRANSFER && gpu.state != GPU_FLUSH) return;
+    const int result = command_completion();
+    if (result == 0) {
+        if (clock_ticks() - gpu.state_started >= clock_ms_ticks(REQUEST_TIMEOUT_MS)) {
+            console_puts("[gpu] Async present timed out; device disabled\n");
+            gpu.state = GPU_DISABLED;
+        }
+        return;
+    }
+    if (result < 0) { gpu.state = GPU_DISABLED; return; }
+    if (gpu.state == GPU_TRANSFER) {
+        gpu.command.flush = (GpuFlushCommand){ .header = header(GPU_CMD_RESOURCE_FLUSH),
+            .resource_id = GPU_RESOURCE_ID, .rectangle = gpu.inflight };
+        queue_command(sizeof(gpu.command.flush));
+        gpu.state = GPU_FLUSH;
+        gpu.state_started = clock_ticks();
+    } else {
+        gpu.state = GPU_IDLE;
+        if (gpu.pending_valid) start_transfer();
+    }
 }
