@@ -326,13 +326,6 @@ static int init_device(BlockDevice *target, uintptr_t base) {
 static _Noreturn void reset_fail_stop(BlockDevice *target) {
     kernel_diagnostic("block", "reset-unconfirmed", ERR_IO, 1,
                       (uintptr_t)target->request_sector);
-    console_puts("[block] RESET NOT CONFIRMED device=");
-    console_hex((uintptr_t)target->registers);
-    console_puts(" role=");
-    console_puts(target == filesystem ? "WUFS" : target == swap_disk ? "swap" : "probe");
-    console_puts(" sector="); console_number((long)target->request_sector);
-    console_puts(" status="); console_number(target->registers[VIRTIO_STATUS / 4]);
-    console_puts("\n[panic] DMA storage retained; kernel halted. Restart QEMU.\n");
     /* Reset was not acknowledged, so the device may still own every queue buffer. */
     __asm__ volatile("csrci sstatus, 2\ncsrw sie, zero" : : : "memory");
     kernel_idle();
