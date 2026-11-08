@@ -15,7 +15,7 @@ const chapters = [
 export default defineConfig({
   lang: 'zh-Hant',
   title: 'WUWAOS',
-  description: '從開機到使用者程式，理解一個 RISC-V 小型作業系統的實作。',
+  description: '視覺化探索 WUWAOS：以 C 與 RISC-V RV64 實作、可在 QEMU 啟動的小型作業系統。',
   base: process.env.DOCS_BASE || '/',
   sitemap: { hostname: publicUrl },
   head: [['meta', { name: 'robots', content: 'index, follow' }]],
@@ -46,12 +46,13 @@ export default defineConfig({
   },
   themeConfig: {
     siteTitle: 'WUWAOS 實作紀錄',
-    nav: [{ text: '閱讀章節', link: '/topics/getting-started' }, { text: '互動教學', link: '/topics/block-async' }, { text: '規格紀錄', link: '/history' }],
+    nav: [{ text: '閱讀章節', link: '/topics/getting-started' }, { text: '互動教學', link: '/topics/block-async' }, { text: '設計研究', link: '/redesign' }, { text: '規格紀錄', link: '/history' }],
     sidebar: [
       { text: 'WUWAOS', items: [{ text: '00 · 專案總覽', link: '/' }, { text: 'Windows 免安裝環境', link: '/portable-windows' }] },
       { text: '互動教學', items: [{ text: 'Block Async I/O', link: '/topics/block-async' }, { text: 'FD 與 OFD', link: '/topics/file-descriptors' }, { text: '換頁與 Swap', link: '/topics/paging' }, { text: 'Journal 與安全替換', link: '/topics/journal' }] },
       { text: '從硬體到應用程式', items: chapters.map(([text, slug], i) => ({ text: `${String(i + 1).padStart(2, '0')} · ${text}`, link: `/topics/${slug}` })) },
       { text: '規格與參考', items: [{ text: '原始規格與驗收紀錄', link: '/history' }, { text: '磁碟保護與驗證', link: '/SPEC-31-filesystem-initialization-guard' }, { text: '完整程式碼導覽', link: '/CODE_GUIDE' }] },
+      { text: '網站改版規範', items: [{ text: '視覺教材設計', link: '/visual-system' }, { text: '研究與來源對照', link: '/redesign' }] },
     ],
     outline: { level: [2, 3], label: '本頁內容' },
     search: { provider: 'local', options: { locales: { root: { translations: { button: { buttonText: '搜尋文件', buttonAriaLabel: '搜尋文件' }, modal: { noResultsText: '找不到相關內容', resetButtonTitle: '清除搜尋', footer: { selectText: '選取', navigateText: '切換', closeText: '關閉' } } } } } } },
