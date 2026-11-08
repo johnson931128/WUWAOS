@@ -12,3 +12,5 @@
 - 本輪不執行測試、不新增測試程式碼；僅做必要整合編譯與文件部署建置，runtime 驗證標示 NOT_RUN。
 - 文件／網站：CODE_GUIDE／topics／README／首頁／歷程已同步，最新 gh-pages `45a1ac7` 部署工作 completed/success；未做瀏覽器測試，詳見 [plan.md](./plan.md)。
 - 文件互動化第一輪：Block Async I/O、FD/OFD、換頁／Swap、WUFS journal 四章已分章 commit、建置部署；互動元件、參數／函式表與筆記引用已接入；互動／視覺 NOT_RUN，詳見 [plan.md](./plan.md#文件互動化第一輪2026-11-08)。
+- 全站改版：Phase 1 研究／設計規範已整理，Phase 2–5 待實作；首頁＋12 主章＋4 labs，詳細見 [plan.md](./plan.md#全站-visual-first-textbook-改版2026-11-08)。
+- 本輪最新指示授權網站 build／視覺／互動／mobile 驗收；不新增測試程式碼，不修改或測試 OS。

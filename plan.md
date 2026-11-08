@@ -259,6 +259,18 @@
 - 整合調整：開啟 repository Markdown HTML 以局部 import Vue 元件，原 Spec 03 四個命令的角括號改用 inline code 保留文字顯示，未改寫歷史設計或驗收。保留既有截圖與特殊事蹟，沒有新增生成圖／教科書轉載圖片或外部元件套件。
 - 建置與部署結果：`tools/publish-docs.ps1` 執行 VitePress 建置成功（既有 bundle size 提示），靜態網站已推送 gh-pages `45a1ac73cf4bf6ea6cc886caa055c3723820b4a3`；[GitHub Pages 工作 42462536432](https://github.com/johnson931128/WUWAOS/actions/runs/42462536432) completed/success。只讀取部署工作狀態，沒有執行瀏覽器／頁面操作測試、OS 測試或新增測試程式碼；動畫實際操作、手機與視覺效果仍未驗收。
 
+## 全站 Visual-first Textbook 改版（2026-11-08）
+
+- Spec：依使用者最新完整需求，改版首頁、12 個主章、4 個既有 labs、導覽、共用視覺／播放與 source mapping；只修改 docs／網站與計畫，不修改 kernel、driver、syscall。保留長篇文字、欄位表、歷史 spec、媒體、特殊事蹟與 portable v1 邊界。
+- 最新驗證授權：Phase 5 明確要求網站視覺／互動／響應式驗收，取代前次「不做瀏覽器測試」在本輪網站上的限制；仍不跑 OS 測試、不新增測試程式碼。
+- Phase 1 研究：已閱讀指定 xv6、OSTEP、1,000 Lines、VizTools、OS Lab 網頁／相關章節，對照本地 notes 與 source；研究矩陣見 [docs/redesign.md](./docs/redesign.md)，呈現規範見 [docs/visual-system.md](./docs/visual-system.md)。COD 僅確認官方 companion 與筆記／source 對照，不冒稱讀取受限內頁。所有圖原創，不直接複製教材圖。
+- Phase 2：先做首頁 clickable architecture／roadmap、RR ready queue＋Gantt（教學 quantum 與 OS 50 ms 分開）、Sv39 bit layout／三級 walk／PTE／frame 組合（BigInt 計算索引、只模擬合法教學映射）；共用 theme tokens 與控制介面。
+- Phase 3：提取 usePlayback／PlaybackControls，重畫四 labs 的系統圖，保留全部舊情境與重要文字；step arrays 表示資料、DOM/SVG 表示流程，不依賴動畫時序。
+- Phase 4：其餘主章加入 A/B/C 適用原創圖，保留七段結構與 source／notes／外部閱讀；大型 SVG 支援局部放大，非所有圖都做 simulator。
+- Phase 5：VitePress build＋瀏覽器實際驗收 desktop/mobile、light/dark、播放／單步／重設／scenario、RR quantum／VA、zoom、搜尋與導覽、console／溢出；每項只記實際結果。最後整理 docs/redesign-report.md 並分階段 push、使用既有工具部署，確認 GitHub Pages 狀態。
+- 分工／commit：Luna high 按檔案所有權實作，階段自行 commit、不互相 stage；主代理做 source review、技術差異核對、網站驗收與修正，分階段 push。共用 API 先定義再消費，禁止重寫別人的未提交修改。
+- 進度：Phase 1 研究與規範已整理；Phase 2–5 待實作／驗收。
+
 ## 進度維護
 
 每完成一個步驟後，更新本檔與 [`plan_current.md`](./plan_current.md) 的進度。依使用者要求，本檔須記錄實際採用的解決觀念／演算法、必要虛擬碼、驗收結果與限制。未執行或未完成對應 runtime 驗證的項目不得記為完成；若當前條件無法進行 runtime 驗證，需明確保留未完成狀態並記錄限制。
