@@ -29,7 +29,7 @@ CPU 執行記憶體中的機器碼，不知道來源檔名。OpenSBI 負責早�
 
 ### UI 與 kernel 的資料通道
 
-以下流程中的 kernel、VirtIO driver 與 UI adapter 都在 S-mode；只有 shell/application 在 U-mode。核心以 generation-checked TTY endpoint 隔離各 session 的輸入輸出；FD 經 OFD 保存 endpoint handle 與引用。桌面視窗只負責呈現與輸入轉譯，不擁有核心 queue 或 process 結構；目前 UI 仍只有一個 Terminal view。
+以下流程中的 kernel、VirtIO driver 與 UI adapter 都在 S-mode；只有 shell/application 在 U-mode。核心以 generation-checked TTY endpoint 隔離各 session 的輸入輸出；FD 經 OFD 保存 endpoint handle 與引用。桌面最多有四個獨立 Terminal window；視窗只負責呈現與輸入轉譯，不擁有核心 queue 或 process 結構。
 
 ```mermaid
 flowchart LR
@@ -54,7 +54,7 @@ flowchart LR
     MAP[key mapping and input adapter]
     VT[ANSI VT model]
     R[terminal cell renderer]
-    WIN[desktop/window composition]
+    WIN[bounded desktop windows and composition]
   end
   SC --> SY
   IN --> MAP --> TTY
@@ -73,14 +73,17 @@ flowchart LR
 | kernel/boot/main.c | 串接核心初始化與第一個行程 |
 | ui/boot/splash.c / splash.h | WUWAOS 文字圖案、中央向兩側展開、開機短暫延遲 |
 | drivers/uart/uart.c / uart.h | UART（序列埠）MMIO 字元收發 |
-| kernel/io/console.c / console.h | 核心診斷格式化與 UART/GUI route |
+| kernel/io/console.c / console.h | 核心一般輸出與 UART/GUI route |
+| kernel/io/diagnostic.h | Block/GPU/FS 共用格式化 UART 診斷，不依賴 GUI |
 | arch/riscv/trap.S | 切換堆疊、保存／還原暫存器、返回使用者模式 |
-| arch/riscv/trap.c / trap.h | 共同例外入口設定、TrapFrame（保存狀態結構）、原因分派 |
+| arch/riscv/trap.c / trap.h | 共同例外入口設定、TrapFrame（保存狀態結構）、原因分派與 kernel stack guard 診斷 |
 | arch/riscv/context.h | KernelContext：112-byte RV64 核心上下文與 C／組合語言配置契約 |
 | arch/riscv/swtch.S | context_switch：sd／ld 保存與恢復 ra、sp、s0～s11，ret 至新上下文 |
-| kernel/mm/vm.c / vm.h | 各行程頁表、使用者映像、記憶體權限與安全複製 |
+| kernel/mm/vm.c / vm.h | 各行程頁表、使用者映像、記憶體權限、安全複製、swap eviction 與共用 kernel guard mapping |
 | kernel/fs/path.c / path.h、include/path_limits.h | 相對路徑合併與已驗證目錄的正規化；路徑長度上限 |
-| kernel/proc/process.c / process.h | PCB（行程控制區塊）、生命週期、RR 派發／搶占、查詢與終止 |
+| kernel/proc/process.c / process.h | PCB（行程控制區塊）、生命週期、RR 派發／搶占、事件等待、cancel-defer、stack guard、查詢與終止 |
+| kernel/proc/gate.c / gate.h | 可重入 owner Gate、競爭等待、喚醒與 gate-depth accounting |
+| kernel/proc/event.c / event.h | generation／sequence 事件來源、等待者完成、timeout 與取消 |
 | arch/riscv/clock.h | 共用 rdtime、QEMU 10 MHz 時基與毫秒換算 |
 | arch/riscv/sbi.c / sbi.h | SBI BASE／TIME 呼叫，隔離韌體 ABI |
 | arch/riscv/timer.c / timer.h | 中斷初始化、時間片到期事件、清除 pending 與計數 |
@@ -94,33 +97,33 @@ flowchart LR
 | kernel/io/io.c / io.h | FD/OFD、canonical line assembly、WUFS file descriptor、pipe ring、pending I/O 與 TTY FD 路由 |
 | kernel/io/tty.c / tty.h | generation-checked TTY endpoint handles；各 endpoint 獨立 input/output queues、raw owner、CR/LF 狀態、active/session refs 與輸出 consumer；UART 是固定 endpoint，不含繪圖狀態 |
 | kernel/proc/terminal_service.h / event_hooks.h | UI 呼叫的核心 GUI shell service、boot 註冊給 process loop 的 poll/active callbacks |
-| drivers/virtio/block.c / block.h | FDT 裝置探索、VirtIO-MMIO 區塊讀寫佇列 |
-| drivers/virtio/gpu.c / gpu.h | FDT VirtIO GPU 探測、modern control queue、2D 資源／framebuffer／scanout／dirty rectangle 傳輸 |
+| drivers/virtio/block.c / block.h | FDT 裝置探索、每裝置單一非同步 request、bounce buffer、completion poll、reset/offline |
+| drivers/virtio/gpu.c / gpu.h | FDT VirtIO GPU 探測、非阻塞 control queue、shadow／DMA backing、dirty rectangle 與 bounded reset/recovery |
 | drivers/virtio/input.c / input.h | 依 FDT 探測 VirtIO tablet/keyboard、event queue、SYN_REPORT pointer 與按鍵事件 |
-| ui/desktop/desktop.c / desktop.h | 桌布、Terminal 圖示/視窗互動、mouse cursor 與 dirty composition |
+| ui/desktop/desktop.c / desktop.h | 固定四個 Terminal window slots、z-order/focus、drag/resize、mouse cursor 與 dirty composition |
 | ui/terminal/vt.c / vt.h | ANSI 控制碼 parser、cursor/colors、normal/alternate cell model；不依賴 driver/kernel services |
-| ui/terminal/renderer.c / renderer.h | 將 VT cells、glyph 與 terminal cursor 畫到指定 framebuffer 區域；不繪製 desktop frame |
+| ui/terminal/renderer.c / renderer.h | 將 VT cells、glyph 與 terminal cursor 繪到 framebuffer viewport；固定 100×30 model 只裁切顯示，不改 TTY 尺寸 |
 | ui/graphics/primitives.c / primitives.h | framebuffer rectangle、wallpaper、glyph、text、logo 與 Terminal icon primitives |
 | ui/input/keymap.c / keymap.h | VirtIO key code 到 US keyboard/ANSI bytes 的映射與 modifier 狀態 |
 | ui/assets/font_terminal.h | WUWAOS Terminal 字型：由 Cascadia Mono 衍生的 ASCII 8×16 灰階字形，每像素 4-bit 覆蓋率 |
 | tools/make_desktop_font.ps1 | 在 Windows 將官方 Cascadia Mono Regular 字型轉成內建字形資料；一般 OS 建置不必執行 |
-| kernel/fs/fs.c / fs.h | WUFS 區塊配置、inode、目錄與路徑操作；非空白磁碟拒絕自動格式化 |
+| kernel/fs/fs.c / fs.h | WUFS 區塊配置、inode、目錄與路徑操作、redo transaction 及 fs_replace；非空白磁碟拒絕自動格式化 |
 | kernel/lib/memory.c | freestanding（無標準執行環境）建置所需的 byte-wise memset／memcpy |
 | kernel/mm/page.c / page.h | 4 KiB 實體頁面空閒串列、配置／回收、配置 bitmap 與頁數查詢 |
 | kernel/mm/swap.c / swap.h | 獨立交換區標頭、slot bitmap、4 KiB 換入／換出讀寫 |
-| kernel/syscall/syscall.c / syscall.h | 自訂 syscall ABI 分派；console 查詢 syscall 的輸出暫時路由到目前 shell TTY |
+| kernel/syscall/syscall.c / syscall.h | 自訂 syscall ABI 分派，含 SYS_FS_REPLACE；console 查詢 syscall 的輸出暫時路由到目前 shell TTY |
 | kernel/exec/user_image.S | 把 user.bin、app.bin、fan.bin 與 workstate.bin 四份獨立映像嵌入核心唯讀資料 |
 | arch/riscv/linker.ld | 核心入口、記憶體區段與權限邊界 |
 | include/syscall_numbers.h | 共用系統呼叫編號、內建程式角色、錯誤碼 |
 | include/process_limits.h | 行程與位址空間共用的上限 16 |
 | include/vm_limits.h | heap 起點、頁面大小、heap 頁數與常駐頁預算 |
 | user/lib/entry.S | 使用者入口，將核心給的角色與可選路徑交給 user_main，返回後 exit |
-| user/lib/api.c / api.h | 使用者系統呼叫包裝函式 |
+| user/lib/api.c / api.h | 使用者系統呼叫包裝函式，含 fs_replacefile |
 | user/shell/main.c | Shell image 的 user_main 入口 |
 | user/shell/shell.c / shell.h | 互動 shell、既有管理命令、fork／run／workstate 操作 |
 | user/shell/shell_exec.c / shell_exec.h | 通用 echo／cat／ls／pwd command stage、argv parser、多階段 pipe 與重導向 |
 | user/apps/demo/main.c | 獨立 app 映像的 user_main，分派 worker、quick、writer、reader、counter |
-| user/apps/fan/main.c | 獨立文字編輯器映像、緩衝區編輯、按鍵解碼、TUI、儲存與退出確認 |
+| user/apps/fan/main.c | 獨立文字編輯器映像、緩衝區編輯、按鍵解碼、TUI、atomic replace 儲存、uncertain 後禁止重試與退出確認 |
 | user/lib/print.c / print.h | 三種映像共用的字串／數字輸出與短寫處理 |
 | tools/make_disk.py | 建立／更新 WUFS 磁碟映像中的 kernel.elf，保留其他檔案；拒絕覆寫未知非空白映像 |
 | tools/make_swap.py | 建立有格式標記的獨立交換磁碟，可調整 slot 數，拒絕重格式化既有檔案 |
@@ -171,19 +174,21 @@ clock.h 的 clock_ticks 共用 rdtime（讀取硬體時間計數器指令），p
 
 ### VirtIO GPU 桌面：drivers/virtio、ui/ 與 kernel/io/tty
 
-`drivers/virtio/gpu.c` 與 `drivers/virtio/input.c` 解析 FDT 的 `virtio,mmio` 節點，再讀取裝置 magic、版本 2 與 Device ID（GPU 16、input 18）；MMIO 位址從節點 `reg` 取得，不依賴固定 slot。`vm_map_mmio` 將裝置暫存器頁以 supervisor-only（僅監督模式）映射到核心頁表。VirtIO GPU 使用 split virtqueue（分離式佇列）control queue 0，控制命令以 request descriptor 接 response descriptor；單核心同步等待 used index 前進，最長 5000 ms，逾時後停機避免重用仍可能被 DMA 的記憶體。queue 至少需要兩個 descriptor。
+`drivers/virtio/gpu.c` 與 `drivers/virtio/input.c` 解析 FDT 的 `virtio,mmio` 節點，再讀取裝置 magic、版本 2 與 Device ID（GPU 16、input 18）；MMIO 位址從節點 `reg` 取得，不依賴固定 slot。`vm_map_mmio` 將裝置暫存器頁以 supervisor-only（僅監督模式）映射到核心頁表。VirtIO GPU 使用 split virtqueue（分離式佇列）control queue 0，控制命令以 request descriptor 接 response descriptor；啟動期間的資源建立使用有界同步完成等待，runtime present 則由 `gpu_poll` 推進狀態，不在 UI callback 忙等。queue 至少需要兩個 descriptor。
 
-GPU 以 B8G8R8X8_UNORM 建立 1280×720 2D resource。`page_alloc_contiguous` 從核心可用實體頁串列找一段連續 900 頁（3,686,400 bytes），作為永久 framebuffer backing；它不在 VM 使用者分頁預算內，也不會被 swap。完成 RESOURCE_CREATE_2D、RESOURCE_ATTACH_BACKING、SET_SCANOUT 後，TRANSFER_TO_HOST_2D 將矩形像素交給裝置，RESOURCE_FLUSH 讓它顯示。每個呈現操作串行完成，因此沒有多個 GPU 命令同時引用暫存 request。
+GPU 以 B8G8R8X8_UNORM 建立 1280×720 2D resource。`page_alloc_contiguous` 分別為 CPU shadow surface 與裝置 DMA backing 配置各 900 個連續頁（每份 3,686,400 bytes）；兩份核心記憶體都不參與使用者 VM 置換。啟動資源命令完成後，runtime 狀態為 IDLE → TRANSFER → FLUSH → IDLE。只有 IDLE 時才把 dirty rectangle 從 shadow 複製到 backing 並提交；in-flight backing 不被改寫，後續區域合併等待下一個命令。完成 flush 才結束該區 ownership。此為單一 GPU request，並非平行命令佇列；2026-11-08 的非同步路徑尚未 runtime 驗證（NOT_RUN）。
+
+runtime 命令 malformed、失敗或逾時後，`gpu_poll` 先要求 VirtIO reset，再有界等待 status==0；確認 reset 後才清 queue、重新協商並重建 resource／backing attachment／scanout，成功後排入 shadow 全畫面重送。最多嘗試 2 次；reset 未確認或重建持續失敗時停用 GUI並保留裝置可能仍引用的 storage，UART 保持可用。開機同步 command 的逾時仍 fail-stop。2026-11-08 的 recovery 路徑 runtime NOT_RUN。
 
 `ui/desktop/desktop.c` 清成 RGB #B8DCF5，再透過 `ui/graphics/primitives.c` 以 5×7 位元字形放大畫出置中白色 `WUWAOS`。16×16 mouse cursor 移動時，先從備份陣列還原舊矩形，再保存新位置底下的像素、繪製黑色外框和白色填色，最後只呈現兩個位置聯集的矩形；此處理會保留被游標遮住的字樣像素。`kernel/boot/main.c` 將 GPU inclusive max bounds 注入 `input_set_pointer_bounds`；VirtIO input driver 只負責讀 tablet config 並保留相同 0…1279／0…719 normalization，不依賴 GPU/UI headers。
 
-目前原始碼移除了視窗右移 6、下移 8 像素的實心陰影，視窗繪製、背景還原與 dirty rectangle 都以本體寬高為界。這項後續調整的編譯及互動驗收尚待記錄；既有圖片及 portable v1 仍保留先前外觀，見 [Spec 30 後續調整](./SPEC-30-graphical-terminal.md#移除視窗硬陰影)。
+目前原始碼移除了視窗右移 6、下移 8 像素的實心陰影；四視窗合成、背景還原與 dirty rectangle 以各視窗本體寬高為界。互動驗收尚未執行；既有圖片及 portable v1 仍保留先前外觀，見 [Spec 30 後續調整](./SPEC-30-graphical-terminal.md#移除視窗硬陰影)。
 
-`drivers/virtio/input.c` 消化 tablet/keyboard event queue，累積 ABS_X／ABS_Y，到 SYN_REPORT 才交出完整 pointer 座標；US key code 到字元/ANSI bytes 的轉譯由 `ui/input/keymap.c` 負責。`ui/desktop/desktop.c` 對桌面圖示、關閉按鈕與 Terminal window 做 hit-test；Terminal 透過 kernel-owned `kernel/proc/terminal_service.h` 請求核心建立 parent PID 為 0 的 shell，將 FD 0/1/2 綁到獨立 GUI TTY endpoint。窗口關閉只隱藏畫面；shell `exit` 後沿用 parent=0 Zombie reaper 路徑回收，下一次點擊再建立 shell。
+`drivers/virtio/input.c` 消化 tablet/keyboard event queue，累積 ABS_X／ABS_Y，到 SYN_REPORT 才交出完整 pointer 座標；US key code 到字元/ANSI bytes 的轉譯由 `ui/input/keymap.c` 負責。`ui/desktop/desktop.c` 有固定上限 4 個 window slot，每個保存獨立 TerminalModel、TTY handle 與 geometry；z-order 陣列由底至頂，滑鼠由頂至底 hit-test，鍵盤只送 focused endpoint。點 Terminal icon 建立新 parent PID 為 0 的 shell；點 body/title 置頂並 focus，title 可拖曳，resize grip 可在有界尺寸內縮放。畫面先以 wallpaper、可見視窗和 cursor 次序軟體合成，再送 GPU；移動／遮擋先採整畫面 dirty 確保背景正確。
 
-`kernel/io/tty.c` 擁有 generation handle 對應的 per-endpoint input/output queues、raw owner、CR/LF 狀態與 session refs；UART 使用固定 endpoint。`kernel/io/io.c` 以 `OFD_TTY` 保存 handle，dup/fork 共用 OFD refs，fd 0/1/2 可路由到 endpoint。使用者點擊桌面圖示時，`ui/desktop/desktop.c` 傳入自己的 output consumer/context，呼叫 kernel-owned `process_start_gui_terminal` 建立 shell 與 TTY endpoint；`kernel/boot/main.c` 只初始化 TTY，並註冊 UI poll/active callbacks。TTY output 交給 `ui/terminal/vt.c` 更新 ANSI parser、cursor/colors、normal/alternate cells，`ui/terminal/renderer.c` 僅繪製 cells/glyphs/terminal cursor，視窗外框與 dirty composition 仍由 desktop 管理。`kernel/proc/process.c` 不 include UI header；process loop 保留 `io_poll` 與 UI poll 的先後。關閉視窗只隱藏 view；結束 session 後 stale handle 失效，直到所有 refs 釋放才可回收 slot，重用時 generation 遞增。這些 S-mode 元件仍屬同一靜態連結 kernel，不是新 syscall 或 POSIX PTY。
+`kernel/io/tty.c` 擁有 generation handle 對應的 per-endpoint input/output queues、raw owner、CR/LF 狀態與 session refs；UART 使用固定 endpoint。`kernel/io/io.c` 以 `OFD_TTY` 保存 handle，dup/fork 共用 OFD refs，fd 0/1/2 可路由到 endpoint。每個視窗的 output consumer/context 只更新自己的 TerminalModel；`terminal_renderer_draw_viewport` 將固定 100×30 cell model 裁切到可調整大小的視窗內容，沒有改變 TTY 尺寸，也沒有 resize ABI／SIGWINCH。關閉按鈕會 close session、detach callback 並釋放 UI owner ref；已持有 OFD 的 shell 收到 endpoint 關閉錯誤並退出，OFD refs 歸零後 endpoint slot 才能回收。shell 自行 exit 時 desktop poll 偵測 inactive session 並釋放 UI ref。`kernel/proc/process.c` 不 include UI header；process loop 輪詢順序保留 I/O、Block、UI。視窗仍限 4 個；TTY 是自製 endpoint，非 POSIX PTY，沒有 clipboard、job control 或 Ctrl+C。多視窗 runtime/視覺驗證 NOT_RUN。
 
-GUI canonical input 在 Enter 時提交一行，Backspace 編輯目前行，空行 Ctrl-D 產生 EOF；`fan`、`workstate` 使用 raw byte 輸入。每個 GUI session 與固定 UART endpoint 有自己的 input queue、raw owner 與 CR/LF 狀態。`OFD_TTY` 保存 generation handle；dup/fork 共用同一 OFD，fd 1 的 endpoint 決定核心查詢輸出路由。`ps`、`pcb`、`vmstat` 只在 syscall 執行其列印函式期間暫時路由；boot/driver/scheduler diagnostics 與一般核心 console 輸出仍走 UART。UI 目前仍是一個固定 Terminal view，並非多視窗。終端支援 ASCII、基本 SGR 與反白、CSI 游標移動/清除、alternate screen 與游標顯示狀態；它不是 POSIX PTY，沒有 resize、drag、clipboard、job control 或 Ctrl+C。詳細邊界及 QEMU 操作證據見 [Spec 30](./SPEC-30-graphical-terminal.md)。
+GUI canonical input 在 Enter 時提交一行，Backspace 編輯目前行，空行 Ctrl-D 產生 EOF；`fan`、`workstate` 使用 raw byte 輸入。每個 GUI session 與固定 UART endpoint 有自己的 input queue、raw owner 與 CR/LF 狀態。`OFD_TTY` 保存 generation handle；dup/fork 共用同一 OFD，fd 1 的 endpoint 決定核心查詢輸出路由。`ps`、`pcb`、`vmstat` 只在 syscall 執行其列印函式期間暫時路由；boot/driver/scheduler diagnostics 與一般核心 console 輸出仍走 UART。終端支援 ASCII、基本 SGR 與反白、CSI 游標移動/清除、alternate screen 與游標顯示狀態；它不是 POSIX PTY，沒有 clipboard、job control 或 Ctrl+C。Spec 30 保留早期單視窗與操作證據；2026-11-08 多視窗功能尚未 runtime/視覺驗證（NOT_RUN）。
 
 ## 5. trap.S / trap.c / trap.h：硬體事件到 C
 
@@ -206,12 +211,13 @@ trap.h 的數字位移供組合語言使用，C 結構用相同布局；_Static_
 trap_handler 保存目前行程的 frame，僅在 SPP=0、scause=8 時分派使用者 ecall（環境呼叫指令）。ecall 固定 4 bytes，因此先將 sepc 加 4；其他例外不套用此位移。
 使用者其他例外終止該行程，核心錯誤顯示資訊後停止。一般呼叫後透過 process_resume 返回本行程的 frame；阻塞或換下時以 swtch 保存核心呼叫，恢復後才沿原陷阱路徑返回。
 使用者 page fault（缺頁例外）12／13／15 則先呼叫 vm_handle_fault；合法按需配置／換入成功後保留原 sepc 重試，非法或無法補頁才結束行程。這不是把所有缺頁當成一般錯誤，也不對缺頁指令套用 ecall 的 +4。
+S-mode page fault 若地址落在登記的 kernel stack guard，C handler 會輸出目前 PID、stack 範圍與 fault address 後停機。`trap.S` 必須先在原核心 stack 配置並寫入 TrapFrame；若真實 stack overflow 在這一步踩到 guard，可能在抵達 C handler 前再次 fault，因此此診斷不能保證可達，也不表示可恢復。2026-11-08 新增 guard 路徑 runtime NOT_RUN。
 `mv sp, a0` 改用 C 回傳的 frame；trap_restore 寫回 CSR（控制與狀態暫存器）、還原一般暫存器，最後 sret（監督模式陷阱返回指令）。
 第一次 user_enter 也復用這份還原流程。每次保存／還原為固定 O(1)，目前不保存浮點／向量狀態，初始使用者狀態停用相關能力。
 
 ## 6. vm.c / vm.h：按需分頁、FIFO 與位址空間
 
-Sv39 將虛擬位址拆成 L2／L1／L0 三個 9-bit 索引與 12-bit 頁內位移；每張表有 512 個 8-byte PTE，對齊 4 KiB。kernel_root 共用 supervisor-only 的核心／RAM／UART，以及由 FDT 探測到的 VirtIO block/GPU/input 裝置映射，使用者不能存取這些映射。
+Sv39 將虛擬位址拆成 L2／L1／L0 三個 9-bit 索引與 12-bit 頁內位移；每張表有 512 個 8-byte PTE，對齊 4 KiB。kernel_root 共用 supervisor-only 的核心／RAM／UART，以及由 FDT 探測到的 VirtIO block/GPU/input 裝置映射，使用者不能存取這些映射。process stack 與 scheduler stack 的 guard 頁在共用核心 mapping 中移除 leaf PTE，所以新 process root 也保留這些不可存取頁。
 
 | 使用者範圍 | 權限與 backing（重建來源） |
 | --- | --- |
@@ -223,11 +229,11 @@ Sv39 將虛擬位址拆成 L2／L1／L0 三個 9-bit 索引與 12-bit 頁內位�
 只有已保留的合法區域能補頁；heap 最後一個部分頁按頁對齊映射。新建立的行程只先配置私有根表與低位址 L1，不配置使用者頁；L0 表與使用者頁在需要時取得。kernel/root/page-table 頁面常駐、不參與使用者 FIFO 置換。
 
 - VmSpace 保存 root、program、heap_end、缺頁數，以及 262 個 VmPage 補充分頁記錄。spaces[5] 是 metadata，並非預先配置的使用者 RAM；第五欄供 exec 準備新空間。
-- `vm_scope_enter/leave` 以可重入 owner Gate 序列化頁表、resident metadata、複製與查詢；同一行程可遞迴進入。scheduler/UI poll 是 no-wait context，若配置需要 eviction 會在改 PTE 或提交磁碟請求前回 BUSY。現行換出仍是同步 block I/O，沒有先撤 PTE 再非同步寫 Swap 的流程。
+- `vm_scope_enter/leave` 以可重入 owner Gate 序列化頁表、resident metadata、複製與查詢；同一行程可遞迴進入。scheduler/UI poll 是 no-wait context，若配置需要 eviction 會在改 PTE 或提交磁碟請求前回 BUSY。
 - VmPage 的 physical 非零表示常駐；slot 非零表示有獨立 swap backing；兩者皆零時由原始映像或零頁重建。dirty 與硬體 PTE_D 合併判斷修改狀態，pins 表示暫時不可換出，arrival 表示本次入駐次序。
 - vm_walk 用 `(address >> (12 + 9 * level)) & 511` 逐層取索引，需要時配置下層表。核心 vm_map 僅安裝 4 KiB 映射，拒絕覆蓋既有 PTE。
 - resident_page 取得頁框並完整讀取 swap 或填入映像／零頁，成功後才公布有效 PTE；kernel copyout 主動標 dirty，使用者直接寫入則由硬體 D bit 記錄。換入失敗保留原 slot，不公布部分讀取的頁面。
-- evict_one 掃描全域補充表，選 arrival 最小、未 pin 的常駐頁。命中不更新 arrival，因此是 FIFO，不是 LRU。dirty 頁寫入八個磁區成功後才撤銷 PTE；clean 頁直接保留既有 backing 或回到可重建狀態。sfence.vma 撤銷舊轉換後才釋放實體頁。
+- evict_one 掃描全域補充表，選 arrival 最小、未 pin 的常駐頁。命中不更新 arrival，因此是 FIFO，不是 LRU。dirty 頁保存完整 PTE、pin victim、先清除 PTE 並執行 `sfence.vma`，再等待八個 swap 磁區寫入；同一 VM Gate 使觸及該位址的其他行程 fault 後等待。寫入失敗時 restore PTE、flush、保持 RAM 為 dirty authoritative copy，並釋放本次新配 slot；成功才公布 backing slot、釋放 frame。撤銷至 commit/restore 由 cancel-defer 保護。既有 slot 部分覆寫失敗時也保留 dirty RAM，不把 slot 當作有效新副本。
 - 使用者常駐預算預設 64 頁、最小可設 8 頁；超過預算或 page_alloc 無可用頁時嘗試置換。沒有可安全換出的頁面回 -12；磁碟失敗回 -5。QEMU RAM 總量仍是 128 MiB。
 - vm_handle_fault 依 scause 12／13／15 檢查執行／讀／寫權限，合法者補頁；處理時 pin 住目前指令可能占用的 code 頁，避免 swap full 時 code 與 operand 互相淘汰。trap_handler 成功後重試同一 sepc，不像 ecall 加 4；非法位址／權限回 -14 終止該行程。
 - vm_sbrk 只調整合法 heap 範圍；縮小時釋放不再涵蓋的整頁及 slot，空的分頁表暫留到位址空間銷毀。部分頁縮小再擴張不保證既有 bytes 清零。
@@ -235,7 +241,7 @@ Sv39 將虛擬位址拆成 L2／L1／L0 三個 9-bit 索引與 12-bit 頁內位�
 - vm_destroy 先釋放補充表中所有使用者實體頁與 swap slots，再遞迴回收私有分頁表，跳過共用核心分支。拒絕銷毀 satp 正在使用的根表。exec 成功切換後才銷毀舊空間；Zombie 保留資源直到 wait／孤兒回收。
 - user_readable／user_writable 驗證合法範圍與權限，不要求常駐。user_copy_from／user_copy_to 逐頁載入後立即複製，不保留可能被下一次配置淘汰的實體指標；失敗明確回傳。user_read_byte／user_write_byte／user_write_long 是短資料包裝。
 
-FIFO 單輪選擇最多掃描 17×262 個 metadata；複製／換入換出 O(頁面 bytes)，單次轉譯固定三級。swap full 或失效候選者需繼續掃描其他頁，成本可能更高。沒有 COW、mmap、LRU、多 hart 或非同步磁碟 I/O。完整設計與實際限制見 SPEC-10。
+FIFO 單輪選擇最多掃描 17×262 個 metadata；複製／換入換出 O(頁面 bytes)，單次轉譯固定三級。swap full 或失效候選者需繼續掃描其他頁，成本可能更高。沒有 COW、mmap、LRU 或多 hart。Block API 對 caller 保留同步回傳型態，但 runtime 在內部等待非同步 request completion；本輪整合尚未 runtime 驗證（NOT_RUN）。完整基礎分頁設計見 SPEC-10。
 
 ### page.c：底層實體頁面配置
 
@@ -245,7 +251,7 @@ ps 的 free／total 是底層配置池頁數；vmstat 的 resident／limit 是�
 
 ## 7. process.c / process.h：PCB 與生命週期
 
-原本的 Process 結構現在以 ProcessControlBlock 標記，仍只有一份真實狀態。processes[16] 是行程表，kernel_stacks 每欄預留 16 KiB。
+原本的 Process 結構現在以 ProcessControlBlock 標記，仍只有一份真實狀態。processes[16] 是行程表；每個 page-aligned kernel stack slot 為一頁 unmapped guard 加 16 KiB stack，scheduler stack 同樣配置。
 PCB 保存 PID／父 PID／角色／狀態／結束碼、頁表與兩種 stack、frame、等待原因／事件通道／子 PID／結果位址、固定 8 格 FD table、event WaitRecord 與 `kernel_call_active`／`kill_pending`。WaitRecord 保存 source generation/sequence、deadline、完成狀態與結果；TTY／pipe 實際 buffer 位址與短期 staging 留在 caller stack，不交由 scheduler poller 使用。UART FD 0／1／2 是固定 sentinel；GUI TTY、pipe 與 file FD 指向全域 OFD 表。
 `ready_next` 指向下一個就緒 PCB，`ready_queued` 標示是否已入列；只有 Ready 行程位於佇列，Running／Waiting／Zombie／Unused 不佔據佇列節點。行程表仍保存所有狀態，佇列不複製 PCB。
 
@@ -260,15 +266,16 @@ Running／Waiting／Ready → exit／kill → Zombie（待回收） → wait →
 
 - create_process 掃描空欄位、分配遞增 PID、清除 PCB／stack、建立私有頁表、設定初始 frame，最後公布為 Ready。頁面不足回 -12 並恢復 Unused；失敗可能消耗 PID，但不占用 PCB 或頁面。
 - 初始 a0 存內建角色，sp 是使用者 stack 頂端，sepc 是 0x400000；sstatus 選 U-mode、SPIE=1、SIE=0，讓 sret 後可接收計時器中斷，核心內維持不搶占；停用浮點／向量能力。
+- process_init 在建立任何 process root 前，從共用 kernel_root 移除 scheduler 與各 PCB stack guard 的 leaf PTE；new roots 共用這些核心映射。建立 PCB 時只清 guard 後的 16 KiB stack，frame/top layout 不變。guard trap 的可診斷範圍與 stack-overflow 限制見第 5 節；本輪 runtime NOT_RUN。
 - process_init 建立 PID 1 的 shell；process_spawn 只接受 worker／quick，父 PID 為目前行程。
 - process_fork 建立尚未公布 Ready 的子 PCB，複製使用者頁及父 TrapFrame，設定子 a0=0、複製 FD table 並增加 OFD 引用後才改成 Ready；父子共用同一個 open-file offset。父回傳新 PID，子從 fork 呼叫後繼續。核心 stack 不複製，子使用新的保存框架。
 - process_exec 先拒絕未知 ID，再準備／交換位址空間。清除舊使用者暫存器、設定 sp／入口／a0 角色，保留原本合法的 sstatus、PID／父子關係／核心 stack／FD table，清除等待及 I/O 欄位。切換 satp 後，trap.S 直接恢復新入口，不會返回舊 shell。所有空間共用核心映射，所以切換時目前核心 stack 仍有效。
 - transition 統一記錄與更新狀態，進入 Ready 時排到 FIFO 隊尾，離開 Ready 時移除；scheduler_next 已出列的節點不重複移除。trace_enabled 可關閉子行程的追蹤，但不會停用佇列維護。PID 1 與 fan 不輸出逐次狀態紀錄，以免打斷提示字元或編輯畫面，仍有真實狀態供 ps／pcb 查閱。fork 出來但還沒 exec 的 shell 子行程照常記錄。
 - PCB 的 context 保存 ra／sp／s0～s11；create_process 設定 first_run 與 frame 下緣作為初始核心入口／堆疊。fork 使用新的核心上下文，exec 保留目前核心 C 呼叫。
-- suspend_current 要求 SIE=0 且已離開 Running，停用原事件後以 context_switch 切到獨立 16 KiB scheduler stack。scheduler_loop 在自己的堆疊切核心根表、清除 current_index、輪詢 I/O、回收孤兒 Zombie，再取隊首、增加 dispatches、切頁表並設定新 50 ms 時間片，最後 context_switch 恢復行程核心呼叫。
-- process_resume 只切核心根表並輪詢 I/O，必要時暫停當前行程，最後恢復本行程根表並返回自己的 frame。普通 syscall／缺頁恢復不重設 deadline；計時器仍清 pending、增加 preemptions、Running→Ready，再切到排程器；不修改中斷 sepc 或 a0。
+- suspend_current 要求 SIE=0 且已離開 Running，停用原事件後以 context_switch 切到有 guard page 的 16 KiB scheduler stack。scheduler_loop 在自己的堆疊切核心根表、清除 current_index、輪詢 UART／Block／UI、回收孤兒 Zombie，再取隊首、增加 dispatches、切頁表並設定新 50 ms 時間片，最後 context_switch 恢復行程核心呼叫。
+- process_resume 只切核心根表並輪詢 UART／Block／UI，必要時暫停當前行程，最後恢復本行程根表並返回自己的 frame。Block completion poll 不進 FS/VM，也不等待；若無 Ready process 但有事件來源或 block request，scheduler 以最多 10 ms deadline 週期喚醒 poll。普通 syscall／缺頁恢復不重設 deadline；計時器仍清 pending、增加 preemptions、Running→Ready，再切到排程器；不修改中斷 sepc 或 a0。
 - 核心 C 呼叫堆疊會保留，恢復後從原函式繼續，再由 trap.S 還原同一行程的使用者 frame。新行程首次派發走 first_run→user_enter；Zombie 不再返回。
-- 沒有 Ready 但有人等待 console 時持續輪詢 UART；沒有事件來源的全部阻塞顯示診斷；全部回收後進 kernel_idle。
+- 沒有 Ready 但等待 UART、UI 或 Block completion 時，scheduler 設定最多 10 ms 的 timer deadline、WFI 後輪詢 source；單純 timer wait 則睡到最近 deadline。沒有任何可喚醒來源的全部阻塞會顯示診斷；全部回收後進 kernel_idle。
 
 process_sleep 等正整數 channel（事件通道），不是睡幾秒；process_wakeup 喚醒同通道所有事件等待者，回傳數量。通知不累積，先通知、後等待不會收到舊事件。
 process_wait 僅等待直接子行程；已是 Zombie 就 collect_child，否則記錄目標與結果位址並進 WAIT_CHILD。
@@ -280,7 +287,7 @@ process_kill 只接受目前行程的直接子行程，不接受自己、PID 1 �
 父行程退出時子行程交給仍活著的 PID 1，否則無父行程；無父行程的 Zombie 由核心回收。
 `vm_destroy` 釋放私有頁面與表、清除 PCB 的根表指標後才可把欄位改成 Unused；呼叫時必須已切離該根表及堆疊。父行程 wait 可在自己的 stack 上等待並清理；scheduler 對孤兒 zombie 使用 `vm_try_destroy`，Gate 忙碌時延後回收，不在 scheduler stack 睡眠。`PROCESS_NEW` 在建立頁表期間保留 PCB slot；`process_inspect` 遇到尚未建立的 frame 會顯示 initializing，不解參考 null。
 
-`KernelGate` 以 PCB/PID 作 owner 並追蹤遞迴深度；競爭者記錄 event generation/sequence 後，在不持有目標 Gate 時等待。Kill 對仍在 syscall/fault 核心 stack 的行程標記 pending，讓原呼叫先 unwind；cancel-defer 保護必須完成的 VM cleanup。trap return 邊界檢查內部 Gate/defer 深度後才處理 pending kill。這是目前同步核心工作的生命週期保護，不代表已支援裝置 DMA 安全取消。
+`KernelGate` 以 PCB/PID 作 owner 並追蹤遞迴深度；競爭者記錄 event generation/sequence 後，在不持有目標 Gate 時等待。主要巢狀次序為 OFD/Pipe → FS → VM → 單一 Block device；poll 不反向進入這些 scope。Kill 對仍在 syscall/fault 核心 stack 的行程標記 pending；cancel-defer 保護 VM PTE 撤銷回復、已提交 DMA 的 buffer/gate ownership，以及 FS journal commit 等不可中途 unwind 的區段。trap return 邊界檢查內部 Gate/defer 深度後才處理 pending kill。排隊等待 Gate 可取消；DMA submit 後須等安全 completion/collect 才能釋放資源。2026-11-08 的這些整合路徑 runtime NOT_RUN。
 
 ### 查詢與管道
 
@@ -333,7 +340,7 @@ TTY read 在 caller stack 上以 event snapshot→讀取 readiness→必要時 w
 - pipe read/write 在 caller stack 上重試操作；usercopy 成功後更新 ring 並 notify。`io_poll` 僅 harvest UART bytes 並 notify input source，不掃描 PCB 代替行程搬移資料。
 - close／exit／kill 經 OFD 引用計數更新 pipe reader／writer。最後 writer 關閉且 ring 變空才回 EOF；最後 reader 關閉會讓 writer 回 -32。
 
-固定容量限制為每 process 8 descriptors、全域 16 OFD、8 pipes；建立／發布與引用計數仍在單 hart、SIE=0 的 bounded 核心區間更新，不等待 Gate。每個 OFD 有自己的可重入 Gate 保護 offset／資料操作，每個 pipe 另有 Gate 保護 ring copy/commit；目前 Gate 順序是 OFD/Pipe → FS → VM，per-device Block Gate 尚未接入。Block 呼叫仍在持有上層 scope 時同步 busy-poll。Shell 每行最多 3 個 stages；各 stage 用標準 FD，建立後關閉所有額外端點。
+固定容量限制為每 process 8 descriptors、全域 16 OFD、8 pipes；建立／發布與引用計數仍在單 hart、SIE=0 的 bounded 核心區間更新，不等待 Gate。每個 OFD 有自己的可重入 Gate 保護 offset／資料操作，每個 pipe 另有 Gate 保護 ring copy/commit；Gate 順序為 OFD/Pipe → FS → VM → 單一 Block device。Block completion poll 不取這些 gate。Shell 每行最多 3 個 stages；各 stage 用標準 FD，建立後關閉所有額外端點。
 
 ## 9. block.c 與 fs.c：I/O 層和檔案系統
 
@@ -345,9 +352,9 @@ kernel_main 從 OpenSBI 傳入 a1 的 FDT（硬體裝置樹），block_init_from
 
 swap.c 驗證 4 KiB slot 標頭與磁碟容量，以 bitmap 配置 1-based slot；0 表示不可用／已滿。每頁讀寫八個連續 512-byte 磁區。make_swap.py 預設建立 4095 slots／16 MiB，--slots 可調整，既有映像只驗證、不覆寫格式；slot bitmap 是本次開機的使用狀態，不保存重啟前行程。
 
-driver 協商 VERSION_1 與裝置提供的 FLUSH feature，選 queue 0，建立 request descriptor（描述項）與 status byte，寫入 available ring、通知裝置並同步輪詢 used index。每次只送一個請求；Block request 尚未接入 event poll/scheduler，沒有非同步請求、裝置並行、DMA IOMMU 或 block cache。WUFS0002 commit 使用 VirtIO FLUSH 作持久性屏障；不提供 FLUSH 的裝置只能唯讀掛載乾淨的 WUFS0002。
+driver 協商 VERSION_1 與裝置提供的 FLUSH feature，選 queue 0。每個 BlockDevice 保存 Gate、completion event、request/header/status、512-byte bounce buffer、state 與 deadline；每裝置同時最多一個 request，狀態為 IDLE → IN_FLIGHT → DONE → IDLE。讀寫/flush 對上層保留同步回傳介面：runtime 在 event wait 讓出 CPU，boot/pre-scheduler 用相同 submit/poll/collect 狀態機同步輪詢。寫入 submit 前複製 caller bytes 到持久 bounce，讀取只在成功 collect 後複製回 caller；DMA 不直達 user frame 或 caller stack。runtime no-wait caller 在 gate／queue mutation 前回 BUSY。Block poll 只 harvest used ring、檢查 deadline/status、更新 state 並 notify，不呼叫高層 I/O。無 IOMMU 或 block cache；WUFS0002 commit 使用 VirtIO FLUSH 作持久性屏障，不提供 FLUSH 的裝置只能唯讀掛載乾淨的 WUFS0002。
 
-單次請求以 `block.h` 的 BLOCK_IO_TIMEOUT_MS 設定門檻（預設 5000 ms），公布 available.index 前讀 rdtime（硬體時間計數器）保存 start。未完成時計算 unsigned 的 now-start，依 QEMU virt 10 MHz 時基比較門檻；到期再讀一次完成索引，仍未完成才印出裝置／角色／讀寫／磁區／經過時間與佇列計數。診斷後關閉監督模式中斷並停在 kernel_idle，不返回、不回收或重用尚可能被裝置 DMA 存取的緩衝區。這是單筆請求的 fail-stop，不是整檔／整頁總逾時，也沒有取消、重試或裝置 reset；初始化設定代數與 UART 等其他輪詢不在範圍。設計與操作紀錄見 [Spec 12](./SPEC-12-block-timeout.md)。
+單次 request 的 BLOCK_IO_TIMEOUT_MS 預設 5000 ms；到期或 completion malformed 時先進 RESETTING、寫 VirtIO status=0，再以 100 ms 上限等 reset acknowledgement。確認 status==0 後才將原 request 以錯誤完成、標記裝置 offline 並喚醒 caller；不自動重送、不 runtime remount。reset 未確認則保留所有 DMA storage 並 fail-stop。錯誤細節與 write/flush 結果 uncertain 標記由 owner 收集 request 時經 UART 輸出，poll context 不列印。這是每筆 512-byte request 的期限，不是整檔／整頁總期限。2026-11-08 Block async/reset runtime NOT_RUN；早期同步 timeout 設計證據保留於 [Spec 12](./SPEC-12-block-timeout.md)。
 
 WUFS0002 在 LBA 0 存 superblock；LBA 1 是 journal header，LBA 2–10 是 1152 個 redo LBA 的表，LBA 11–1162 是各 512 bytes 的 payload；其後為 inode bitmap (1163)、block bitmap (1164–1171)、固定 inode 表 (1172–1191) 與資料區 (1192 起)。inode 80 bytes，含類型、檔案長度、8 個直接區塊和 8 個單層索引區塊；每檔上限 (8 + 8×128)×512 = 528384 bytes。inode 表固定 128 個項目；16 MiB 磁碟有 32768 個 sector。WUFS0001 保持舊版布局且唯讀掛載，不做原地升級。
 
@@ -359,7 +366,7 @@ WUFS0002 在 LBA 0 存 superblock；LBA 1 是 journal header，LBA 2–10 是 11
 
 `tools/make_disk.py` 在首次使用時建立 WUFS0002 目錄與 `/boot/kernel.elf`；更新前先拒絕 pending/invalid journal，並驗證 layout、bitmap、inode、pointer 與目錄樹。它在同目錄暫存完整映像、flush/fsync 後 replace，保留其他使用者檔案。WUFS0001 只唯讀保留，不更新 kernel 副本；需用新 `DISK_IMAGE` 建立 V2。`/boot/kernel.elf` 是一般核心 ELF 檔案副本；QEMU 目前仍以 `-kernel` 載入另一份 ELF，磁碟檔案沒有參與開機。`kernel-disk.elf` 以 strip-all 減少儲存副本大小，實際啟動 `kernel.elf` 保留 debug symbols。
 
-路徑型 syscall 與 Spec 27 的 FD/OFD 介面並存，已有各行程 cwd（目前目錄）、相對路徑及 `open/close/read/write` 檔案描述號；這仍不是完整 POSIX VFS。核心複製可跨合法使用者頁面，包含按需載入與 swap。每次 FD write 最多 512 bytes，分次呼叫各自交易；`O_TRUNC` 和後續 write 不是同一筆操作。fan 一次整檔 SYS_FS_WRITE 由單一 transaction 保護。VirtIO request timeout仍沿用 fail-stop 核心停止策略。
+路徑型 syscall 與 Spec 27 的 FD/OFD 介面並存，已有各行程 cwd（目前目錄）、相對路徑及 `open/close/read/write` 檔案描述號；這仍不是完整 POSIX VFS。核心複製可跨合法使用者頁面，包含按需載入與 swap。每次 FD write 最多 512 bytes，分次呼叫各自交易；`O_TRUNC` 和後續 write 不是同一筆操作。fan 的 Save 使用 SYS_FS_REPLACE/`fs_replace` 在單一 redo transaction 建新 inode 與完整資料，再原子切換目錄項並回收舊 inode；不使用暫存路徑，目標仍被 open OFD 引用時回 BUSY，目錄不可替換。journal 容量不足時 abort，舊名稱保持原版本。commit header 發布嘗試開始後的 I/O/flush 失敗會使 volume offline 並回 `ERR_UNCERTAIN`（-200），UART 診斷帶 uncertain 標記；fan 保留編輯 buffer 並禁止重試，提示重新開檔確認。一般 FD write 仍維持原本分次交易語意。本輪 fs_replace/uncertain runtime NOT_RUN。
 
 `fs_init` 先清除掛載狀態。magic 不符時，`disk_is_blank` 使用 512-byte 緩衝區掃描整顆磁碟，回傳全零、非空白或讀取失敗；只有全零可進入 formatter。讀取失敗、非零資料及容量介面的飽和值都會拒絕自動格式化，格式化失敗也會清除掛載狀態。正常 magic 仍走既有 superblock 欄位驗證；這不是完整 fsck。
 
@@ -397,11 +404,12 @@ WUWAOS 自訂 ABI（呼叫約定）：a7（呼叫編號暫存器）、a0–a2（
 | 32 | fs_remove_tree(path) | 先檢查目錄樹及行程工作目錄，再由子向父移除並回收；shell 負責確認 |
 | 33 | sync(operation, argument) | 自製 mutex／semaphore 建立、操作與銷毀；使用者 API 封裝 |
 | 34 | exec_path(path) | 從 WUFS 載入受限靜態 RV64 ELF，成功後取代目前行程映像 |
+| 41 | fs_replace(path, buffer, length) | 在單一 redo transaction 中建立完整新檔並原子替換目錄項；目標須未被 open OFD 引用 |
 
 syscall_dispatch 用 switch 分派；結果填 frame->a0。阻塞服務保留核心呼叫堆疊、切到排程器，恢復後正常回傳真正結果，再走相同的 a0 回寫路徑，不先存 placeholder。
 exec 成功時 dispatcher 立即返回，不能把正常返回值 0 再寫進 frame->a0，否則會破壞新程式所需的初始角色參數。失敗才按一般規則回傳錯誤。
 filesystem syscall 先複製 NUL 結尾路徑，資料透過可回報錯誤的 user_copy_from／user_copy_to 逐頁處理；過程可能按需配置或從 swap 換入。寫檔前完整取得來源資料，讀取失敗不繼續用不完整 staging 覆寫磁碟。user/lib/api.c 的 syscall3 使用固定暫存器與 memory clobber 執行 ecall，提供各系統呼叫的使用者包裝函式。
-錯誤碼包括 -5 磁碟 I/O、-10 沒有直接子行程、-11 PCB／pipe 資源不足、-12 記憶體／交換資源不足、-14 非法記憶體／權限、-16 終端忙碌、-22 非法參數、-32 管道無讀者、-38 未知呼叫。
+錯誤碼包括 -5 磁碟 I/O、-10 沒有直接子行程、-11 PCB／pipe 資源不足、-12 記憶體／交換資源不足、-14 非法記憶體／權限、-16 資源忙碌、-22 非法參數、-32 管道無讀者、-38 未知呼叫、-200 持久性結果不確定。Block/GPU/FS 關鍵診斷使用 UART 固定格式 `subsystem/operation/error/uncertain/detail`，避免輸出遞迴進入失效 GUI；Block 診斷在 request owner collect 時輸出，不在 poll callback 列印。
 
 ## 11. user/shell/shell.c、demo.c、app.c、fan.c、print.c
 
@@ -452,6 +460,7 @@ all 建置、run 啟動、clean 清理 build 產物。更改 flags（編譯選�
 ## 13. 驗證與閱讀練習
 
 早期行程驗收與 QEMU monitor 證據在 SPEC.md；VirtIO／WUFS 磁碟重啟持久性在 SPEC-06；FIFO 與 Ready 行程移除驗收在 SPEC-07；動態頁面／三級表的初期驗收在 SPEC-08，fan 互動操作在 SPEC-09，現行按需分頁／Swap／回收及失敗路徑在 SPEC-10；一般 FD／管道驗收見 SPEC-27；VirtIO GPU/tablet、桌面畫素與游標移動見 SPEC-28。ps／pcb 讀取真實 PCB 與就緒佇列；`writer | reader` 示範需超過 256-byte ring capacity 才能觀察阻塞。
+2026-11-08 必要整合編譯已由主代理執行成功：`make -j2 all build/user.bin build/app.bin build/fan.bin build/workstate.bin build/kernel-disk.elf`。未建立 disk image，未啟動 QEMU，未跑測試。Block/VM 非同步 I/O 與 swap rollback、GPU async/reset、kernel stack guard、四視窗、fs_replace 與 uncertain diagnostics 的 runtime／視覺／故障復原均 NOT_RUN。過往 SPEC 的測試結果只代表當時版本，不能當作本輪新路徑的驗收。
 未完成 runtime 驗證的邊界不可等同已測試；沒有新增未經同意的測試程式碼。
 可先照 README 操作 worker，對照 saved sepc（保存指令位置）說明恢復後從哪裡繼續；再追蹤 writer 滿管道時的 buffer 位址如何留在 PCB。
 
