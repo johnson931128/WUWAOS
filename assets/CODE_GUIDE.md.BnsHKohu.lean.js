@@ -1,4 +1,4 @@
-import{_ as a,C as s,o as d,c as o,a3 as t,E as i}from"./chunks/framework.BZCmpA0A.js";const b=JSON.parse('{"title":"WUWAOS 程式碼與架構紀錄","description":"","frontmatter":{},"headers":[],"relativePath":"CODE_GUIDE.md","filePath":"CODE_GUIDE.md","lastUpdated":1794056484000}'),c={name:"CODE_GUIDE.md"};function l(n,e,p,h,u,m){const r=s("MermaidDiagram");return d(),o("div",null,[e[0]||(e[0]=t("",7)),i(r,{source:`flowchart LR
+import{_ as a,C as s,o as d,c as o,a3 as t,E as c}from"./chunks/framework.BZCmpA0A.js";const _=JSON.parse('{"title":"WUWAOS 程式碼與架構紀錄","description":"","frontmatter":{},"headers":[],"relativePath":"CODE_GUIDE.md","filePath":"CODE_GUIDE.md","lastUpdated":1794124009000}'),i={name:"CODE_GUIDE.md"};function l(n,e,p,u,h,m){const r=s("MermaidDiagram");return d(),o("div",null,[e[0]||(e[0]=t("",7)),c(r,{source:`flowchart LR
   subgraph U[U-mode 使用者程式]
     SH[Shell / fan / workstate]
     SC[syscall API]
@@ -20,11 +20,11 @@ import{_ as a,C as s,o as d,c as o,a3 as t,E as i}from"./chunks/framework.BZCmpA
     MAP[key mapping and input adapter]
     VT[ANSI VT model]
     R[terminal cell renderer]
-    WIN[desktop/window composition]
+    WIN[bounded desktop windows and composition]
   end
   SC --> SY
   IN --> MAP --> TTY
   TTY -->|registered output consumer| VT --> R --> WIN --> GPU
   WIN -->|input focus| MAP
   EV -->|poll / active| WIN
-`}),e[1]||(e[1]=t("",102))])}const k=a(c,[["render",l]]);export{b as __pageData,k as default};
+`}),e[1]||(e[1]=t("",103))])}const k=a(i,[["render",l]]);export{_ as __pageData,k as default};

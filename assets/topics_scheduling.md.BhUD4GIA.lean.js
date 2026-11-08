@@ -1,4 +1,4 @@
-import{_ as n,C as s,o as i,c as o,a3 as a,E as t}from"./chunks/framework.BZCmpA0A.js";const _=JSON.parse('{"title":"05 · 計時器與 RR 排程","description":"","frontmatter":{},"headers":[],"relativePath":"topics/scheduling.md","filePath":"topics/scheduling.md","lastUpdated":1794056484000}'),l={name:"topics/scheduling.md"};function p(d,e,c,h,m,u){const r=s("MermaidDiagram");return i(),o("div",null,[e[0]||(e[0]=a("",5)),t(r,{source:`flowchart TD
+import{_ as n,C as s,o as i,c as o,a3 as a,E as t}from"./chunks/framework.BZCmpA0A.js";const _=JSON.parse('{"title":"05 · 計時器與 RR 排程","description":"","frontmatter":{},"headers":[],"relativePath":"topics/scheduling.md","filePath":"topics/scheduling.md","lastUpdated":1794124004000}'),l={name:"topics/scheduling.md"};function p(d,e,c,h,m,u){const r=s("MermaidDiagram");return i(),o("div",null,[e[0]||(e[0]=a("",5)),t(r,{source:`flowchart TD
   A["從就緒隊首取出行程"] --> B["設定時間片：現在 + 50 ms"]
   B --> C["sret：恢復暫存器，執行使用者程式"]
   C --> D["時間到：CPU 進入 trap_entry"]
