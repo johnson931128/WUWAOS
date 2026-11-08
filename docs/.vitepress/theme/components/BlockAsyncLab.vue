@@ -40,10 +40,10 @@ const scenarios = [
   ] },
   { id: 'kill', title: '等待中 kill defer', summary: '提交後 cancel-defer 保護 request；完成並 unwind 後，kernel-call return 邊界才終止行程。', frames: [
     makeFrame('request 已提交並等待', 'caller', 'A: PROCESS_WAITING / WAIT_EVENT；cancel_defer_depth=1', 'A 持有', 'IN_FLIGHT', 'wait record 在 A 的 PCB', 'request metadata 位於 BlockDevice', 'bounce 與 caller kernel stack 都保留', 'cancel-defer 是取消保護，不是禁止 CPU 切換；A 正在 event wait，scheduler 可以執行 B。'),
-    makeFrame('B 對 A 呼叫 kill', 'scheduler', 'A 仍 WAITING；kill_pending=1', 'owner 不變', 'IN_FLIGHT', 'A 的 event wait 不取消，因 cancel_defer_depth > 0', 'request memory 穩定', 'A stack / bounce 不釋放', 'process_kill 設 kill_pending。已持有 Block gate 並進入 defer 後，取消延後以避免裝置仍使用 buffer 時中止 caller。'),
+    makeFrame('父行程 B 對子行程 A 呼叫 kill', 'caller', 'A 仍 WAITING；kill_pending=1', 'owner 不變', 'IN_FLIGHT', 'A 的 event wait 不取消，因 cancel_defer_depth > 0', 'request memory 穩定', 'A stack / bounce 不釋放', '本例假設 B 是 A 的直接父行程；WUWAOS 不允許任意行程互相 kill。process_kill 設 kill_pending，已提交 I/O 的取消延後以保留裝置仍使用的 buffer。'),
     makeFrame('裝置完成；poll 喚醒 A', 'device', 'A WAITING → READY；wait.result 由 poll 設定', '仍由 A 持有', 'DONE', '裝置先更新 used ring；scheduler poll 後才送 event', 'used entry 已驗證收取', '裝置 ownership 結束', '這裡仍是兩步：裝置寫 used ring，scheduler 下次 block_poll 才通知 event。'),
     makeFrame('A collect 並 unwind', 'caller', 'A PROCESS_RUNNING；wait record 清除', 'A 釋放 gate；defer 歸零', 'IDLE', 'A 取回結果並清 wait record', 'queue slot 安全可重用', 'buffer 生命週期完成', '取消保護不會在 defer_leave 立即 kill；A 先完成 submit_request 清理。'),
-    makeFrame('kernel-call return 邊界', 'scheduler', 'kernel_call_return 看見 kill_pending；A → ZOMBIE', '已釋放', 'IDLE', '沒有仍註冊的 event wait', '資源可安全回收', '無存活 DMA ownership', 'kernel_call_return 才呼叫 process_exit(-9)。若 reset ownership 未確認，流程先 fail-stop，不到這個邊界。'),
+    makeFrame('kernel-call return 邊界', 'caller', 'kernel_call_return 看見 kill_pending；A → ZOMBIE', '已釋放', 'IDLE', '沒有仍註冊的 event wait', '資源可安全回收', '無存活 DMA ownership', 'A 在自己的核心返回路徑由 kernel_call_return 呼叫 process_exit(-9)。若 reset ownership 未確認，流程先 fail-stop，不到這個邊界。'),
   ] },
 ]
 const scenarioId = ref('read')

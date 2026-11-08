@@ -3,6 +3,12 @@
 此處按開發順序保存規格。它們記錄「當時做了什麼」，不一定代表現在的架構；第一次閱讀建議先看左側主題章節。
 Spec 33 以前的歷史 source link 若指向舊 `kernel/` 或 `user/` 路徑，固定指向 2026-11-07 重整前 commit `800a805`，以保留當時程式碼參照；目前目錄與 UI/kernel 邊界見 [Spec 33](./SPEC-33-module-architecture.md)。
 
+## 互動教學整理（2026-11-08）
+
+網站以 HTML/CSS/Vue 加入 [Block Async I/O](./topics/block-async.md)、[FD/OFD](./topics/file-descriptors.md)、[換頁與 Swap](./topics/paging.md)、[Journal 與安全替換](./topics/journal.md) 的教學模型，按章節分別提交，搭配筆記引用、參數／欄位與函式對照。模型展示的是程式邏輯順序，不是即時 OS、效能量測或新 QEMU 驗收。
+
+大型概念與狀態演示使用 DOM/CSS，自動排版的 Mermaid 僅保留在程式碼關聯與小流程；原始規格的圖片、流程與驗收仍保留歷史位置。第一輪不使用新靜態生成圖或第三方教科書圖片；瀏覽器互動與視覺驗收依使用者要求為 NOT_RUN。
+
 ## Spec 33 之後的實作進度
 
 後續工作直接記錄於 [詳細計畫](https://github.com/johnson931128/WUWAOS/blob/main/plan.md)，不改寫舊規格的驗收紀錄。對照目前程式碼請讀 [程式碼導覽](./CODE_GUIDE.md) 與主題章節。

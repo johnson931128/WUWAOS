@@ -252,7 +252,11 @@
 - 第四章 WUFS：staging → payload flush → commit header flush → home checkpoint → clear；區分 header 前 abort、header 後 uncertain/offline 與 reboot replay，不把回錯等同未保存。
 - 執行／提交：Luna agents 分檔實作，每章（元件與該章文章）獨立 commit；主代理 review 模型與 source 一致性、整合導覽、寫作規約及計畫，再分批 push／部署。保留歷史規格、特殊事蹟、媒體與 portable v1 caveats。
 - 建置／驗收：沿用使用者先前要求，不跑 OS 或瀏覽器操作測試、不新增測試程式碼；只做必要 VitePress 建置與 GitHub Pages 部署狀態確認。成功建置不代表互動／視覺已驗收，記錄 NOT_RUN。
-- 進度：規格 `297c5b7`、導覽／寫作規約 `35fd341`；FD/OFD 章 `e171e58`，Block 章 `083d5db` 與 review 補正 `13fdebe` 已提交。paging 收尾中，journal 由 FD agent 接續；尚未執行文件建置／部署與瀏覽器操作驗收。
+- 進度：四章元件與詳細文字已實作並按章提交，導覽／首頁／寫作規約已接入；待必要文件建置及部署。瀏覽器操作與視覺驗收 NOT_RUN。
+- 章節提交：規格 `297c5b7`、導覽／規約 `35fd341`；FD/OFD `e171e58`，Block `083d5db`／`13fdebe`，paging `119c82f`，journal `261f6ac`。本輪只修改網站與文件，不修改 OS 或新增測試程式碼。
+- 實際解決方式：各 Vue 元件以 typed/static frame arrays 儲存每步資料，computed 由 scenario/index 產生唯一當前畫面；DOM/CSS cards 表示行程／物件／資料位置，不產生大型 Mermaid。原生按鈕與 select 支援單步、播放／暫停、reset、切情境，timer 在結束／切換／unmount 清除；樣式沿用 VitePress 明暗色變數與手機堆疊、reduced-motion。
+- Review 補正：Block 的裝置完成和 poll 喚醒分開，bounce 容量 512 bytes／alignment 16 bytes 分開、event wait 回傳 long，kill 示例限定父對直接子行程；FD refs 逐 FD 計數、TTY 不顯示假檔案 offset；Swap 第 3 sector 失敗不先演完 8 sectors，回復後可繼續掃候選，VM Gate 由外層 fault scope 才釋放；journal 的 header write attempt 與 durable commit 分開，replay 明示有效 header／payload／CRC 假設，不保證所有 uncertain 都可恢復。
+- 整合調整：開啟 repository Markdown HTML 以局部 import Vue 元件，原 Spec 03 四個命令的角括號改用 inline code 保留文字顯示，未改寫歷史設計或驗收。保留既有截圖與特殊事蹟，沒有新增生成圖／教科書轉載圖片或外部元件套件。
 
 ## 進度維護
 

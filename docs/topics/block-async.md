@@ -56,6 +56,8 @@ scheduler 的 poll context 不可等待 gate 或呼叫可能阻塞的 request。
 
 Gate 排隊和提交後等待的取消邊界不同：在 gate 還沒取得時，`kernel_gate_enter()` 的等待可被 kill 中斷；成功取得 gate、進入 cancel-defer 並提交後，kill 只設 `kill_pending`，不取消 event wait。caller 必須等 request 到 `DONE` 並安全 unwind，`process_kernel_call_return()` 才在返回邊界執行 `process_exit(-9)`。
 
+互動中的 kill 情境假設 B 是 A 的直接父行程，符合 `process_kill` 的權限限制；目前 WUWAOS 不能任意終止其他行程，也沒有完整 POSIX signal 系統。
+
 ## 函式介面與結果
 
 以下簽名以目前 header 為準。sector 是 512-byte sector index；`buffer` 至少可讀／寫 512 bytes，且在呼叫期間保持有效。`block_flush()` 不使用資料 buffer。
