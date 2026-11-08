@@ -237,7 +237,8 @@
 - 主代理 review 修正的功能依賴：Block 競爭者須先等 Gate 而非因 IN_FLIGHT 提前回錯；read IOERR 允許短 used length；reset ACK 後加 I/O acquire fence；GPU retry 計數要到成功 flush 才清；closed TTY 必須讓 shell 退出，避免無限重試占 PCB；關鍵 poll 故障診斷直走 UART，不進 TTY callback。這些均為靜態差異 review，非執行測試。
 - 必要整合編譯：在 WSL Ubuntu 執行 `make -j2 all build/user.bin build/app.bin build/fan.bin build/workstate.bin build/kernel-disk.elf`，退出碼 0，kernel 與四個 user images 連結成功；沒有執行 disk-image／run 目標，不掛載或更新 guest 磁碟。
 - 測試：依使用者明確要求，沒有執行測試、QEMU、GDB、故障注入、GUI／瀏覽器操作，也沒有新增測試程式碼。不得將上述功能稱為已通過 runtime 驗收。
-- 文件／部署：CODE_GUIDE、主題章節、README、首頁與歷程已依實際功能同步，文件發布建置待執行；完成後更新此處與 plan_current。
+- 文件／部署：CODE_GUIDE、主題章節、README、首頁與歷程已依實際功能同步；`fc3ddc9`、`4ea6061`、`ab1e003` 記錄導覽與內容更新。既有 `tools/publish-docs.ps1` 的 VitePress 建置成功（只有既有 bundle size 提示），發布 gh-pages `89420e0eda8aebb377c48154ecccb3ec4d9a25e5`；GitHub Pages [部署工作 42460237950](https://github.com/johnson931128/WUWAOS/actions/runs/42460237950) 已 completed/success。
+- 部署確認僅讀取 GitHub workflow 狀態，未做公開頁面／瀏覽器操作測試。既有 screenshot、特殊事蹟與 portable v1 檔案未替換；新版功能只在目前 source，不在舊 ZIP。所有本輪修改已依階段提交並分批 push，最後以本計畫紀錄提交收尾。
 
 ## 進度維護
 
