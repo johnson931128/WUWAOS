@@ -12,5 +12,6 @@ int gpu_init(void);
 uint32_t *gpu_framebuffer(void);
 int gpu_present(uint32_t x, uint32_t y, uint32_t width, uint32_t height);
 void gpu_poll(void);
+int gpu_is_enabled(void);
 
 #endif

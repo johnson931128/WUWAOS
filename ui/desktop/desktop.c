@@ -176,6 +176,7 @@ static void handle_message(const InputMessage *message) {
 
 void desktop_poll(void) {
     gpu_poll();
+    if (!gpu_is_enabled()) return;
     input_poll();
     InputMessage message;
     while (input_next_message(&message)) handle_message(&message);

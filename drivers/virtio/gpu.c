@@ -47,9 +47,8 @@
 
 typedef enum {
     GPU_IDLE, GPU_TRANSFER, GPU_FLUSH,
-    GPU_RECOVERY_RESET_WAIT, GPU_RECOVERY_CREATE, GPU_RECOVERY_CREATE_WAIT,
-    GPU_RECOVERY_ATTACH, GPU_RECOVERY_ATTACH_WAIT,
-    GPU_RECOVERY_SCANOUT, GPU_RECOVERY_SCANOUT_WAIT, GPU_DISABLED
+    GPU_RECOVERY_RESET_WAIT, GPU_RECOVERY_CREATE_WAIT,
+    GPU_RECOVERY_ATTACH_WAIT, GPU_RECOVERY_SCANOUT_WAIT, GPU_DISABLED
 } GpuState;
 
 typedef struct {
@@ -191,9 +190,81 @@ int gpu_probe(const void *blob) {
 }
 
 uintptr_t gpu_mmio_base(void) { return gpu.base; }
+static GpuHeader header(uint32_t type);
+static void queue_command(size_t request_size);
 static void write_address(uint32_t offset, uintptr_t address) {
     gpu.registers[offset / 4] = (uint32_t)address;
     gpu.registers[(offset + 4) / 4] = (uint32_t)(address >> 32);
+}
+
+static int configure_device(void) {
+    gpu.registers[VIRTIO_STATUS / 4] = DEVICE_ACKNOWLEDGE;
+    gpu.registers[VIRTIO_STATUS / 4] |= DEVICE_DRIVER;
+    gpu.registers[VIRTIO_DEVICE_FEATURES_SEL / 4] = 1;
+    const uint32_t high_features = gpu.registers[VIRTIO_DEVICE_FEATURES / 4];
+    gpu.registers[VIRTIO_DRIVER_FEATURES_SEL / 4] = 0;
+    gpu.registers[VIRTIO_DRIVER_FEATURES / 4] = 0;
+    gpu.registers[VIRTIO_DRIVER_FEATURES_SEL / 4] = 1;
+    if ((high_features & 1U) == 0) return -1;
+    gpu.registers[VIRTIO_DRIVER_FEATURES / 4] = 1U << FEATURE_VERSION_1;
+    gpu.registers[VIRTIO_STATUS / 4] |= DEVICE_FEATURES_OK;
+    if ((gpu.registers[VIRTIO_STATUS / 4] & DEVICE_FEATURES_OK) == 0) return -1;
+    gpu.registers[VIRTIO_QUEUE_SEL / 4] = 0;
+    const uint32_t maximum = gpu.registers[VIRTIO_QUEUE_NUM_MAX / 4];
+    if (maximum < 2) return -1;
+    gpu.queue_length = maximum < QUEUE_SIZE ? (uint16_t)maximum : QUEUE_SIZE;
+    gpu.registers[VIRTIO_QUEUE_NUM / 4] = gpu.queue_length;
+    write_address(VIRTIO_QUEUE_DESC_LOW, (uintptr_t)gpu.descriptors);
+    write_address(VIRTIO_QUEUE_AVAIL_LOW, (uintptr_t)&gpu.available);
+    write_address(VIRTIO_QUEUE_USED_LOW, (uintptr_t)&gpu.used);
+    gpu.registers[VIRTIO_QUEUE_READY / 4] = 1;
+    gpu.registers[VIRTIO_STATUS / 4] |= DEVICE_DRIVER_OK;
+    return 0;
+}
+
+static void disable_gpu(const char *reason) {
+    console_puts("[gpu] GUI disabled: "); console_puts(reason); console_putc('\n');
+    /* Keep command, response, queue, shadow and attached backing storage alive. */
+    gpu.state = GPU_DISABLED;
+}
+
+static void begin_recovery(void) {
+    if (gpu.recovery_attempts >= GPU_RECOVERY_RETRIES) {
+        disable_gpu("recovery retry limit reached; UART remains available");
+        return;
+    }
+    ++gpu.recovery_attempts;
+    console_puts("[gpu] Requesting device reset, attempt "); console_number((long)gpu.recovery_attempts); console_putc('\n');
+    gpu.registers[VIRTIO_STATUS / 4] = 0;
+    gpu.state = GPU_RECOVERY_RESET_WAIT;
+    gpu.state_started = clock_ticks();
+}
+
+static void queue_resource_create(void) {
+    gpu.command.create = (GpuCreateCommand){ .header = header(GPU_CMD_RESOURCE_CREATE_2D),
+        .resource_id = GPU_RESOURCE_ID, .width = GPU_WIDTH, .height = GPU_HEIGHT,
+        .format = GPU_FORMAT_B8G8R8X8_UNORM };
+    queue_command(sizeof(gpu.command.create));
+    gpu.state = GPU_RECOVERY_CREATE_WAIT;
+    gpu.state_started = clock_ticks();
+}
+
+static void queue_resource_attach(void) {
+    gpu.command.attach = (GpuAttachCommand){ .header = header(GPU_CMD_RESOURCE_ATTACH_BACKING),
+        .resource_id = GPU_RESOURCE_ID, .entries = 1,
+        .memory = { gpu.framebuffer_physical, GPU_WIDTH * GPU_HEIGHT * 4U, 0 } };
+    queue_command(sizeof(gpu.command.attach));
+    gpu.state = GPU_RECOVERY_ATTACH_WAIT;
+    gpu.state_started = clock_ticks();
+}
+
+static void queue_set_scanout(void) {
+    gpu.command.scanout = (GpuSetScanoutCommand){ .header = header(GPU_CMD_SET_SCANOUT),
+        .resource_id = GPU_RESOURCE_ID, .scanout_id = 0,
+        .rectangle = { .x = 0, .y = 0, .width = GPU_WIDTH, .height = GPU_HEIGHT } };
+    queue_command(sizeof(gpu.command.scanout));
+    gpu.state = GPU_RECOVERY_SCANOUT_WAIT;
+    gpu.state_started = clock_ticks();
 }
 static void queue_command(size_t request_size) {
     gpu.response = (GpuHeader){0};
@@ -211,6 +282,13 @@ static void queue_command(size_t request_size) {
 static int command_completion(void) {
     if (gpu.used.index == gpu.consumed) return 0;
     __asm__ volatile("fence r, rw" : : : "memory");
+    const uint16_t completed = (uint16_t)(gpu.used.index - gpu.consumed);
+    const VirtqUsedElement element = gpu.used.ring[gpu.consumed % gpu.queue_length];
+    if (completed != 1U || element.id != 0U || element.length < sizeof(GpuHeader) ||
+        element.length > sizeof(gpu.response)) {
+        console_puts("[gpu] Malformed used-ring completion; ownership is uncertain\n");
+        return -1;
+    }
     ++gpu.consumed;
     if (gpu.response.type != GPU_RESP_OK_NODATA) {
         console_puts("[gpu] Command failed, response="); console_hex(gpu.response.type); console_putc('\n');
@@ -246,6 +324,7 @@ static int create_resource(void) {
         .resource_id = GPU_RESOURCE_ID, .scanout_id = 0,
         .rectangle = { .x = 0, .y = 0, .width = GPU_WIDTH, .height = GPU_HEIGHT } };
     if (command_sync(sizeof(gpu.command.scanout)) < 0) return -1;
+    gpu.resource_attached = 1;
     return 0;
 }
 
@@ -301,37 +380,14 @@ int gpu_present(uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
 }
 
 uint32_t *gpu_framebuffer(void) { return gpu.framebuffer; }
+int gpu_is_enabled(void) { return gpu.initialized && gpu.state != GPU_DISABLED; }
 
 int gpu_init(void) {
     if (!gpu.registers) return -1;
     if (gpu.registers[VIRTIO_MAGIC / 4] != 0x74726976U || gpu.registers[VIRTIO_VERSION / 4] != 2U ||
         gpu.registers[VIRTIO_DEVICE_ID / 4] != 16U) return -1;
     gpu.registers[VIRTIO_STATUS / 4] = 0;
-    gpu.registers[VIRTIO_STATUS / 4] = DEVICE_ACKNOWLEDGE;
-    gpu.registers[VIRTIO_STATUS / 4] |= DEVICE_DRIVER;
-    gpu.registers[VIRTIO_DEVICE_FEATURES_SEL / 4] = 1;
-    const uint32_t high_features = gpu.registers[VIRTIO_DEVICE_FEATURES / 4];
-    gpu.registers[VIRTIO_DRIVER_FEATURES_SEL / 4] = 0;
-    gpu.registers[VIRTIO_DRIVER_FEATURES / 4] = 0;
-    gpu.registers[VIRTIO_DRIVER_FEATURES_SEL / 4] = 1;
-    if ((high_features & 1U) == 0) {
-        console_puts("[gpu] Device lacks VERSION_1 feature\n"); return -1;
-    }
-    gpu.registers[VIRTIO_DRIVER_FEATURES / 4] = 1U << FEATURE_VERSION_1;
-    gpu.registers[VIRTIO_STATUS / 4] |= DEVICE_FEATURES_OK;
-    if ((gpu.registers[VIRTIO_STATUS / 4] & DEVICE_FEATURES_OK) == 0) {
-        console_puts("[gpu] Feature negotiation rejected\n"); return -1;
-    }
-    gpu.registers[VIRTIO_QUEUE_SEL / 4] = 0;
-    const uint32_t maximum = gpu.registers[VIRTIO_QUEUE_NUM_MAX / 4];
-    if (maximum < 2) { console_puts("[gpu] Control queue must hold two descriptors\n"); return -1; }
-    gpu.queue_length = maximum < QUEUE_SIZE ? (uint16_t)maximum : QUEUE_SIZE;
-    gpu.registers[VIRTIO_QUEUE_NUM / 4] = gpu.queue_length;
-    write_address(VIRTIO_QUEUE_DESC_LOW, (uintptr_t)gpu.descriptors);
-    write_address(VIRTIO_QUEUE_AVAIL_LOW, (uintptr_t)&gpu.available);
-    write_address(VIRTIO_QUEUE_USED_LOW, (uintptr_t)&gpu.used);
-    gpu.registers[VIRTIO_QUEUE_READY / 4] = 1;
-    gpu.registers[VIRTIO_STATUS / 4] |= DEVICE_DRIVER_OK;
+    if (configure_device() < 0) { console_puts("[gpu] Feature negotiation or queue setup failed\n"); return -1; }
     gpu.framebuffer_pages = (GPU_WIDTH * GPU_HEIGHT * 4U + PAGE_SIZE - 1) / PAGE_SIZE;
     gpu.framebuffer_physical = page_alloc_contiguous(gpu.framebuffer_pages);
     gpu.shadow_physical = page_alloc_contiguous(gpu.framebuffer_pages);
@@ -353,24 +409,51 @@ void gpu_poll(void) {
         if (gpu.pending_valid) start_transfer();
         return;
     }
-    if (gpu.state != GPU_TRANSFER && gpu.state != GPU_FLUSH) return;
-    const int result = command_completion();
-    if (result == 0) {
-        if (clock_ticks() - gpu.state_started >= clock_ms_ticks(REQUEST_TIMEOUT_MS)) {
-            console_puts("[gpu] Async present timed out; device disabled\n");
-            gpu.state = GPU_DISABLED;
+    if (gpu.state == GPU_RECOVERY_RESET_WAIT) {
+        if (gpu.registers[VIRTIO_STATUS / 4] == 0) {
+            /* The device acknowledged reset, so it can no longer own old queue storage. */
+            __asm__ volatile("fence iorw, iorw" : : : "memory");
+            for (size_t i = 0; i < QUEUE_SIZE; ++i) gpu.descriptors[i] = (VirtqDescriptor){0};
+            gpu.available = (VirtqAvailable){0};
+            gpu.used = (VirtqUsed){0};
+            gpu.consumed = 0;
+            gpu.resource_attached = 0;
+            if (configure_device() < 0) { begin_recovery(); return; }
+            queue_resource_create();
+        } else if (clock_ticks() - gpu.state_started >= clock_ms_ticks(REQUEST_TIMEOUT_MS)) {
+            begin_recovery();
         }
         return;
     }
-    if (result < 0) { gpu.state = GPU_DISABLED; return; }
-    if (gpu.state == GPU_TRANSFER) {
-        gpu.command.flush = (GpuFlushCommand){ .header = header(GPU_CMD_RESOURCE_FLUSH),
-            .resource_id = GPU_RESOURCE_ID, .rectangle = gpu.inflight };
-        queue_command(sizeof(gpu.command.flush));
-        gpu.state = GPU_FLUSH;
-        gpu.state_started = clock_ticks();
-    } else {
-        gpu.state = GPU_IDLE;
-        if (gpu.pending_valid) start_transfer();
+    if (gpu.state == GPU_TRANSFER || gpu.state == GPU_FLUSH ||
+        gpu.state == GPU_RECOVERY_CREATE_WAIT || gpu.state == GPU_RECOVERY_ATTACH_WAIT ||
+        gpu.state == GPU_RECOVERY_SCANOUT_WAIT) {
+        const GpuState completed_state = gpu.state;
+        const int result = command_completion();
+        if (result == 0) {
+            if (clock_ticks() - gpu.state_started >= clock_ms_ticks(REQUEST_TIMEOUT_MS)) begin_recovery();
+            return;
+        }
+        if (result < 0) { begin_recovery(); return; }
+        if (completed_state == GPU_TRANSFER) {
+            gpu.command.flush = (GpuFlushCommand){ .header = header(GPU_CMD_RESOURCE_FLUSH),
+                .resource_id = GPU_RESOURCE_ID, .rectangle = gpu.inflight };
+            queue_command(sizeof(gpu.command.flush));
+            gpu.state = GPU_FLUSH;
+            gpu.state_started = clock_ticks();
+        } else if (completed_state == GPU_FLUSH) {
+            gpu.state = GPU_IDLE;
+            gpu.recovery_attempts = 0;
+            if (gpu.pending_valid) start_transfer();
+        } else if (completed_state == GPU_RECOVERY_CREATE_WAIT) {
+            queue_resource_attach();
+        } else if (completed_state == GPU_RECOVERY_ATTACH_WAIT) {
+            gpu.resource_attached = 1;
+            queue_set_scanout();
+        } else {
+            gpu.state = GPU_IDLE;
+            merge_rectangle(&gpu.pending, &gpu.pending_valid, 0, 0, GPU_WIDTH, GPU_HEIGHT);
+            console_puts("[gpu] Device recovered; full shadow redraw queued\n");
+        }
     }
 }
