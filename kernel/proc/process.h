@@ -56,6 +56,7 @@ Process *process_current(void);
 Process *process_current_or_null(void);
 Process *process_slot(int slot);
 void process_init(void);
+int process_runtime_started(void);
 _Noreturn void process_start(void);
 TrapFrame *process_resume(void);
 long process_chdir(const char *path);

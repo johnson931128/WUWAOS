@@ -14,6 +14,7 @@
 #include "kernel/fs/path.h"
 #include "kernel/ipc/sync.h"
 #include "kernel/exec/elf.h"
+#include "drivers/virtio/block.h"
 #include <limits.h>
 
 static Process processes[PROCESS_LIMIT];
@@ -41,9 +42,12 @@ static int process_ui_event_active(void) {
 static void process_poll_sources(void) {
     ++poll_context_depth;
     io_poll();
+    block_poll();
     process_poll_ui();
     --poll_context_depth;
 }
+
+int process_runtime_started(void) { return runtime_started; }
 
 int process_wait_allowed(void) {
     Process *process = process_current_or_null();
@@ -881,11 +885,12 @@ static _Noreturn void scheduler_loop(void) {
             continue;
         }
 
-        if (process_event_waiting() || process_ui_event_active()) {
+        if (process_event_waiting() || process_ui_event_active() || block_poll_pending()) {
             const uint64_t poll_deadline = clock_ticks() + clock_ms_ticks(10);
             const uint64_t wake_deadline = process_event_deadline(poll_deadline);
             while ((int64_t)(clock_ticks() - wake_deadline) < 0 &&
-                   scheduler_ready_count() == 0 && (process_event_waiting() || process_ui_event_active())) {
+                   scheduler_ready_count() == 0 &&
+                   (process_event_waiting() || process_ui_event_active() || block_poll_pending())) {
                 timer_start_deadline(wake_deadline);
                 __asm__ volatile("wfi" : : : "memory");
                 timer_stop(); /* SIE stays clear; software acknowledges pending STIP. */

@@ -1,5 +1,8 @@
 #include "drivers/virtio/block.h"
 #include "kernel/io/console.h"
+#include "kernel/proc/gate.h"
+#include "kernel/proc/process.h"
+#include "syscall_numbers.h"
 #include "arch/riscv/clock.h"
 #include <stddef.h>
 
@@ -71,6 +74,18 @@ typedef struct {
     uint64_t sector;
 } BlockRequest;
 
+typedef enum {
+    BLOCK_REQUEST_IDLE,
+    BLOCK_REQUEST_IN_FLIGHT,
+    BLOCK_REQUEST_DONE
+} BlockRequestState;
+
+typedef enum {
+    BLOCK_OP_READ,
+    BLOCK_OP_WRITE,
+    BLOCK_OP_FLUSH
+} BlockOperation;
+
 typedef struct {
     volatile uint32_t *registers;
     volatile uint16_t consumed;
@@ -81,7 +96,16 @@ typedef struct {
     VirtqAvailable avail_ring __attribute__((aligned(2)));
     VirtqUsed used_ring __attribute__((aligned(4)));
     BlockRequest header __attribute__((aligned(16)));
-    uint8_t status;
+    volatile uint8_t status;
+    uint8_t bounce[512] __attribute__((aligned(16)));
+    KernelGate gate;
+    KernelEventSource completion;
+    volatile BlockRequestState request_state;
+    BlockOperation operation;
+    uint32_t request_sector;
+    uint64_t deadline;
+    long request_result;
+    unsigned offline : 1;
 } BlockDevice;
 
 static BlockDevice devices[2];
@@ -222,6 +246,11 @@ static void write_address(BlockDevice *target, uint32_t low_register, uintptr_t 
 static int init_device(BlockDevice *target, uintptr_t base) {
     volatile uint32_t *device = (volatile uint32_t *)base;
     target->registers = device;
+    if (kernel_gate_init(&target->gate) < 0 ||
+        event_source_init(&target->completion, 1) < 0) {
+        target->registers = 0;
+        return -1;
+    }
     if (device[VIRTIO_MAGIC / 4] != 0x74726976U ||
         device[VIRTIO_VERSION / 4] != 2U || device[VIRTIO_DEVICE_ID / 4] != 2U) {
         console_puts("[block] FDT device is not modern virtio-blk\n");
@@ -304,36 +333,132 @@ static _Noreturn void transfer_timeout(BlockDevice *target, uint32_t sector, int
     kernel_idle();
 }
 
-static int transfer(BlockDevice *target, uint32_t sector, void *buffer, int write) {
-    if (target == 0 || target->registers == 0 || buffer == 0 || sector >= target->capacity) {
-        return -1;
+static _Noreturn void malformed_completion(BlockDevice *target, uint32_t used_id) {
+    console_puts("[block] Malformed used-ring completion device=");
+    console_hex((uintptr_t)target->registers);
+    console_puts(" id="); console_number((long)used_id);
+    console_puts("\n[panic] DMA ownership retained; kernel halted. Restart QEMU.\n");
+    __asm__ volatile("csrci sstatus, 2\ncsrw sie, zero" : : : "memory");
+    kernel_idle();
+}
+
+static void poll_device(BlockDevice *target) {
+    if (target == 0 || target->request_state != BLOCK_REQUEST_IN_FLIGHT) return;
+    const uint16_t used_index = target->used_ring.index;
+    if (used_index != target->consumed) {
+        __asm__ volatile("fence r, rw" : : : "memory");
+        const uint16_t delta = (uint16_t)(used_index - target->consumed);
+        if (delta != 1U) malformed_completion(target, UINT32_MAX);
+        const VirtqUsedElement *element = &target->used_ring.ring[target->consumed % target->length];
+        if (element->id != 0U) malformed_completion(target, element->id);
+        const uint32_t expected_length = target->operation == BLOCK_OP_READ ? 513U : 1U;
+        if (element->length != expected_length) malformed_completion(target, element->length);
+        ++target->consumed;
+        const uint8_t status = target->status;
+        if (status > 2U) malformed_completion(target, status);
+        target->request_result = status == 0U ? 0 : ERR_IO;
+        target->request_state = BLOCK_REQUEST_DONE;
+        event_source_notify(&target->completion, target->request_result);
+        return;
     }
-    target->header.type = write ? 1U : 0U;
+    if ((int64_t)(clock_ticks() - target->deadline) >= 0 &&
+        target->used_ring.index == target->consumed) {
+        const uint64_t elapsed = clock_ms_ticks(BLOCK_IO_TIMEOUT_MS);
+        transfer_timeout(target, target->request_sector,
+                         target->operation == BLOCK_OP_WRITE, elapsed);
+    }
+}
+
+void block_poll(void) {
+    for (unsigned int i = 0; i < device_count; ++i) poll_device(&devices[i]);
+}
+
+int block_poll_pending(void) {
+    for (unsigned int i = 0; i < device_count; ++i)
+        if (devices[i].request_state == BLOCK_REQUEST_IN_FLIGHT) return 1;
+    return 0;
+}
+
+static int submit_request(BlockDevice *target, uint32_t sector, const void *buffer,
+                          BlockOperation operation) {
+    if (target == 0 || target->registers == 0 || target->offline ||
+        target->request_state != BLOCK_REQUEST_IDLE ||
+        (operation != BLOCK_OP_FLUSH && (buffer == 0 || sector >= target->capacity)) ||
+        (operation == BLOCK_OP_FLUSH && !target->flush_supported)) return ERR_IO;
+    if (process_runtime_started() && !process_wait_allowed()) return ERR_BUSY;
+
+    const int gate_result = kernel_gate_enter(&target->gate);
+    if (gate_result < 0) return gate_result;
+    const int defer_result = process_cancel_defer_enter();
+    if (defer_result < 0) {
+        (void)kernel_gate_leave(&target->gate);
+        return defer_result;
+    }
+
+    /* Request storage and the data DMA target remain owned until collect. */
+    if (target->request_state != BLOCK_REQUEST_IDLE || target->offline) {
+        (void)kernel_gate_leave(&target->gate);
+        (void)process_cancel_defer_leave();
+        return target->offline ? ERR_IO : ERR_BUSY;
+    }
+    if (operation == BLOCK_OP_WRITE) {
+        const uint8_t *source = buffer;
+        for (unsigned int i = 0; i < sizeof(target->bounce); ++i) target->bounce[i] = source[i];
+    }
+    target->operation = operation;
+    target->request_sector = sector;
+    target->request_result = ERR_IO;
+    target->header.type = operation == BLOCK_OP_READ ? 0U :
+                          operation == BLOCK_OP_WRITE ? 1U : 4U;
     target->header.reserved = 0;
     target->header.sector = sector;
     target->status = 0xffU;
     target->descriptor[0] = (VirtqDescriptor){ (uintptr_t)&target->header, sizeof(target->header), 1U, 1U };
-    target->descriptor[1] = (VirtqDescriptor){ (uintptr_t)buffer, 512U,
-        (uint16_t)(1U | (write ? 0U : 2U)), 2U };
-    target->descriptor[2] = (VirtqDescriptor){ (uintptr_t)&target->status, 1U, 2U, 0U };
+    const int has_data = operation != BLOCK_OP_FLUSH;
+    if (has_data) {
+        target->descriptor[1] = (VirtqDescriptor){ (uintptr_t)target->bounce, 512U,
+            (uint16_t)(1U | (operation == BLOCK_OP_READ ? 2U : 0U)), 2U };
+        target->descriptor[2] = (VirtqDescriptor){ (uintptr_t)&target->status, 1U, 2U, 0U };
+    } else {
+        target->descriptor[1] = (VirtqDescriptor){ (uintptr_t)&target->status, 1U, 2U, 0U };
+    }
+    uint32_t generation;
+    uint64_t sequence;
+    if (event_source_snapshot(&target->completion, &generation, &sequence) < 0) {
+        (void)kernel_gate_leave(&target->gate);
+        (void)process_cancel_defer_leave();
+        return ERR_IO;
+    }
     const uint16_t index = target->avail_ring.index;
     target->avail_ring.ring[index % target->length] = 0;
-    const uint64_t start = clock_ticks();
+    target->deadline = clock_ticks() + clock_ms_ticks(BLOCK_IO_TIMEOUT_MS);
+    target->request_state = BLOCK_REQUEST_IN_FLIGHT;
     __asm__ volatile("fence rw, w" : : : "memory");
     target->avail_ring.index = (uint16_t)(index + 1U);
     __asm__ volatile("fence w, o" : : : "memory");
     target->registers[VIRTIO_QUEUE_NOTIFY / 4] = 0;
-    while (target->used_ring.index == target->consumed) {
-        const uint64_t elapsed = clock_ticks() - start;
-        if (elapsed >= clock_ms_ticks(BLOCK_IO_TIMEOUT_MS) &&
-            target->used_ring.index == target->consumed) {
-            transfer_timeout(target, sector, write, elapsed);
+    while (target->request_state == BLOCK_REQUEST_IN_FLIGHT) {
+        if (!process_runtime_started()) {
+            poll_device(target);
+            continue;
         }
+        (void)process_wait_event(&target->completion, generation, sequence, 0, ERR_TIMED_OUT);
+        (void)event_source_snapshot(&target->completion, &generation, &sequence);
     }
-    __asm__ volatile("fence r, rw" : : : "memory");
-    const int result = target->status == 0 ? 0 : -1;
-    ++target->consumed;
+
+    const int result = (int)target->request_result;
+    if (result == 0 && operation == BLOCK_OP_READ) {
+        uint8_t *destination = (uint8_t *)buffer;
+        for (unsigned int i = 0; i < sizeof(target->bounce); ++i) destination[i] = target->bounce[i];
+    }
+    target->request_state = BLOCK_REQUEST_IDLE;
+    (void)kernel_gate_leave(&target->gate);
+    (void)process_cancel_defer_leave();
     return result;
+}
+
+static int transfer(BlockDevice *target, uint32_t sector, void *buffer, int write) {
+    return submit_request(target, sector, buffer, write ? BLOCK_OP_WRITE : BLOCK_OP_READ);
 }
 
 static int has_magic(const uint8_t *header, const char *magic) {
@@ -385,28 +510,7 @@ int block_write(uint32_t sector, const void *buffer) {
     return transfer(filesystem, sector, (void *)buffer, 1);
 }
 static int flush_device(BlockDevice *target) {
-    if (target == 0 || target->registers == 0 || !target->flush_supported) return -1;
-    target->status = 0xffU;
-    target->header.type = 4U;
-    target->header.reserved = 0;
-    target->header.sector = 0;
-    target->descriptor[0] = (VirtqDescriptor){ (uintptr_t)&target->header, sizeof(target->header), 1U, 1U };
-    target->descriptor[1] = (VirtqDescriptor){ (uintptr_t)&target->status, 1U, 2U, 0U };
-    const uint16_t index = target->avail_ring.index;
-    target->avail_ring.ring[index % target->length] = 0;
-    const uint64_t start = clock_ticks();
-    __asm__ volatile("fence rw, w" : : : "memory");
-    target->avail_ring.index = (uint16_t)(index + 1U);
-    __asm__ volatile("fence w, o" : : : "memory");
-    target->registers[VIRTIO_QUEUE_NOTIFY / 4] = 0;
-    while (target->used_ring.index == target->consumed) {
-        const uint64_t elapsed = clock_ticks() - start;
-        if (elapsed >= clock_ms_ticks(BLOCK_IO_TIMEOUT_MS) && target->used_ring.index == target->consumed)
-            transfer_timeout(target, 0, 1, elapsed);
-    }
-    __asm__ volatile("fence r, rw" : : : "memory");
-    ++target->consumed;
-    return target->status == 0 ? 0 : -1;
+    return submit_request(target, 0, 0, BLOCK_OP_FLUSH);
 }
 int block_flush(void) { return flush_device(filesystem); }
 int block_flush_supported(void) {

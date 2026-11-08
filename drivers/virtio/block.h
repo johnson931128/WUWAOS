@@ -7,6 +7,9 @@
 #define BLOCK_IO_TIMEOUT_MS 5000UL
 
 int block_init_from_fdt(const void *fdt);
+/* Nonblocking completion harvest; safe from scheduler/UI polling context. */
+void block_poll(void);
+int block_poll_pending(void);
 unsigned int block_mmio_count(void);
 uintptr_t block_mmio_base(unsigned int index);
 int block_read(uint32_t sector, void *buffer);
