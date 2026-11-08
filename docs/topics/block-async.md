@@ -12,7 +12,7 @@ import BlockAsyncLab from '../.vitepress/theme/components/BlockAsyncLab.vue'
 
 最簡單的程式可以提交請求後一直讀裝置狀態，直到完成；這會讓 CPU 花時間忙等。另一種做法是提交工作後讓目前行程等待，CPU 去執行其他 READY 行程；scheduler 輪詢完成狀態，完成後通知等待者。WUWAOS 的 Block request 採用後者的排程方式，但裝置完成目前由 scheduler polling 觀察，並非 VirtIO block 硬體中斷直接喚醒 caller。
 
-使用者課程筆記《ch12 I_O Systems》§12.2.4 說明：「大量資料搬移時，不要讓 CPU 一個 byte 一個 byte 親自搬」；DMA 讓裝置直接在 I/O device 與 main memory 間傳資料。筆記也指出：「DMA 不是完全不用 CPU。」OS 仍要設定工作與處理完成。這是課程中的 DMA 概念。WUWAOS 的實作以 descriptor 指向 BlockDevice 內的靜態 request 欄位與 bounce buffer；這章只說明這條 block request 路徑，不把課本中的通用 DMA controller 流程誤當作 WUWAOS 的中斷流程。
+使用者課程筆記[《ch12 I_O Systems》§12.2.4](https://github.com/johnson931128/WUWAOS/blob/main/notes/ch12%20%20I_O%20Systems.md#L1072) 說明：「大量資料搬移時，不要讓 CPU 一個 byte 一個 byte 親自搬」；DMA 讓裝置直接在 I/O device 與 main memory 間傳資料。筆記也指出：「DMA 不是完全不用 CPU。」OS 仍要設定工作與處理完成。這是課程中的 DMA 概念。WUWAOS 的實作以 descriptor 指向 BlockDevice 內的靜態 request 欄位與 bounce buffer；這章只說明這條 block request 路徑，不把課本中的通用 DMA controller 流程誤當作 WUWAOS 的中斷流程。
 
 ## 一筆 request 的實際路徑
 
@@ -45,7 +45,7 @@ scheduler 的 poll context 不可等待 gate 或呼叫可能阻塞的 request。
 | `descriptor[]` | `BlockDevice` | 描述 header、可選 data buffer、status 的地址、長度與方向旗標 |
 | `avail_ring` / `used_ring` | `BlockDevice` | driver 發布 request；裝置回報完成；只有 poller 收取 used entry |
 | `status` | `BlockDevice` | 裝置回報狀態；driver 驗證後轉成 0 或 `ERR_IO` |
-| `bounce[512]` | `BlockDevice` | 16-byte 對齊的持久資料緩衝；在 collect 或確認 reset 前不能重用 |
+| `bounce[512]` | `BlockDevice` | 容量 512 bytes、16-byte 對齊的持久資料緩衝；在 collect 或確認 reset 前不能重用 |
 | `request_state` | `BlockDevice` | `IDLE`、`IN_FLIGHT`、`RESETTING`、`DONE` 四種狀態 |
 | `operation` / `request_sector` | `BlockDevice` | 記錄 READ/WRITE/FLUSH 與目標 sector，供完成處理與診斷使用 |
 | `deadline` / `reset_deadline` | `BlockDevice` | 單筆 I/O deadline 與 reset 確認期限 |
@@ -68,7 +68,7 @@ Gate 排隊和提交後等待的取消邊界不同：在 gate 還沒取得時，
 | `int block_swap_read(uint32_t sector, void *buffer)` | swap 裝置 sector 與目的 buffer | `0` 並複製 bounce | `ERR_IO`、`ERR_BUSY`、`ERR_TIMED_OUT` |
 | `int block_swap_write(uint32_t sector, const void *buffer)` | swap 裝置 sector 與來源 buffer | `0` | `ERR_IO`、`ERR_BUSY`、`ERR_TIMED_OUT` |
 | `void block_poll(void)` | 無；poll 已初始化的裝置 | 無回傳值 | 不等待；由 scheduler/poll context 呼叫 |
-| `int process_wait_event(KernelEventSource *source, uint32_t generation, uint64_t sequence, uint64_t deadline, long timeout_result)` | event 版本與序號、可選 deadline、timeout 結果 | 通知結果；sequence 已變可立即回 0 | `ERR_BUSY`、`ERR_IO`、傳入的 timeout result |
+| `long process_wait_event(KernelEventSource *source, uint32_t generation, uint64_t sequence, uint64_t deadline, long timeout_result)` | event 版本與序號、可選 deadline、timeout 結果 | 通知結果；sequence 已變可立即回 0 | `ERR_BUSY`、`ERR_IO`、傳入的 timeout result |
 | `void event_source_notify(KernelEventSource *source, long result)` | 要通知的 source 與結果 | 無回傳值；sequence 增加並通知等待者 | source 無效或關閉時不通知 |
 | `int kernel_gate_enter(KernelGate *gate)` / `int kernel_gate_leave(KernelGate *gate)` | 裝置 gate | `0` | `ERR_BUSY`、`ERR_INTERRUPTED`、`ERR_INVALID`、`ERR_IO` |
 
