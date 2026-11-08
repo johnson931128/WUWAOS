@@ -41,6 +41,7 @@
 #define FEATURE_VERSION_1 0U
 #define FEATURE_FLUSH 9U
 #define QUEUE_SIZE 8U
+#define BLOCK_RESET_TIMEOUT_MS 100UL
 
 typedef struct {
     uint64_t address;
@@ -77,6 +78,7 @@ typedef struct {
 typedef enum {
     BLOCK_REQUEST_IDLE,
     BLOCK_REQUEST_IN_FLIGHT,
+    BLOCK_REQUEST_RESETTING,
     BLOCK_REQUEST_DONE
 } BlockRequestState;
 
@@ -104,7 +106,9 @@ typedef struct {
     BlockOperation operation;
     uint32_t request_sector;
     uint64_t deadline;
+    uint64_t reset_deadline;
     long request_result;
+    long reset_result;
     unsigned offline : 1;
 } BlockDevice;
 
@@ -316,46 +320,70 @@ static int init_device(BlockDevice *target, uintptr_t base) {
     return target->capacity == 0 ? -1 : 0;
 }
 
-static _Noreturn void transfer_timeout(BlockDevice *target, uint32_t sector, int write, uint64_t elapsed) {
-    console_puts("[block] I/O TIMEOUT device=");
+static _Noreturn void reset_fail_stop(BlockDevice *target) {
+    console_puts("[block] RESET NOT CONFIRMED device=");
     console_hex((uintptr_t)target->registers);
     console_puts(" role=");
     console_puts(target == filesystem ? "WUFS" : target == swap_disk ? "swap" : "probe");
-    console_puts(write ? " op=write" : " op=read");
-    console_puts(" sector="); console_number((long)sector);
-    console_puts(" elapsed_ms="); console_number((long)(elapsed / (CLOCK_TIMEBASE_HZ / 1000UL)));
-    console_puts(" limit_ms="); console_number((long)BLOCK_IO_TIMEOUT_MS);
-    console_puts(" consumed="); console_number(target->consumed);
-    console_puts(" used="); console_number(target->used_ring.index);
-    console_puts("\n[panic] Outstanding disk request retained; kernel halted. Restart QEMU.\n");
-    /* The device may still DMA into the request/buffer. Never return or reuse either. */
+    console_puts(" sector="); console_number((long)target->request_sector);
+    console_puts(" status="); console_number(target->registers[VIRTIO_STATUS / 4]);
+    console_puts("\n[panic] DMA storage retained; kernel halted. Restart QEMU.\n");
+    /* Reset was not acknowledged, so the device may still own every queue buffer. */
     __asm__ volatile("csrci sstatus, 2\ncsrw sie, zero" : : : "memory");
     kernel_idle();
 }
 
-static _Noreturn void malformed_completion(BlockDevice *target, uint32_t used_id) {
-    console_puts("[block] Malformed used-ring completion device=");
-    console_hex((uintptr_t)target->registers);
-    console_puts(" id="); console_number((long)used_id);
-    console_puts("\n[panic] DMA ownership retained; kernel halted. Restart QEMU.\n");
-    __asm__ volatile("csrci sstatus, 2\ncsrw sie, zero" : : : "memory");
-    kernel_idle();
+static void begin_reset(BlockDevice *target, long result) {
+    if (target->request_state != BLOCK_REQUEST_IN_FLIGHT) return;
+    target->reset_result = result;
+    target->reset_deadline = clock_ticks() + clock_ms_ticks(BLOCK_RESET_TIMEOUT_MS);
+    target->request_state = BLOCK_REQUEST_RESETTING;
+    /* Do not clear queue memory or return while reset ownership is uncertain. */
+    __asm__ volatile("fence rw, rw" : : : "memory");
+    target->registers[VIRTIO_STATUS / 4] = 0;
+    __asm__ volatile("fence o, rw" : : : "memory");
+}
+
+static void poll_reset(BlockDevice *target) {
+    if (target->registers[VIRTIO_STATUS / 4] == 0U) {
+        target->offline = 1;
+        target->request_result = target->reset_result;
+        target->request_state = BLOCK_REQUEST_DONE;
+        event_source_notify(&target->completion, target->request_result);
+        return;
+    }
+    if ((int64_t)(clock_ticks() - target->reset_deadline) >= 0)
+        reset_fail_stop(target);
 }
 
 static void poll_device(BlockDevice *target) {
-    if (target == 0 || target->request_state != BLOCK_REQUEST_IN_FLIGHT) return;
+    if (target == 0) return;
+    if (target->request_state == BLOCK_REQUEST_RESETTING) {
+        poll_reset(target);
+        return;
+    }
+    if (target->request_state != BLOCK_REQUEST_IN_FLIGHT) return;
     const uint16_t used_index = target->used_ring.index;
     if (used_index != target->consumed) {
         __asm__ volatile("fence r, rw" : : : "memory");
         const uint16_t delta = (uint16_t)(used_index - target->consumed);
-        if (delta != 1U) malformed_completion(target, UINT32_MAX);
+        if (delta != 1U) {
+            begin_reset(target, ERR_IO);
+            return;
+        }
         const VirtqUsedElement *element = &target->used_ring.ring[target->consumed % target->length];
-        if (element->id != 0U) malformed_completion(target, element->id);
-        const uint32_t expected_length = target->operation == BLOCK_OP_READ ? 513U : 1U;
-        if (element->length != expected_length) malformed_completion(target, element->length);
-        ++target->consumed;
+        if (element->id != 0U) {
+            begin_reset(target, ERR_IO);
+            return;
+        }
         const uint8_t status = target->status;
-        if (status > 2U) malformed_completion(target, status);
+        if (status > 2U || element->length == 0U || element->length > 513U ||
+            (target->operation != BLOCK_OP_READ && element->length != 1U) ||
+            (target->operation == BLOCK_OP_READ && status == 0U && element->length != 513U)) {
+            begin_reset(target, ERR_IO);
+            return;
+        }
+        ++target->consumed;
         target->request_result = status == 0U ? 0 : ERR_IO;
         target->request_state = BLOCK_REQUEST_DONE;
         event_source_notify(&target->completion, target->request_result);
@@ -363,9 +391,7 @@ static void poll_device(BlockDevice *target) {
     }
     if ((int64_t)(clock_ticks() - target->deadline) >= 0 &&
         target->used_ring.index == target->consumed) {
-        const uint64_t elapsed = clock_ms_ticks(BLOCK_IO_TIMEOUT_MS);
-        transfer_timeout(target, target->request_sector,
-                         target->operation == BLOCK_OP_WRITE, elapsed);
+        begin_reset(target, ERR_TIMED_OUT);
     }
 }
 
@@ -375,14 +401,14 @@ void block_poll(void) {
 
 int block_poll_pending(void) {
     for (unsigned int i = 0; i < device_count; ++i)
-        if (devices[i].request_state == BLOCK_REQUEST_IN_FLIGHT) return 1;
+        if (devices[i].request_state == BLOCK_REQUEST_IN_FLIGHT ||
+            devices[i].request_state == BLOCK_REQUEST_RESETTING) return 1;
     return 0;
 }
 
 static int submit_request(BlockDevice *target, uint32_t sector, const void *buffer,
                           BlockOperation operation) {
     if (target == 0 || target->registers == 0 || target->offline ||
-        target->request_state != BLOCK_REQUEST_IDLE ||
         (operation != BLOCK_OP_FLUSH && (buffer == 0 || sector >= target->capacity)) ||
         (operation == BLOCK_OP_FLUSH && !target->flush_supported)) return ERR_IO;
     if (process_runtime_started() && !process_wait_allowed()) return ERR_BUSY;
@@ -437,7 +463,7 @@ static int submit_request(BlockDevice *target, uint32_t sector, const void *buff
     target->avail_ring.index = (uint16_t)(index + 1U);
     __asm__ volatile("fence w, o" : : : "memory");
     target->registers[VIRTIO_QUEUE_NOTIFY / 4] = 0;
-    while (target->request_state == BLOCK_REQUEST_IN_FLIGHT) {
+    while (target->request_state != BLOCK_REQUEST_DONE) {
         if (!process_runtime_started()) {
             poll_device(target);
             continue;
