@@ -252,7 +252,7 @@
 - 第四章 WUFS：staging → payload flush → commit header flush → home checkpoint → clear；區分 header 前 abort、header 後 uncertain/offline 與 reboot replay，不把回錯等同未保存。
 - 執行／提交：Luna agents 分檔實作，每章（元件與該章文章）獨立 commit；主代理 review 模型與 source 一致性、整合導覽、寫作規約及計畫，再分批 push／部署。保留歷史規格、特殊事蹟、媒體與 portable v1 caveats。
 - 建置／驗收：沿用使用者先前要求，不跑 OS 或瀏覽器操作測試、不新增測試程式碼；只做必要 VitePress 建置與 GitHub Pages 部署狀態確認。成功建置不代表互動／視覺已驗收，記錄 NOT_RUN。
-- 進度：規格已提交 `297c5b7`；Block、FD/OFD、paging 三章由 Luna high agents 分檔實作中，journal 待空出的 agent 接續；主代理同步導覽／首頁／寫作規約，最後統一 review、建置部署。
+- 進度：規格 `297c5b7`、導覽／寫作規約 `35fd341`；FD/OFD 章 `e171e58`，Block 章 `083d5db` 與 review 補正 `13fdebe` 已提交。paging 收尾中，journal 由 FD agent 接續；尚未執行文件建置／部署與瀏覽器操作驗收。
 
 ## 進度維護
 
