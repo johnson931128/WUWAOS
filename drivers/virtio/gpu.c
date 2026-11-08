@@ -1,6 +1,7 @@
 #include "drivers/virtio/gpu.h"
 #include "arch/riscv/clock.h"
 #include "kernel/io/console.h"
+#include "kernel/io/diagnostic.h"
 #include "kernel/mm/page.h"
 #include "kernel/proc/process.h"
 #include <stddef.h>
@@ -222,19 +223,19 @@ static int configure_device(void) {
     return 0;
 }
 
-static void disable_gpu(const char *reason) {
-    console_puts("[gpu] GUI disabled: "); console_puts(reason); console_putc('\n');
+static void disable_gpu(void) {
+    kernel_diagnostic("gpu", "recovery-exhausted", -1, 1, gpu.recovery_attempts);
     /* Keep command, response, queue, shadow and attached backing storage alive. */
     gpu.state = GPU_DISABLED;
 }
 
 static void begin_recovery(void) {
     if (gpu.recovery_attempts >= GPU_RECOVERY_RETRIES) {
-        disable_gpu("recovery retry limit reached; UART remains available");
+        disable_gpu();
         return;
     }
     ++gpu.recovery_attempts;
-    console_puts("[gpu] Requesting device reset, attempt "); console_number((long)gpu.recovery_attempts); console_putc('\n');
+    kernel_diagnostic("gpu", "reset-request", -1, 1, gpu.recovery_attempts);
     gpu.registers[VIRTIO_STATUS / 4] = 0;
     gpu.state = GPU_RECOVERY_RESET_WAIT;
     gpu.state_started = clock_ticks();
@@ -286,12 +287,12 @@ static int command_completion(void) {
     const VirtqUsedElement element = gpu.used.ring[gpu.consumed % gpu.queue_length];
     if (completed != 1U || element.id != 0U || element.length < sizeof(GpuHeader) ||
         element.length > sizeof(gpu.response)) {
-        console_puts("[gpu] Malformed used-ring completion; ownership is uncertain\n");
+        kernel_diagnostic("gpu", "used-ring-malformed", -1, 1, element.id);
         return -1;
     }
     ++gpu.consumed;
     if (gpu.response.type != GPU_RESP_OK_NODATA) {
-        console_puts("[gpu] Command failed, response="); console_hex(gpu.response.type); console_putc('\n');
+        kernel_diagnostic("gpu", "command-response", -1, 0, gpu.response.type);
         return -1;
     }
     return 1;
@@ -303,7 +304,7 @@ static int command_sync(size_t request_size) {
     int result;
     while ((result = command_completion()) == 0) {
         if (clock_ticks() - start >= clock_ms_ticks(REQUEST_TIMEOUT_MS)) {
-            console_puts("[gpu] Command timed out after 5000 ms; halting to protect DMA buffers\n");
+            kernel_diagnostic("gpu", "command-timeout", -1, 1, REQUEST_TIMEOUT_MS);
             kernel_idle();
         }
     }
@@ -390,8 +391,15 @@ int gpu_init(void) {
     if (configure_device() < 0) { console_puts("[gpu] Feature negotiation or queue setup failed\n"); return -1; }
     gpu.framebuffer_pages = (GPU_WIDTH * GPU_HEIGHT * 4U + PAGE_SIZE - 1) / PAGE_SIZE;
     gpu.framebuffer_physical = page_alloc_contiguous(gpu.framebuffer_pages);
+    if (!gpu.framebuffer_physical) { console_puts("[gpu] Cannot allocate DMA framebuffer RAM\n"); return -1; }
     gpu.shadow_physical = page_alloc_contiguous(gpu.framebuffer_pages);
-    if (!gpu.framebuffer_physical || !gpu.shadow_physical) { console_puts("[gpu] Cannot allocate contiguous framebuffer RAM\n"); return -1; }
+    if (!gpu.shadow_physical) {
+        for (size_t page = 0; page < gpu.framebuffer_pages; ++page)
+            page_free(gpu.framebuffer_physical + page * PAGE_SIZE);
+        gpu.framebuffer_physical = 0;
+        console_puts("[gpu] Cannot allocate shadow framebuffer RAM\n");
+        return -1;
+    }
     gpu.backing = (uint32_t *)gpu.framebuffer_physical;
     gpu.framebuffer = (uint32_t *)gpu.shadow_physical;
     const uint32_t pixel = 0x00d0b070U;
@@ -418,9 +426,13 @@ void gpu_poll(void) {
             gpu.used = (VirtqUsed){0};
             gpu.consumed = 0;
             gpu.resource_attached = 0;
-            if (configure_device() < 0) { begin_recovery(); return; }
+            if (configure_device() < 0) {
+                kernel_diagnostic("gpu", "device-reconfigure", -1, 1, gpu.recovery_attempts);
+                begin_recovery(); return;
+            }
             queue_resource_create();
         } else if (clock_ticks() - gpu.state_started >= clock_ms_ticks(REQUEST_TIMEOUT_MS)) {
+            kernel_diagnostic("gpu", "reset-ack-timeout", -1, 1, gpu.recovery_attempts);
             begin_recovery();
         }
         return;
@@ -431,7 +443,10 @@ void gpu_poll(void) {
         const GpuState completed_state = gpu.state;
         const int result = command_completion();
         if (result == 0) {
-            if (clock_ticks() - gpu.state_started >= clock_ms_ticks(REQUEST_TIMEOUT_MS)) begin_recovery();
+            if (clock_ticks() - gpu.state_started >= clock_ms_ticks(REQUEST_TIMEOUT_MS)) {
+                kernel_diagnostic("gpu", "async-command-timeout", -1, 1, completed_state);
+                begin_recovery();
+            }
             return;
         }
         if (result < 0) { begin_recovery(); return; }
@@ -453,7 +468,7 @@ void gpu_poll(void) {
         } else {
             gpu.state = GPU_IDLE;
             merge_rectangle(&gpu.pending, &gpu.pending_valid, 0, 0, GPU_WIDTH, GPU_HEIGHT);
-            console_puts("[gpu] Device recovered; full shadow redraw queued\n");
+            kernel_diagnostic("gpu", "device-recovered", 0, 0, GPU_WIDTH * GPU_HEIGHT * 4U);
         }
     }
 }
