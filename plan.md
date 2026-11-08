@@ -240,6 +240,20 @@
 - 文件／部署：CODE_GUIDE、主題章節、README、首頁與歷程已依實際功能同步；`fc3ddc9`、`4ea6061`、`ab1e003` 記錄導覽與內容更新。既有 `tools/publish-docs.ps1` 的 VitePress 建置成功（只有既有 bundle size 提示），發布 gh-pages `89420e0eda8aebb377c48154ecccb3ec4d9a25e5`；GitHub Pages [部署工作 42460237950](https://github.com/johnson931128/WUWAOS/actions/runs/42460237950) 已 completed/success。
 - 部署確認僅讀取 GitHub workflow 狀態，未做公開頁面／瀏覽器操作測試。既有 screenshot、特殊事蹟與 portable v1 檔案未替換；新版功能只在目前 source，不在舊 ZIP。所有本輪修改已依階段提交並分批 push，最後以本計畫紀錄提交收尾。
 
+## 文件互動化第一輪（2026-11-08）
+
+- 目標：將網站由文字紀錄提升為「HTML/CSS/Vue 互動示意 + 詳細文字 + 原始碼對照」，先完成 Block Async I/O、FD/OFD、換頁／Swap、WUFS journal／安全替換四章，再作為其他章節的範本。本輪只改文件與網站，不改 OS。
+- 視覺規則：大流程／狀態／資料搬移以 DOM/CSS 排版，可操作且支援窄螢幕；Mermaid 只留函式依賴與小流程。靜態生圖須先交使用者審閱，本輪不新增靜態圖；不直接轉載無明確公開重製授權的教科書圖片。
+- 教學結構：具體問題 → 筆記概念 → 模組／資料位置 → 可單步互動 → 欄位與參數表 → 函式與回傳值 → 失敗／限制。可以引用使用者筆記敘述，標明檔名與章節；將筆記概念和 WUWAOS 實際實作分開。
+- 動畫方法：每個情境是明確的教學 frame 陣列，frame 同時保存敘述、active actor、狀態及資料位置，不靠動畫時間猜測狀態。單步／前後／reset／scenario 切換更新同一索引；播放只以可清除 timer 推進，切換或離頁停止。預設不自動播放，尊重 reduced-motion；文字和狀態標籤不依賴顏色辨識。這些是示意模型，非 QEMU trace 或即時 OS 模擬。
+- 第一章 Block：read/write／IOERR／timeout reset 成功或未確認／kill defer；顯示 caller／scheduler／device、Gate owner、bounce、request state 與 event；依實際 submit/poll/collect 與 reset 路徑建模。
+- 第二章 FD/OFD：open／dup／fork／再次 open／read／close 的固定情境，顯示每行程 FD 表、共享 OFD offset/ref 與相同檔案；避免把兩次 open 畫成共用 offset。本輪不新增任意 C 程式直譯器。
+- 第三章 paging：FIFO victim／pin／PTE revoke／swap I/O／成功回收或失敗 restore，顯示 page/PTE/frame/slot 的狀態；保留原有詳細章節並擴充 API/欄位表。
+- 第四章 WUFS：staging → payload flush → commit header flush → home checkpoint → clear；區分 header 前 abort、header 後 uncertain/offline 與 reboot replay，不把回錯等同未保存。
+- 執行／提交：Luna agents 分檔實作，每章（元件與該章文章）獨立 commit；主代理 review 模型與 source 一致性、整合導覽、寫作規約及計畫，再分批 push／部署。保留歷史規格、特殊事蹟、媒體與 portable v1 caveats。
+- 建置／驗收：沿用使用者先前要求，不跑 OS 或瀏覽器操作測試、不新增測試程式碼；只做必要 VitePress 建置與 GitHub Pages 部署狀態確認。成功建置不代表互動／視覺已驗收，記錄 NOT_RUN。
+- 進度：規格已整理；四章實作待開始。
+
 ## 進度維護
 
 每完成一個步驟後，更新本檔與 [`plan_current.md`](./plan_current.md) 的進度。依使用者要求，本檔須記錄實際採用的解決觀念／演算法、必要虛擬碼、驗收結果與限制。未執行或未完成對應 runtime 驗證的項目不得記為完成；若當前條件無法進行 runtime 驗證，需明確保留未完成狀態並記錄限制。
