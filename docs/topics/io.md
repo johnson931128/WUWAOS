@@ -2,6 +2,8 @@
 
 檔案系統處理名稱、目錄和資料放置；I/O system（輸入輸出系統）處理如何跟裝置交換資料。WUWAOS 提供 UART 終端、可選 GUI TTY、行程間管道與 VirtIO 區塊磁碟這幾條路徑。
 
+可以先打開 [Block Async I/O 互動章節](./block-async.md)，單步追蹤 caller、scheduler、裝置與 bounce buffer；要理解描述號共享狀態，接著看 [FD／OFD 互動章節](./file-descriptors.md)。兩章附有欄位、函式參數與錯誤處理對照，本章保留整體 I/O 路徑。
+
 ## UART 終端
 
 `drivers/uart/uart.c` 以 volatile 指標讀寫 `0x10000000` 的 UART（序列埠）裝置暫存器。輸出前輪詢是否可寫；讀取時檢查是否收到資料。`kernel/io/console.c` 負責輸出格式、路由與核心診斷，不直接操作 UART MMIO。volatile 保留硬體存取，不等於鎖或完整記憶體同步。

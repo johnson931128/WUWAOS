@@ -32,7 +32,8 @@ export default defineConfig({
   },
   lastUpdated: true,
   markdown: {
-    lineNumbers: true, html: false, languageAlias: { h: 'c', S: 'asm' },
+    // Repository-authored Vue labs are embedded in the Markdown chapters.
+    lineNumbers: true, html: true, languageAlias: { h: 'c', S: 'asm' },
     config(md) {
       const fence = md.renderer.rules.fence!
       md.renderer.rules.fence = (tokens, index, options, env, self) => {
@@ -45,9 +46,10 @@ export default defineConfig({
   },
   themeConfig: {
     siteTitle: 'WUWAOS 實作紀錄',
-    nav: [{ text: '閱讀章節', link: '/topics/getting-started' }, { text: '規格紀錄', link: '/history' }],
+    nav: [{ text: '閱讀章節', link: '/topics/getting-started' }, { text: '互動教學', link: '/topics/block-async' }, { text: '規格紀錄', link: '/history' }],
     sidebar: [
       { text: 'WUWAOS', items: [{ text: '00 · 專案總覽', link: '/' }, { text: 'Windows 免安裝環境', link: '/portable-windows' }] },
+      { text: '互動教學', items: [{ text: 'Block Async I/O', link: '/topics/block-async' }, { text: 'FD 與 OFD', link: '/topics/file-descriptors' }, { text: '換頁與 Swap', link: '/topics/paging' }, { text: 'Journal 與安全替換', link: '/topics/journal' }] },
       { text: '從硬體到應用程式', items: chapters.map(([text, slug], i) => ({ text: `${String(i + 1).padStart(2, '0')} · ${text}`, link: `/topics/${slug}` })) },
       { text: '規格與參考', items: [{ text: '原始規格與驗收紀錄', link: '/history' }, { text: '磁碟保護與驗證', link: '/SPEC-31-filesystem-initialization-guard' }, { text: '完整程式碼導覽', link: '/CODE_GUIDE' }] },
     ],

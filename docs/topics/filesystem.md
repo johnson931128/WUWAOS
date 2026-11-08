@@ -2,6 +2,8 @@
 
 磁碟只提供編號磁區，不知道 `/home/user/note.txt` 是什麼。WUFS 是 WUWAOS 自訂的檔案系統，將路徑轉成 inode，再找到存放內容的磁區。
 
+[Journal 與安全替換互動章節](./journal.md) 將 staging、commit header、checkpoint、uncertain 與重播放在同一條可單步操作的時間線；本章說明磁碟布局與檔案介面。
+
 ## 從名稱到硬體
 
 ```text

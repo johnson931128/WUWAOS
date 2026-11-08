@@ -6,6 +6,19 @@ WUWAOS 是以 C 與 RISC-V 組合語言撰寫、真正運行於 QEMU 虛擬電�
 
 **[從環境與啟動開始 →](./topics/getting-started.md)**
 
+## 用互動理解核心
+
+先看資料在哪裡、誰持有資源，再沿著函式與狀態逐步追蹤。互動區塊提供單步、前後切換、播放／暫停及情境重設；文字章節則說明參數、回傳值與設計取捨。
+
+| 想看見的過程 | 互動章節 |
+| --- | --- |
+| 等磁碟時，CPU 如何去執行別人？錯誤與 kill 怎麼收尾？ | [Block Async I/O：提交、等待與完成](./topics/block-async.md) |
+| 為什麼 dup／fork 共用讀取位置，而兩次 open 不共用？ | [FD 與 OFD：編號、共享狀態與引用](./topics/file-descriptors.md) |
+| RAM 不夠時選誰換出？寫 Swap 失敗後怎麼恢復？ | [換頁、PTE 與 Swap](./topics/paging.md) |
+| 存檔回錯為什麼不代表一定沒存？重播如何處理？ | [Journal 與安全替換](./topics/journal.md) |
+
+這些互動是依目前原始碼整理的**教學模型**，不是 QEMU 執行紀錄、硬體即時狀態或完整 OS 模擬器。每章區分課程筆記觀念、WUWAOS 實作與尚未驗證的範圍；舊規格仍保留各階段當時的證據。
+
 Windows 可先下載 [免安裝完整包](./portable-windows.md)，在 PowerShell 使用 `.\Start-WUWAOS.cmd` 啟動 CLI，或加上 `gui` 開啟桌面。最新原始碼的磁碟保護機制與 `.\Test-FsDisk.cmd` 操作見 [Spec 31](./SPEC-31-filesystem-initialization-guard.md)；使用者已確認磁碟保護驗證，這些後續修正不包含在既有 portable v1 ZIP。
 
 ## 閱讀路線
@@ -54,7 +67,7 @@ Windows 可先下載 [免安裝完整包](./portable-windows.md)，在 PowerShel
 
 主題章節描述目前設計；[原始規格與驗收紀錄](./history.md) 保留開發過程。舊規格中的架構可能已被後續版本取代，閱讀時應留意每份文件的階段說明。
 
-本站只展示架構說明與操作指令，OS 原始碼以 GitHub 連結提供，不內嵌程式碼。OS 與文件變更經使用者授權提交到 main；網站發布另由專用工具處理。驗收結果是各規格所記錄的當時操作，網站建置不代表重新執行過 OS 驗證。
+本站以互動教學、架構說明、函式／參數與操作指令連接觀念和實作；完整 OS 原始碼以 GitHub 連結提供，不整段匯入來源檔。OS 與文件變更提交到 main，網站發布另由專用工具處理。驗收結果是各規格記錄的當時操作，網站動畫與建置不代表重新執行過 OS 驗證。
 
 ## 特殊事蹟
 

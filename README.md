@@ -167,6 +167,7 @@ This first loader accepts a restricted static ELF64 RV64 layout and the WUWAOS s
 The documentation and course notes linked below are currently written in Traditional Chinese.
 
 - [Getting started and topic chapters](docs/index.md): boot, processes, scheduling, memory, I/O, file systems, and user programs.
+- Interactive teaching chapters: [Block Async I/O](docs/topics/block-async.md), [FD/OFD sharing](docs/topics/file-descriptors.md), [paging and swap](docs/topics/paging.md), and [journal/atomic replacement](docs/topics/journal.md). Step through explanatory models alongside parameter and function references; these are not live QEMU traces.
 - [Windows portable environment](docs/portable-windows.md): offline builds, native QEMU, packaging, checksums, and Release uploads.
 - [Synchronization demo](docs/SPEC-23-sync-demo.md): observing mutex and semaphore blocking and wakeup.
 - [Code and architecture guide](docs/CODE_GUIDE.md): the responsibilities and design of each source file.

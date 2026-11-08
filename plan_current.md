@@ -11,4 +11,4 @@
 - 2026-11-08：恢復剩餘 2B2、2C 與第 3–6 階段；實際演算法與依賴見 [plan.md](./plan.md#2026-11-08-剩餘階段執行規格與實際演算法)。
 - 本輪不執行測試、不新增測試程式碼；僅做必要整合編譯與文件部署建置，runtime 驗證標示 NOT_RUN。
 - 文件／網站：本輪 CODE_GUIDE／topics／README／首頁／歷程已同步，文件建置成功，gh-pages `89420e0` 部署工作 completed/success；未做瀏覽器測試，詳見 [plan.md](./plan.md)。
-- 文件互動化第一輪：Block Async I/O、FD/OFD、換頁／Swap、WUFS journal 四章待實作；HTML/CSS/Vue 互動＋參數／函式詳解，按章 commit，規格見 [plan.md](./plan.md#文件互動化第一輪2026-11-08)。
+- 文件互動化第一輪：Block Async I/O、FD/OFD、換頁／Swap 三章實作中，WUFS journal 接續；HTML/CSS/Vue 互動＋參數／函式詳解，按章 commit，規格見 [plan.md](./plan.md#文件互動化第一輪2026-11-08)。

@@ -4,6 +4,8 @@
 術語第一次出現附中文用途。原始碼與實際 QEMU 執行是行為依據，尚未執行的路徑不稱為已驗證。
 目前模組目錄與 UI/core 邊界另見 [Spec 33](./SPEC-33-module-architecture.md)。舊 Spec 中引用的舊 source path 固定指向 2026-11-07 重整前的 commit `800a805`；不要將歷史程式碼路徑當成目前位置。
 
+想先看實際運作關係，可以從 [Block Async I/O](./topics/block-async.md)、[FD/OFD](./topics/file-descriptors.md)、[換頁與 Swap](./topics/paging.md)、[Journal 與安全替換](./topics/journal.md) 的 HTML/CSS 互動模型入門，再回來查本章的檔案職責。各教學章節列出欄位／參數／函式對照；互動模型不是 OS 執行驗收。
+
 ## 1. 架構與控制權
 
 ```text
