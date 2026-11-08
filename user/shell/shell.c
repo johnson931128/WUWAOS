@@ -529,6 +529,9 @@ long shell_main(void) {
         else user_puts("?");
         user_puts("> ");
         const long length = read(0, line, sizeof(line) - 1);
+        if (length == ERR_IO || length == ERR_BAD_FD) {
+            return 0;
+        }
         if (length < 0) {
             user_puts("Input rejected: line too long or invalid buffer.\n");
             continue;

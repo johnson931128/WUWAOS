@@ -11,9 +11,21 @@ static const uint32_t palette[16] = {
 
 void terminal_renderer_draw(uint32_t *framebuffer, const TerminalModel *terminal,
                             unsigned int x, unsigned int y, int show_cursor) {
+    terminal_renderer_draw_viewport(framebuffer, terminal, x, y,
+        TERMINAL_COLUMNS * TERMINAL_FONT_WIDTH, TERMINAL_ROWS * TERMINAL_FONT_HEIGHT, show_cursor);
+}
+
+void terminal_renderer_draw_viewport(uint32_t *framebuffer, const TerminalModel *terminal,
+                                     unsigned int x, unsigned int y,
+                                     unsigned int viewport_width, unsigned int viewport_height,
+                                     int show_cursor) {
     if (!framebuffer || !terminal) return;
-    for (unsigned int row = 0; row < TERMINAL_ROWS; ++row) {
-        for (unsigned int column = 0; column < TERMINAL_COLUMNS; ++column) {
+    unsigned int columns = viewport_width / TERMINAL_FONT_WIDTH;
+    unsigned int rows = viewport_height / TERMINAL_FONT_HEIGHT;
+    if (columns > TERMINAL_COLUMNS) columns = TERMINAL_COLUMNS;
+    if (rows > TERMINAL_ROWS) rows = TERMINAL_ROWS;
+    for (unsigned int row = 0; row < rows; ++row) {
+        for (unsigned int column = 0; column < columns; ++column) {
             const TerminalCell *cell = &terminal->cells[row * TERMINAL_COLUMNS + column];
             uint32_t foreground = palette[cell->color_fg & 15U];
             const uint32_t background = palette[cell->color_bg & 15U];
@@ -22,9 +34,10 @@ void terminal_renderer_draw(uint32_t *framebuffer, const TerminalModel *terminal
                 y + row * TERMINAL_FONT_HEIGHT, cell->character, foreground, background);
         }
     }
-    if (show_cursor && terminal->cursor_enabled) {
+    if (show_cursor && terminal->cursor_enabled && rows && columns && terminal->row < rows && terminal->column < columns) {
         unsigned int column = terminal->column;
         if (terminal->wrap_pending) column = TERMINAL_COLUMNS - 1U;
+        if (column >= columns) return;
         const unsigned int py = y + terminal->row * TERMINAL_FONT_HEIGHT + TERMINAL_FONT_HEIGHT - 2U;
         graphics_fill_rect(framebuffer, x + column * TERMINAL_FONT_WIDTH, py, TERMINAL_FONT_WIDTH, 2U, 0x00f4f7faU);
     }
