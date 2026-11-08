@@ -55,6 +55,8 @@ typedef struct ProcessControlBlock {
 Process *process_current(void);
 Process *process_current_or_null(void);
 Process *process_slot(int slot);
+int process_kernel_stack_bounds(uintptr_t address, uintptr_t *bottom, uintptr_t *top,
+                                int *scheduler);
 void process_init(void);
 int process_runtime_started(void);
 _Noreturn void process_start(void);

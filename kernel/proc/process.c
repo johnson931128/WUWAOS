@@ -18,8 +18,10 @@
 #include <limits.h>
 
 static Process processes[PROCESS_LIMIT];
-static unsigned char kernel_stacks[PROCESS_LIMIT][16 * 1024]
-    __attribute__((aligned(16)));
+#define PROCESS_KERNEL_STACK_SIZE (16UL * 1024UL)
+#define KERNEL_STACK_REGION_SIZE (PAGE_SIZE + PROCESS_KERNEL_STACK_SIZE)
+static unsigned char kernel_stacks[PROCESS_LIMIT][KERNEL_STACK_REGION_SIZE]
+    __attribute__((aligned(PAGE_SIZE)));
 static int current_index = -1;
 static ProcessPollCallback ui_poll_callback;
 static ProcessEventActiveCallback ui_active_callback;
@@ -109,7 +111,7 @@ static uint64_t process_event_deadline(uint64_t fallback) {
 }
 static long next_pid = 1;
 static int trace_enabled = 1;
-static unsigned char scheduler_stack[16 * 1024] __attribute__((aligned(16)));
+static unsigned char scheduler_stack[KERNEL_STACK_REGION_SIZE] __attribute__((aligned(PAGE_SIZE)));
 static KernelContext scheduler_context, boot_context;
 static void process_cancel_wait(Process *process);
 
@@ -169,6 +171,29 @@ Process *process_current(void) {
 
 Process *process_current_or_null(void) {
     return current_index >= 0 && current_index < PROCESS_LIMIT ? &processes[current_index] : 0;
+}
+
+int process_kernel_stack_bounds(uintptr_t address, uintptr_t *bottom, uintptr_t *top,
+                                int *scheduler) {
+    if (!bottom || !top || !scheduler) return 0;
+    const uintptr_t page = address & ~(PAGE_SIZE - 1);
+    for (int i = 0; i < PROCESS_LIMIT; ++i) {
+        const uintptr_t guard = (uintptr_t)kernel_stacks[i];
+        if (page == guard) {
+            *bottom = guard + PAGE_SIZE;
+            *top = *bottom + PROCESS_KERNEL_STACK_SIZE;
+            *scheduler = 0;
+            return 1;
+        }
+    }
+    const uintptr_t scheduler_guard = (uintptr_t)scheduler_stack;
+    if (page == scheduler_guard) {
+        *bottom = scheduler_guard + PAGE_SIZE;
+        *top = *bottom + PROCESS_KERNEL_STACK_SIZE;
+        *scheduler = 1;
+        return 1;
+    }
+    return 0;
 }
 
 Process *process_slot(int slot) {
@@ -240,10 +265,11 @@ static long create_process(long program, long parent_pid, int publish) {
         transition(process, PROCESS_UNUSED, "out of memory");
         return ERR_NO_MEMORY;
     }
-    for (size_t i = 0; i < sizeof(kernel_stacks[slot]); ++i) {
-        ((volatile unsigned char *)kernel_stacks[slot])[i] = 0;
+    volatile unsigned char *stack = kernel_stacks[slot] + PAGE_SIZE;
+    for (size_t i = 0; i < PROCESS_KERNEL_STACK_SIZE; ++i) {
+        stack[i] = 0;
     }
-    process->kernel_stack_top = (uintptr_t)(kernel_stacks[slot] + sizeof(kernel_stacks[slot]));
+    process->kernel_stack_top = (uintptr_t)(stack + PROCESS_KERNEL_STACK_SIZE);
     process->user_stack_top = USER_STACK_TOP;
     process->frame = (TrapFrame *)(process->kernel_stack_top - TF_SIZE);
     process->context.ra = (uintptr_t)first_run;
@@ -263,6 +289,16 @@ static long create_process(long program, long parent_pid, int publish) {
 }
 
 void process_init(void) {
+    if (vm_unmap_kernel_guard((uintptr_t)scheduler_stack) < 0) {
+        console_puts("[process] Cannot install scheduler stack guard\n");
+        kernel_idle();
+    }
+    for (int i = 0; i < PROCESS_LIMIT; ++i) {
+        if (vm_unmap_kernel_guard((uintptr_t)kernel_stacks[i]) < 0) {
+            console_puts("[process] Cannot install process stack guard\n");
+            kernel_idle();
+        }
+    }
     scheduler_init();
     workstate_init();
     if (create_process(0, 0, 1) != 1) {
@@ -919,7 +955,7 @@ static _Noreturn void scheduler_loop(void) {
 _Noreturn void process_start(void) {
     runtime_started = 1;
     scheduler_context.ra = (uintptr_t)scheduler_loop;
-    scheduler_context.sp = (uintptr_t)(scheduler_stack + sizeof(scheduler_stack));
+    scheduler_context.sp = (uintptr_t)(scheduler_stack + PAGE_SIZE + PROCESS_KERNEL_STACK_SIZE);
     console_puts("[context] RV64 swtch ready; dedicated scheduler stack\n");
     context_switch(&boot_context, &scheduler_context);
     kernel_idle();

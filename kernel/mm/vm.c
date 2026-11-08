@@ -40,6 +40,8 @@ typedef struct {
 /* Metadata only; physical user memory is never preallocated here. */
 static VmSpace spaces[PROCESS_LIMIT + 1];
 static uintptr_t kernel_root, mmio[16];
+static uintptr_t kernel_guard_pages[PROCESS_LIMIT + 1];
+static size_t kernel_guard_count;
 static size_t mmio_count, resident, frame_limit = VM_DEFAULT_FRAMES;
 static uint64_t next_arrival;
 static KernelGate vm_gate;
@@ -311,7 +313,11 @@ void vm_use_kernel(void) { vm_enable(kernel_root); }
 
 int vm_unmap_kernel_guard(uintptr_t address) {
     if (kernel_root == 0 || (address & (PAGE_SIZE - 1)) != 0 ||
-        address < KERNEL_BASE || address >= RAM_END) return ERR_INVALID;
+        address < KERNEL_BASE || address >= RAM_END ||
+        kernel_guard_count == sizeof(kernel_guard_pages) / sizeof(kernel_guard_pages[0]))
+        return ERR_INVALID;
+    for (size_t i = 0; i < kernel_guard_count; ++i)
+        if (kernel_guard_pages[i] == address) return ERR_INVALID;
     const int enter_error = vm_scope_enter();
     if (enter_error < 0) return enter_error;
     uint64_t *entry = vm_walk(kernel_root, address, 0);
@@ -321,8 +327,16 @@ int vm_unmap_kernel_guard(uintptr_t address) {
         return ERR_INVALID;
     }
     *entry = 0;
+    kernel_guard_pages[kernel_guard_count++] = address;
     flush(); /* Kernel branches are shared directly by every process root. */
     return vm_scope_leave();
+}
+
+int vm_is_kernel_guard(uintptr_t address) {
+    const uintptr_t page = address & ~(PAGE_SIZE - 1);
+    for (size_t i = 0; i < kernel_guard_count; ++i)
+        if (kernel_guard_pages[i] == page) return 1;
+    return 0;
 }
 
 void vm_init(const void *fdt) {

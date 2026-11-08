@@ -21,6 +21,23 @@ TrapFrame *trap_handler(TrapFrame *frame) {
     if (from_user) {
         process_current()->frame = frame;
     }
+    if (!from_user && (frame->scause == 12 || frame->scause == 13 || frame->scause == 15) &&
+        vm_is_kernel_guard(frame->stval)) {
+        uintptr_t bottom = 0, top = 0;
+        int scheduler_stack = 0;
+        const Process *process = process_current_or_null();
+        (void)process_kernel_stack_bounds(frame->stval, &bottom, &top, &scheduler_stack);
+        console_puts("[guard] Kernel stack fault PID=");
+        console_number(process ? process->pid : 0);
+        console_puts(scheduler_stack ? " scheduler stack=[" : " process stack=[");
+        console_hex(bottom);
+        console_puts(", ");
+        console_hex(top);
+        console_puts("] address=");
+        console_hex(frame->stval);
+        console_putc('\n');
+        kernel_idle();
+    }
     if (from_user && frame->scause == SUPERVISOR_TIMER) {
         process_kernel_call_enter();
         timer_interrupt();
