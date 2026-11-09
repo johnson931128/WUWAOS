@@ -23,7 +23,7 @@ WUWAOS is a small operating system written in **C and RISC-V assembly** that boo
 | File system | Event-waiting VirtIO block requests, WUFS redo journal, atomic file replacement, shared open-file offsets, and shell redirection |
 | User interface | UART shell, `fan` and `workstate`; optional VirtIO desktop with up to four independent Terminal windows, focus, dragging, and viewport resizing |
 
-WUWAOS focuses on fundamental operating system mechanisms and is not Linux-compatible. QEMU currently loads the kernel using `-kernel`. A restricted static RV64 ELF loader can run compatible WUWAOS programs from WUFS; general ELF/Linux compatibility, external ELF arguments, compiling C inside WUWAOS, networking, and a file manager are not supported. Window resizing changes the viewport of a fixed 100×30 terminal model; it does not resize the TTY or reflow text. `make run` remains the UART workflow. See the [documentation](https://johnson931128.github.io/WUWAOS/) and [Spec 21](docs/SPEC-21-native-compilation.md) for limitations and future plans.
+WUWAOS focuses on fundamental operating system mechanisms and is not Linux-compatible. `make run-disk` boots the UART shell from a WUFS disk. A restricted static RV64 ELF loader can run compatible WUWAOS programs from WUFS; general ELF/Linux compatibility, external ELF arguments, compiling C inside WUWAOS, networking, and a file manager are not supported. Window resizing changes the viewport of a fixed 100×30 terminal model; it does not resize the TTY or reflow text. See the [documentation](https://johnson931128.github.io/WUWAOS/) and [Spec 21](docs/SPEC-21-native-compilation.md) for limitations and future plans.
 
 ## Current Development Status
 
@@ -132,6 +132,18 @@ wsl -d Ubuntu -- bash -lc 'cd /mnt/c/programing/WUWAOS && make run'
 `make run` uses Clang in WSL to cross-compile the RISC-V program and then starts QEMU. Once the `wuwaos/>` prompt appears, enter `help` to see the available commands. Try `demo sync` to observe a parent and child process using synchronization primitives.
 
 To exit QEMU, press **Ctrl+A**, release the keys, and then press **X**. The `exit` command ends only the shell. The WUFS disk image is stored at `build/wuwaos.img`; its files persist across restarts, and `make clean` does not delete the disk image.
+
+### Boot the CLI from a WUFS disk
+
+Run this command from PowerShell in the project root.
+
+```powershell
+wsl -d Ubuntu -- make run-disk
+```
+
+This cross-compiles WUWAOS and installs `/boot/kernel.elf` in `build/wuwaos-cli.img`. QEMU starts OpenSBI, which enters the WUWAOS loader in a read-only flash image. The loader reads the kernel from the VirtIO disk and starts it. When `wuwaos/>` appears, try `echo hello` or `ls /boot`. Press **Ctrl+A**, release the keys, and press **X** to quit QEMU.
+
+The CLI disk preserves its files across launches. This configuration attaches one WUFS disk and runs without a dedicated swap disk. The loader requires a clean WUFS0002 journal. For a pending transaction, follow the [WUFS recovery procedure](docs/SPEC-32-wufs-redo-journal.md#新磁碟與-pending-recovery-操作).
 
 ## Filesystem Initialization Checks
 

@@ -71,6 +71,8 @@ flowchart LR
 
 | 檔案 | 責任 |
 | --- | --- |
+| bootloader/entry.S、bootloader/linker.ld | OpenSBI 交接入口、flash 與工作 RAM 配置 |
+| bootloader/boot.c | 以唯讀 VirtIO 磁碟存取定位 `/boot/kernel.elf`，驗證 ELF 後啟動核心 |
 | arch/riscv/entry.S | 核心初始入口、stack（堆疊）、BSS（零初始化資料） |
 | kernel/boot/main.c | 串接核心初始化與第一個行程 |
 | ui/boot/splash.c / splash.h | WUWAOS 文字圖案、中央向兩側展開、開機短暫延遲 |
@@ -366,7 +368,7 @@ WUFS0002 在 LBA 0 存 superblock；LBA 1 是 journal header，LBA 2–10 是 11
 
 `fs_remove`、`fs_remove_tree`、`fs_copy` 與建立／寫入／truncate 的公開修改入口均以一筆 transaction 包住；修改中的 metadata 與 data sectors 都進入同一 bounded redo log。`fs_copy` 建立新 inode、複製資料、替換或發布目錄項並釋放舊 inode，commit 前任何錯誤都丟棄 RAM staging。每筆最多 1152 個不同磁區，超過回 `-28`，home 磁碟仍未改寫。提交後 home checkpoint I/O 失敗會令本次開機 volume offline；重啟時先驗證完整 log，再 redo 全部 home sectors。
 
-`tools/make_disk.py` 在首次使用時建立 WUFS0002 目錄與 `/boot/kernel.elf`；更新前先拒絕 pending/invalid journal，並驗證 layout、bitmap、inode、pointer 與目錄樹。它在同目錄暫存完整映像、flush/fsync 後 replace，保留其他使用者檔案。WUFS0001 只唯讀保留，不更新 kernel 副本；需用新 `DISK_IMAGE` 建立 V2。`/boot/kernel.elf` 是一般核心 ELF 檔案副本；QEMU 目前仍以 `-kernel` 載入另一份 ELF，磁碟檔案沒有參與開機。`kernel-disk.elf` 以 strip-all 減少儲存副本大小，實際啟動 `kernel.elf` 保留 debug symbols。
+`tools/make_disk.py` 在首次使用時建立 WUFS0002 目錄與 `/boot/kernel.elf`；更新前先拒絕 pending/invalid journal，並驗證 layout、bitmap、inode、pointer 與目錄樹。它在同目錄暫存完整映像、flush/fsync 後 replace，保留其他使用者檔案。WUFS0001 只唯讀保留，不更新 kernel 副本；需用新 `DISK_IMAGE` 建立 V2。`make run-disk` 將以 strip-all 縮小的 `kernel-disk.elf` 安裝為 `/boot/kernel.elf`，再由 flash 載入器讀取它並啟動。`make run` 與 GUI 啟動指令用 `-kernel` 直接載入保有除錯符號的 `kernel.elf`。
 
 路徑型 syscall 與 Spec 27 的 FD/OFD 介面並存，已有各行程 cwd（目前目錄）、相對路徑及 `open/close/read/write` 檔案描述號；這仍不是完整 POSIX VFS。核心複製可跨合法使用者頁面，包含按需載入與 swap。每次 FD write 最多 512 bytes，分次呼叫各自交易；`O_TRUNC` 和後續 write 不是同一筆操作。fan 的 Save 使用 SYS_FS_REPLACE/`fs_replace` 在單一 redo transaction 建新 inode 與完整資料，再原子切換目錄項並回收舊 inode；不使用暫存路徑，目標仍被 open OFD 引用時回 BUSY，目錄不可替換。journal 容量不足時 abort，舊名稱保持原版本。commit header 發布嘗試開始後的 I/O/flush 失敗會使 volume offline 並回 `ERR_UNCERTAIN`（-200），UART 診斷帶 uncertain 標記；fan 保留編輯 buffer 並禁止重試，提示重新開檔確認。一般 FD write 仍維持原本分次交易語意。本輪 fs_replace/uncertain runtime NOT_RUN。
 
@@ -451,7 +453,7 @@ user/linker.ld 的入口固定 0x400000，code／唯讀資料最多 16 KiB，dat
 Makefile 將 entry.S、api.c、print.c、demo.c、sync_demo.c、shell.c、shell_exec.c 連結為 user.elf；app.c 連結為 app.elf；fan.c 連結為 fan.elf；workstate_entry.c 與 workstate.c 連結為 workstate.elf。四者各自有 user_main，不互相連結。shell API 與新 parser 使用 `-Oz` 以維持固定 code 區；所有映像仍受 user/linker.ld 16 KiB code／4 KiB data ASSERT。llvm-objcopy 轉成四份 `.bin`，kernel/exec/user_image.S 的 incbin 嵌入唯讀資料，vm 依程式 ID 複製映像。不是 ELF parser（執行檔解析器）。
 `make run` 與 `run-gui`／`run-gui-vnc` 都會先呼叫 `disk-image` target 建立或更新所選磁碟映像，並接上 WUFS 與 swap VirtIO block devices；圖形 target 與文字 target 採相同資料持續保存語意。`DISK_IMAGE`、`SWAP_IMAGE` 可改用其他映像；`run-gui` 預設 `GUI_DISPLAY=gtk`，可覆寫為 `sdl`。`run-gui-vnc` 的 VNC/QMP 預設 port 為 5901/4451，可由 Make 變數調整。Windows WSL1 建議使用 `tools/run-desktop.ps1` 單指令啟動背景 QEMU 與 Windows viewer；它先完成 image build，再以與 `run-gui-vnc` 共用參數的 `run-gui-vnc-session` 啟動 VM，並採動態 loopback ports、獨立 VM name、serial log 和 pidfile。`-Snapshot` 會建置並執行磁碟副本。`make clean` 特意保留磁碟映像；launcher 行為、失敗清理與驗收限制見 [Spec 29](./SPEC-29-desktop-launcher.md)。
 
-磁碟副本使用 llvm-objcopy --strip-debug 產生的 build/kernel-disk.elf，移除除錯段以避免超過 WUFS 單檔容量；完整 build/kernel.elf 保留給 QEMU／GDB。clean 刪除兩份 ELF，映像與使用者檔案保留。
+`make run-disk` 將 `bootloader.elf` 轉成 32 MiB 的 `boot-flash.img`，並接上單顆 `build/wuwaos-cli.img`。磁碟上的核心以 `llvm-objcopy --strip-all` 產生，完整 `build/kernel.elf` 可供 QEMU 直接開機與 GDB 除錯。`make clean` 清除建置產物並保留 WUFS 磁碟映像。
 binary 以 0x400000 為起點，若有初始化 .data，會保留到 0x404000 的位址間距；vm 將前 16 KiB 放 code，其後放 data。BSS 不攜帶映像內容，page_alloc 配置零頁保證其初值。
 
 Clang 交叉編譯為 rv64imac_zicsr_zifencei，ABI 為 lp64，LLD 連結；不依賴標準函式庫、浮點呼叫慣例或動態載入器。

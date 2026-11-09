@@ -11,7 +11,9 @@ QEMU virt → OpenSBI → 0x80200000 的 _start
   → process_start → scheduler_loop → shell（UART；圖形桌面另可開 GUI shell）
 ```
 
-OpenSBI（RISC-V 韌體）完成早期準備，將控制權交給 S-mode（監督模式）核心。`arch/riscv/linker.ld` 指定 `_start` 為入口，從 `0x80200000` 放置核心。
+上圖是 `make run` 的直接開機流程。`arch/riscv/linker.ld` 指定 `_start` 為入口，從 `0x80200000` 放置核心。
+
+`make run-disk` 時，OpenSBI（RISC-V 韌體）先進入唯讀 flash 裡的載入器。載入器從 WUFS 磁碟讀出 `/boot/kernel.elf`，依 ELF 標頭將各區段放到記憶體，然後保留 OpenSBI 傳來的硬體執行緒編號和裝置樹位址，跳到同一個 `_start`。
 
 ## entry.S：先準備 C 所需的環境
 
@@ -35,7 +37,7 @@ OpenSBI（RISC-V 韌體）完成早期準備，將控制權交給 S-mode（監�
 
 `ui/boot/splash.c` 透過 UART 輸出 ANSI 終端控制碼，以圖案中點為中心逐欄揭露 WUWAOS。字形以 5×7 位元資料表示，再用背景色與空格組成 70 欄實心筆畫，從螢光黃綠漸變到薄荷綠；不依賴特殊字型。這時尚未進入使用者模式；動畫中的忙等不是排程器，也不代表已啟用計時器中斷。色塊版本見 [Spec 13](../SPEC-13-block-splash.md)。
 
-執行 `make run`，應依序看到字樣、核心與裝置資訊、最後的 `wuwaos>`。`/boot/kernel.elf` 是 WUFS 中的副本；目前真正啟動核心仍由 QEMU 的 `-kernel` 載入。
+從專案根目錄在 PowerShell 執行 `wsl -d Ubuntu -- make run-disk`，會先看到 OpenSBI 和 flash 載入器的訊息，再看到 WUWAOS 字樣、核心與裝置資訊，最後進入 `wuwaos/>`。
 
 ## VirtIO 圖形桌面
 

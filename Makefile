@@ -14,6 +14,7 @@ KERNEL_SOURCES := \
 	ui/graphics/primitives.c ui/terminal/vt.c ui/terminal/renderer.c ui/input/keymap.c
 KERNEL_ASM_SOURCES := arch/riscv/entry.S arch/riscv/trap.S arch/riscv/swtch.S kernel/exec/user_image.S
 KERNEL_OBJECTS := $(patsubst %.S,build/obj/%.asm.o,$(KERNEL_ASM_SOURCES)) $(patsubst %.c,build/obj/%.o,$(KERNEL_SOURCES))
+BOOT_OBJECTS := build/obj/bootloader/entry.asm.o build/obj/bootloader/boot.o build/obj/drivers/uart/uart.o
 
 USER_COMMON_SOURCES := user/lib/api.c user/lib/print.c
 USER_OBJECTS := build/obj/user/lib/entry.asm.o $(patsubst %.c,build/obj/%.o,$(USER_COMMON_SOURCES)) \
@@ -28,7 +29,7 @@ ARCH_FLAGS := --target=riscv64-unknown-elf -march=rv64imac_zicsr_zifencei -mabi=
 CFLAGS := $(ARCH_FLAGS) -std=c11 -O2 -g -Wall -Wextra -Werror -ffreestanding -fno-builtin -fno-stack-protector -fno-pic -fno-pie -I. -Iinclude -MMD -MP
 LDFLAGS := $(ARCH_FLAGS) -fuse-ld=lld -nostdlib -static -Wl,--build-id=none
 
-.PHONY: all run run-gui run-gui-vnc run-gui-vnc-session disk-image clean
+.PHONY: all run run-disk run-gui run-gui-vnc run-gui-vnc-session disk-image clean
 all: $(TARGET)
 
 build/obj:
@@ -94,8 +95,17 @@ build/obj/kernel/exec/user_image.asm.o: build/user.bin build/app.bin build/fan.b
 build/kernel-disk.elf: $(TARGET)
 	$(OBJCOPY) --strip-all $< $@
 
+build/bootloader.elf: $(BOOT_OBJECTS) bootloader/linker.ld
+	$(CC) $(LDFLAGS) -Wl,-T,bootloader/linker.ld $(BOOT_OBJECTS) -o $@
+
+build/boot-flash.img: build/bootloader.elf
+	$(OBJCOPY) -O binary $< $@.tmp
+	truncate -s 32M $@.tmp
+	mv -f $@.tmp $@
+
 DISK_IMAGE ?= build/wuwaos.img
 SWAP_IMAGE ?= build/wuwaos-swap.img
+BOOT_DISK_IMAGE ?= build/wuwaos-cli.img
 
 disk-image: build/kernel-disk.elf tools/make_disk.py tools/make_swap.py | build
 	python3 tools/make_disk.py --image $(DISK_IMAGE) --kernel build/kernel-disk.elf
@@ -103,6 +113,14 @@ disk-image: build/kernel-disk.elf tools/make_disk.py tools/make_swap.py | build
 
 run: $(TARGET) disk-image
 	$(QEMU) -machine virt -smp 1 -m 128M -nographic -bios default -kernel $(TARGET) -global virtio-mmio.force-legacy=false -drive file=$(DISK_IMAGE),if=none,format=raw,id=wuwaos,cache=writeback -device virtio-blk-device,drive=wuwaos -drive file=$(SWAP_IMAGE),if=none,format=raw,id=swap,cache=writeback -device virtio-blk-device,drive=swap
+
+run-disk: build/boot-flash.img build/kernel-disk.elf tools/make_disk.py
+	python3 tools/make_disk.py --image "$(BOOT_DISK_IMAGE)" --kernel build/kernel-disk.elf
+	$(QEMU) -machine virt -smp 1 -m 128M -nographic -bios default \
+		-drive if=pflash,unit=0,format=raw,readonly=on,file=build/boot-flash.img \
+		-global virtio-mmio.force-legacy=false \
+		-drive file="$(BOOT_DISK_IMAGE)",if=none,format=raw,id=wuwaos,cache=writeback \
+		-device virtio-blk-device,drive=wuwaos
 
 run-gui: $(TARGET) disk-image
 	$(QEMU) -machine virt -smp 1 -m 128M -display $(GUI_DISPLAY) -bios default -kernel $(TARGET) -global virtio-mmio.force-legacy=false -device virtio-gpu-device -device virtio-tablet-device -device virtio-keyboard-device -drive file=$(DISK_IMAGE),if=none,format=raw,id=wuwaos,cache=writeback -device virtio-blk-device,drive=wuwaos -drive file=$(SWAP_IMAGE),if=none,format=raw,id=swap,cache=writeback -device virtio-blk-device,drive=swap
@@ -125,5 +143,6 @@ GUI_PIDFILE ?=
 clean:
 	if [ -d build/obj ]; then find build/obj -type f \( -name '*.o' -o -name '*.d' \) -delete; fi
 	rm -f build/*.o build/*.d build/kernel.elf build/kernel-disk.elf build/kernel.map build/user.elf build/user.bin build/app.elf build/app.bin build/fan.elf build/fan.bin build/workstate.elf build/workstate.bin
+	rm -f build/bootloader.elf build/boot-flash.img build/boot-flash.img.tmp
 
--include $(patsubst %.o,%.d,$(KERNEL_OBJECTS) $(USER_OBJECTS) $(APP_OBJECTS) $(FAN_OBJECTS) $(WORKSTATE_OBJECTS))
+-include $(patsubst %.o,%.d,$(KERNEL_OBJECTS) $(BOOT_OBJECTS) $(USER_OBJECTS) $(APP_OBJECTS) $(FAN_OBJECTS) $(WORKSTATE_OBJECTS))

@@ -1,4 +1,5 @@
 - 詳細步驟與方法：[plan.md](./plan.md)
+- CLI 磁碟開機已驗收。PowerShell 在專案根目錄執行 `wsl -d Ubuntu -- make run-disk`，由 OpenSBI 與 flash 載入器從一顆 WUFS 磁碟啟動至 `wuwaos/>`。已驗證新磁碟、重啟後讀回檔案及缺少磁碟時停止開機。詳見 [CLI 磁碟開機](./plan.md#cli-磁碟開機2026-11-09)。
 - 整體進度：第 1 階段、2A、2B1 保留既有驗收；2026-11-08 的 2B2、2C 與第 3–6 階段已實作、整合編譯成功，runtime NOT_RUN。
 - 第 1 階段：多 TTY/session 已完成並有既有 QEMU/GDB 驗收；後續四視窗見第 5 階段。
 - 第 2 階段：已實作 Block gate/event/bounce 非同步請求、Swap PTE 撤銷／回復、GPU shadow/backing 與非阻塞 present；runtime NOT_RUN。
@@ -13,4 +14,4 @@
 - 文件／網站：CODE_GUIDE／topics／README／首頁／歷程已同步，最新 gh-pages `45a1ac7` 部署工作 completed/success；未做瀏覽器測試，詳見 [plan.md](./plan.md)。
 - 文件互動化第一輪：Block Async I/O、FD/OFD、換頁／Swap、WUFS journal 四章已分章 commit、建置部署；互動元件、參數／函式表與筆記引用已接入；互動／視覺 NOT_RUN，詳見 [plan.md](./plan.md#文件互動化第一輪2026-11-08)。
 - 全站改版：Phase 1 研究／設計規範已整理，Phase 2–5 待實作；首頁＋12 主章＋4 labs，詳細見 [plan.md](./plan.md#全站-visual-first-textbook-改版2026-11-08)。
-- 本輪最新指示授權網站 build／視覺／互動／mobile 驗收；不新增測試程式碼，不修改或測試 OS。
+- 全站改版授權網站 build／視覺／互動／mobile 驗收，範圍限網站，不新增測試程式碼。

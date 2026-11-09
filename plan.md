@@ -2,6 +2,14 @@
 
 目前整體狀態：第 1 階段、2A 與 2B1 有既有驗收紀錄；2026-11-08 的 2B2、2C 與第 3–6 階段已實作並完成一次必要整合編譯，未經 runtime 驗證。依使用者指示不執行測試、不撰寫測試程式碼，不以編譯成功代替功能驗收。演算法、各階段提交及限制見本檔末段。Spec 33 的原始碼分層工作已完成。
 
+## CLI 磁碟開機（2026-11-09）
+
+- 已實作，並在 Windows PowerShell、WSL Ubuntu、QEMU 8.2.2 與 OpenSBI 1.3 驗收。
+- 保留主機交叉編譯。從專案根目錄的 PowerShell 執行 `wsl -d Ubuntu -- make run-disk`，由 QEMU `virt` 的 OpenSBI 進入唯讀 flash 載入器，從一顆 WUFS0002 磁碟載入 `/boot/kernel.elf`，最後進入 UART shell。
+- 沿用 `tools/make_disk.py` 安裝核心與保存檔案。載入器在 `0x20000000` 的 flash 中執行，從 QEMU `virt` 的八個 MMIO slot 找出單顆 modern VirtIO block。它輪詢讀取 WUFS 目錄、inode 與直接／間接區塊，先驗證所有 ELF 載入區段，再複製檔案內容及清零 BSS。裝置 reset 完成後，將原始 hart ID 與裝置樹交給核心入口。
+- 預設磁碟 `build/wuwaos-cli.img` 與新建驗收映像都啟動至 `wuwaos/>`，`echo disk-boot-ok` 與 `ls /boot` 回傳預期結果。用同一顆驗收磁碟重啟並讀回先前寫入的檔案，重啟時直接使用韌體與磁碟。QEMU 參數沒有 `-kernel`；移除磁碟時，載入器在核心啟動前顯示 `boot: virtio-blk init failed`。序列記錄見 `build/disk-boot-acceptance.log`、`build/disk-boot-final-fresh.log` 與 `build/disk-boot-final-reboot.log`。
+- 範圍為 QEMU `virt`、單 hart、128 MiB、唯讀載入器與一顆 WUFS0002 磁碟。CLI 磁碟開機要求 journal 無待重播紀錄，且此入口停用 swap。其他平台及損毀映像未進行實機驗收。
+
 ## 1. 多 TTY 與 session 物件化
 
 - 進度：完成；本階段驗收時 UI 為單一 Terminal view，後續第 5 階段已實作四視窗（runtime NOT_RUN）。
