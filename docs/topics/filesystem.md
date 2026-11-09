@@ -93,12 +93,12 @@ cat 會在非空內容末端缺少換行時補一個「顯示用換行」，防�
 
 ## 持久性與限制
 
-`tools/make_disk.py` 在主機維護 16 MiB 原始磁碟映像，通過 V2 驗證後保留使用者檔案並更新 `/boot/kernel.elf` 副本。WUFS0001 不會更新；需指定新 `DISK_IMAGE` 以建立可寫 V2。不要用刪除映像檔的方式重新建置。
+`tools/make_disk.py` 在主機維護 16 MiB 原始磁碟映像，通過 V2 驗證後保留使用者檔案並更新 `/boot/kernel.elf`。`make run-disk` 的載入器會從這個檔案開機，預設使用 `build/wuwaos-cli.img`。直接開機的 `make run` 由 QEMU 載入核心，可搭配既有 WUFS0001 唯讀映像，也可用新的 `DISK_IMAGE` 建立可寫的 WUFS0002 磁碟。 [開機流程](./boot.md)
 
 make disk-image 先產生 kernel-disk.elf，移除符號與除錯資料後才存入 WUFS，以免 ELF 超過單檔容量；QEMU 與 GDB 仍使用保留除錯資料的 kernel.elf。這不是從磁碟開機。
 
 V2 journal 以 VirtIO FLUSH 作為持久性屏障。若裝置沒有 FLUSH，乾淨 V2 僅唯讀掛載；pending header 會拒絕掛載。資料內容沒有獨立 checksum，非零損毀 header 不自動修復；真實斷電與所有硬體 flush 行為未在此驗收。尚無重新命名、權限、連結或掛載其他格式。
 
-若預設 disk 為舊 V1，建立另一顆 V2：`make run DISK_IMAGE=build/wuwaos-v2.img SWAP_IMAGE=build/wuwaos-v2-swap.img`。若 host 工具因 pending journal 拒絕，先略過 `disk-image` 直接用 QEMU 啟動該映像，讓 kernel replay；完整命令見 [Spec 32](../SPEC-32-wufs-redo-journal.md)。
+若預設磁碟仍是 V1，可以使用新檔名開機，例如 `make run-disk BOOT_DISK_IMAGE=build/wuwaos-cli-v2.img`。若映像有待重播的 journal，使用 QEMU 直接載入核心並附加該磁碟，讓核心重播 journal。 [Spec 32 的復原指令](../SPEC-32-wufs-redo-journal.md#新磁碟與-pending-recovery-操作)
 
 觀念參考：`notes/Chapter 13 file system Interface.md`、`notes/chapter 14 File-System Implementation.md`、`notes/chapter 15  File System  Internals.md`。WUFS 格式與既有持久性驗收見 [Spec 06](../SPEC-06-filesystem.md)。

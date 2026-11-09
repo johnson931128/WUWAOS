@@ -3,6 +3,10 @@
 此處按開發順序保存規格。它們記錄「當時做了什麼」，不一定代表現在的架構；第一次閱讀建議先看左側主題章節。
 Spec 33 以前的歷史 source link 若指向舊 `kernel/` 或 `user/` 路徑，固定指向 2026-11-07 重整前 commit `800a805`，以保留當時程式碼參照；目前目錄與 UI/kernel 邊界見 [Spec 33](./SPEC-33-module-architecture.md)。
 
+## CLI 磁碟開機（2026-11-09）
+
+`make run-disk` 交叉編譯核心並安裝到 WUFS0002。QEMU 透過 OpenSBI 進入唯讀 flash 載入器，再從磁碟的 `/boot/kernel.elf` 啟動 UART shell。使用 QEMU 8.2.2／OpenSBI 1.3 驗證了 PowerShell 啟動至 `wuwaos/>`、CLI 指令、新磁碟開機、重啟讀回與無磁碟時停止開機。 [開機流程](./topics/boot.md) · [實作與驗收範圍](https://github.com/johnson931128/WUWAOS/blob/main/plan.md#cli-磁碟開機2026-11-09) · [實作提交](https://github.com/johnson931128/WUWAOS/commit/7b0b3e2)
+
 ## 互動教學整理（2026-11-08）
 
 網站以 HTML/CSS/Vue 加入 [Block Async I/O](./topics/block-async.md)、[FD/OFD](./topics/file-descriptors.md)、[換頁與 Swap](./topics/paging.md)、[Journal 與安全替換](./topics/journal.md) 的教學模型，按章節分別提交，搭配筆記引用、參數／欄位與函式對照。模型展示的是程式邏輯順序，不是即時 OS、效能量測或新 QEMU 驗收。

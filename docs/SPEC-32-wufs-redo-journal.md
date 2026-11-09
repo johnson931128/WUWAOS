@@ -70,7 +70,9 @@ qemu-system-riscv64 -machine virt -smp 1 -m 128M -nographic -bios default \
   -device virtio-blk-device,drive=swap
 ```
 
-Kernel mount 會先 replay 有效 committed journal，再清除 header；退出 QEMU 後，host `make_disk.py` 才能安全更新該映像。若 journal header 非零但無效，kernel 與 host 都拒絕自動修復，需保留映像做人工檢查。
+若要復原 `make run-disk` 的預設映像，在專案目錄先用 `make` 建置 `build/kernel.elf`。再執行上述直接開機指令，把 `file=build/wuwaos-v2.img` 換成 `file=build/wuwaos-cli.img`，並省略兩個 swap 參數。磁碟開機載入器會拒絕有待重播紀錄的映像，因此復原時要由 QEMU 直接載入核心。
+
+核心掛載時先重播有效的已提交交易，再清除 header。退出 QEMU 後，就能以原本的指令重新啟動該映像。若 journal header 非零但無效，核心會拒絕掛載，應保留映像供檢查。
 
 ## 驗收紀錄
 

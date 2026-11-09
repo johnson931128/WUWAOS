@@ -38,7 +38,7 @@ ecall（環境呼叫指令）長度固定 4 bytes；核心將 sepc 加 4，讓�
 
 ## 如何觀察
 
-在 `wuwaos>` 執行 `ps`，命令經 API 進核心，讀取真實 PCB，再輸出結果。執行 `mem alloc 1`、`mem read 0`，則可配合 `vmstat` 觀察合法首次存取的[缺頁處理](./paging.md)。
+在 `wuwaos/>` 執行 `ps`，命令經 API 進核心，讀取真實 PCB，再輸出結果。執行 `mem alloc 1`、`mem read 0`，則可配合 `vmstat` 觀察合法首次存取的[缺頁處理](./paging.md)。
 
 計時器中斷也走同一入口：scause 最高位表示中斷、低位原因 5 表示監督模式計時器。先清除 pending，再讓原行程排到隊尾，依 [RR 排程](./scheduling.md) 選擇下一個；保留 sepc 與 a0，不當作 syscall 返回值改寫。
 

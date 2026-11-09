@@ -16,7 +16,7 @@ WUWAOS is a small operating system written in **C and RISC-V assembly** that boo
 
 | Area | Current implementation |
 | --- | --- |
-| Platform | QEMU `virt`, RISC-V 64-bit, one CPU core, and 128 MiB RAM; OpenSBI starts the kernel |
+| Platform | QEMU `virt`, RISC-V 64-bit, one CPU core, and 128 MiB RAM; OpenSBI firmware with CLI disk boot |
 | Processes and scheduling | Up to 16 processes, process control blocks, fork, built-in and path-based exec, wait, exit, and timer-driven round-robin scheduling |
 | Synchronization and IPC | Custom mutexes and semaphores, sleep/wakeup, per-process file descriptors, and multi-stage pipes |
 | Virtual memory | Sv39 three-level page tables, demand paging, FIFO page replacement, and swap |
@@ -119,31 +119,20 @@ The release includes a package/version manifest and SHA-256 checksum. It exclude
 
 GitHub's automatically generated **Source code** archives and a normal `git clone` contain only project files; the toolchain is supplied separately in the portable release asset.
 
-### Existing WSL environment
+### Boot the CLI from a WUFS disk in WSL
 
 The following example uses Windows PowerShell, WSL Ubuntu, and a checkout at `C:\programing\WUWAOS`. WSL needs Clang, LLD, llvm-objcopy, Make, Python 3, QEMU for RISC-V, and OpenSBI.
 
-Run in PowerShell:
+Open PowerShell and run these commands.
 
 ```powershell
-wsl -d Ubuntu -- bash -lc 'cd /mnt/c/programing/WUWAOS && make run'
-```
-
-`make run` uses Clang in WSL to cross-compile the RISC-V program and then starts QEMU. Once the `wuwaos/>` prompt appears, enter `help` to see the available commands. Try `demo sync` to observe a parent and child process using synchronization primitives.
-
-To exit QEMU, press **Ctrl+A**, release the keys, and then press **X**. The `exit` command ends only the shell. The WUFS disk image is stored at `build/wuwaos.img`; its files persist across restarts, and `make clean` does not delete the disk image.
-
-### Boot the CLI from a WUFS disk
-
-Run this command from PowerShell in the project root.
-
-```powershell
+cd C:\programing\WUWAOS
 wsl -d Ubuntu -- make run-disk
 ```
 
-This cross-compiles WUWAOS and installs `/boot/kernel.elf` in `build/wuwaos-cli.img`. QEMU starts OpenSBI, which enters the WUWAOS loader in a read-only flash image. The loader reads the kernel from the VirtIO disk and starts it. When `wuwaos/>` appears, try `echo hello` or `ls /boot`. Press **Ctrl+A**, release the keys, and press **X** to quit QEMU.
+This cross-compiles WUWAOS and installs `/boot/kernel.elf` in `build/wuwaos-cli.img`. OpenSBI starts the WUWAOS loader from read-only flash. The loader reads the kernel from the VirtIO disk and starts it. When `wuwaos/>` appears in the same terminal, try `echo hello` or `ls /boot`. Press **Ctrl+A**, release the keys, and press **X** to quit QEMU. The `exit` command ends the shell.
 
-The CLI disk preserves its files across launches. This configuration attaches one WUFS disk and runs without a dedicated swap disk. The loader requires a clean WUFS0002 journal. For a pending transaction, follow the [WUFS recovery procedure](docs/SPEC-32-wufs-redo-journal.md#新磁碟與-pending-recovery-操作).
+The CLI disk preserves its files across launches and `make clean`. Disk boot uses one WUFS0002 image with swap disabled. If the journal has a pending transaction, use the direct kernel launch in the [WUFS recovery procedure](docs/SPEC-32-wufs-redo-journal.md#新磁碟與-pending-recovery-操作). For everyday direct kernel boot with a dedicated swap disk, run `wsl -d Ubuntu -- make run` from the same directory. That target uses `build/wuwaos.img` and `build/wuwaos-swap.img`.
 
 ## Filesystem Initialization Checks
 
@@ -164,13 +153,14 @@ See [Spec 31](docs/SPEC-31-filesystem-initialization-guard.md) for the algorithm
 
 ## Running a WUFS ELF Program
 
-With QEMU stopped, build the existing shell ELF and install it into the WUFS image from WSL:
+With QEMU stopped, use PowerShell in the project root to install the existing shell ELF into the CLI disk.
 
 ```powershell
-wsl -d Ubuntu -- bash -lc 'cd /mnt/c/programing/WUWAOS && make build/kernel-disk.elf && python3 tools/make_disk.py --image build/wuwaos.img --kernel build/kernel-disk.elf --install build/user.elf /bin/shell.elf'
+wsl -d Ubuntu -- make build/kernel-disk.elf build/user.elf
+wsl -d Ubuntu -- python3 tools/make_disk.py --image build/wuwaos-cli.img --kernel build/kernel-disk.elf --install build/user.elf /bin/shell.elf
 ```
 
-Start WUWAOS with `make run`, then enter `run /bin/shell.elf`. This opens another WUWAOS shell as a child; `exit` returns to its parent. The installer refuses to overwrite existing files. Never modify the image from the host while QEMU is using it.
+Start WUWAOS with `wsl -d Ubuntu -- make run-disk`, then enter `run /bin/shell.elf` at the guest prompt. This opens a child shell. Enter `exit` to return to its parent. The installer refuses to overwrite existing files. Stop QEMU before editing the disk from the host.
 
 This first loader accepts a restricted static ELF64 RV64 layout and the WUWAOS syscall ABI; it has no arguments, dynamic linker, or Linux compatibility. See [Spec 26](docs/SPEC-26-elf-exec.md) for the supported layout and validation.
 

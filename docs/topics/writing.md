@@ -33,7 +33,7 @@ npm.cmd run docs:dev
 
 `npm.cmd ci` 用於首次安裝或同步 lockfile；平常直接執行 docs:dev 即可。重新安裝前先停止預覽，避免 Windows 因使用中的 esbuild.exe 無法替換而回報 EPERM。
 
-這些指令在 Windows 主機執行，不是在 WUWAOS 的 `wuwaos>` 輸入。按 Ctrl+C 停止預覽。
+在 Windows PowerShell 執行這些指令。按 Ctrl+C 停止預覽。
 
 ## 新增一個主題
 

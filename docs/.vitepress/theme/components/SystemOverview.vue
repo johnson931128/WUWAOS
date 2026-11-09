@@ -1,16 +1,17 @@
 <script setup lang="ts">
+import { withBase } from 'vitepress'
 import { computed, ref } from 'vue'
 import DiagramFrame from './DiagramFrame.vue'
 
 const modules = [
-  { id: 'cpu', label: 'CPU', eyebrow: 'RV64 · 單核心', x: 42, y: 42, w: 205, h: 94, role: 'cpu', definition: 'QEMU virt 提供一顆 RV64 CPU。CPU 執行 S-mode 核心與 U-mode 使用者程式；它是硬體資源，不是 kernel 的子模組。', source: 'Makefile：-machine virt -smp 1', href: '../topics/getting-started', chapter: '平台與建置' },
-  { id: 'memory', label: '實體記憶體', eyebrow: 'RAM · 128 MiB', x: 272, y: 42, w: 235, h: 94, role: 'memory', definition: 'QEMU 配置 128 MiB RAM。核心管理 4 KiB 實體頁，Sv39 為行程提供虛擬位址轉譯。', source: 'kernel/mm/page.c · kernel/mm/vm.c', href: '../topics/memory', chapter: 'Sv39 與實體頁' },
-  { id: 'io', label: 'VirtIO 裝置', eyebrow: 'GPU · input · block', x: 532, y: 42, w: 235, h: 94, role: 'io', definition: 'QEMU virt 可提供 VirtIO GPU、tablet／keyboard 與 block 裝置。核心透過 FDT 探測 MMIO，再由對應 driver 管理。', source: 'drivers/virtio · kernel/boot/main.c', href: '../topics/io', chapter: '輸入輸出與 Pipe' },
-  { id: 'storage', label: '持久磁碟與 Swap', eyebrow: 'VirtIO block · 512-byte sectors', x: 792, y: 42, w: 256, h: 94, role: 'storage', definition: 'QEMU 接上 WUFS 磁碟與獨立 Swap 映像。WUFS 管理檔案與 redo journal；Swap 保存被換出的使用者頁。', source: 'kernel/fs/fs.c · kernel/mm/swap.c · drivers/virtio/block.c', href: '../topics/filesystem', chapter: 'WUFS 檔案系統' },
-  { id: 'opensbi', label: 'OpenSBI', eyebrow: 'M-mode 韌體', x: 350, y: 177, w: 390, h: 62, role: 'kernel', definition: 'QEMU default BIOS 啟動 OpenSBI；韌體完成機器模式初始化並交接給 S-mode 核心。', source: 'Makefile：-bios default · arch/riscv/entry.S', href: '../topics/boot', chapter: '開機流程' },
-  { id: 'kernel', label: 'WUWAOS 核心與桌面服務', eyebrow: 'S-mode · 靜態連結核心', x: 204, y: 278, w: 680, h: 127, role: 'kernel', definition: '核心在 S-mode 執行。kernel_main 安裝 trap、探測裝置、初始化 VM／TTY／FS／timer／process，最後啟動行程。可選圖形桌面、renderer 與 TTY service 也由核心端的 ui/ 與 kernel/ 程式提供，不是 U-mode 桌面應用。', source: 'kernel/boot/main.c · ui/desktop/desktop.c · kernel/io/tty.c', href: '../CODE_GUIDE#ui-與-kernel-的資料通道', chapter: '程式碼架構' },
-  { id: 'process', label: '使用者行程', eyebrow: 'U-mode · shell / app / fan / workstate', x: 311, y: 455, w: 467, h: 91, role: 'process', definition: 'shell、demo app、fan 與 workstate 是獨立的 U-mode 映像。它們透過 ecall 進入自訂 syscall ABI，由核心代辦操作。', source: 'kernel/exec/user_image.S · user/lib/api.c · kernel/syscall/syscall.c', href: '../topics/applications', chapter: 'Shell 與 fan 編輯器' },
-  { id: 'filesystem', label: 'WUFS 檔案系統', eyebrow: 'KERNEL SUBSYSTEM · STORAGE', x: 642, y: 354, w: 94, h: 31, role: 'storage', definition: 'WUFS 是 kernel/fs/ 內的檔案系統實作，將路徑解析到 inode 與磁區，並以 redo journal 支援有界交易。block driver 才負責 VirtIO 磁碟 I/O。', source: 'kernel/fs/fs.c · kernel/fs/path.c · drivers/virtio/block.c', href: '../topics/filesystem', chapter: 'WUFS 檔案系統' },
+  { id: 'cpu', label: 'CPU', eyebrow: 'RV64 · 單核心', x: 42, y: 42, w: 205, h: 94, role: 'cpu', definition: 'QEMU virt 提供一顆 RV64 CPU。CPU 執行 S-mode 核心與 U-mode 使用者程式；它是硬體資源，不是 kernel 的子模組。', source: 'Makefile：-machine virt -smp 1', href: '/topics/getting-started.html', chapter: '平台與建置' },
+  { id: 'memory', label: '實體記憶體', eyebrow: 'RAM · 128 MiB', x: 272, y: 42, w: 235, h: 94, role: 'memory', definition: 'QEMU 配置 128 MiB RAM。核心管理 4 KiB 實體頁，Sv39 為行程提供虛擬位址轉譯。', source: 'kernel/mm/page.c · kernel/mm/vm.c', href: '/topics/memory.html', chapter: 'Sv39 與實體頁' },
+  { id: 'io', label: 'VirtIO 裝置', eyebrow: 'GPU · input · block', x: 532, y: 42, w: 235, h: 94, role: 'io', definition: 'QEMU virt 可提供 VirtIO GPU、tablet／keyboard 與 block 裝置。核心透過 FDT 探測 MMIO，再由對應 driver 管理。', source: 'drivers/virtio · kernel/boot/main.c', href: '/topics/io.html', chapter: '輸入輸出與 Pipe' },
+  { id: 'storage', label: '持久磁碟與 Swap', eyebrow: 'VirtIO block · 512-byte sectors', x: 792, y: 42, w: 256, h: 94, role: 'storage', definition: 'WUFS 磁碟管理檔案與 redo journal。直接開機可以附加獨立 Swap 磁碟，保存被換出的使用者頁。磁碟開機使用一顆 WUFS 磁碟。', source: 'kernel/fs/fs.c · kernel/mm/swap.c · drivers/virtio/block.c', href: '/topics/filesystem.html', chapter: 'WUFS 檔案系統' },
+  { id: 'opensbi', label: 'OpenSBI 與開機載入', eyebrow: 'M-mode 韌體 · S-mode 載入器', x: 350, y: 177, w: 390, h: 62, role: 'kernel', definition: 'OpenSBI 完成機器模式初始化。磁碟開機時，OpenSBI 先交接給 flash 裡的載入器，由它從 WUFS 讀取核心。直接開機時，QEMU 預先載入核心，OpenSBI 直接交接給它。', source: 'Makefile · bootloader/boot.c · arch/riscv/entry.S', href: '/topics/boot.html', chapter: '開機流程' },
+  { id: 'kernel', label: 'WUWAOS 核心與桌面服務', eyebrow: 'S-mode · 靜態連結核心', x: 204, y: 278, w: 680, h: 127, role: 'kernel', definition: '核心在 S-mode 執行。kernel_main 安裝 trap、探測裝置、初始化 VM／TTY／FS／timer／process，最後啟動行程。可選圖形桌面、renderer 與 TTY service 也由核心端的 ui/ 與 kernel/ 程式提供，不是 U-mode 桌面應用。', source: 'kernel/boot/main.c · ui/desktop/desktop.c · kernel/io/tty.c', href: '/CODE_GUIDE.html#ui-與-kernel-的資料通道', chapter: '程式碼架構' },
+  { id: 'process', label: '使用者行程', eyebrow: 'U-mode · shell / app / fan / workstate', x: 311, y: 455, w: 467, h: 91, role: 'process', definition: 'shell、demo app、fan 與 workstate 是獨立的 U-mode 映像。它們透過 ecall 進入自訂 syscall ABI，由核心代辦操作。', source: 'kernel/exec/user_image.S · user/lib/api.c · kernel/syscall/syscall.c', href: '/topics/applications.html', chapter: 'Shell 與 fan 編輯器' },
+  { id: 'filesystem', label: 'WUFS 檔案系統', eyebrow: 'KERNEL SUBSYSTEM · STORAGE', x: 642, y: 354, w: 94, h: 31, role: 'storage', definition: 'WUFS 是 kernel/fs/ 內的檔案系統實作，將路徑解析到 inode 與磁區，並以 redo journal 支援有界交易。block driver 才負責 VirtIO 磁碟 I/O。', source: 'kernel/fs/fs.c · kernel/fs/path.c · drivers/virtio/block.c', href: '/topics/filesystem.html', chapter: 'WUFS 檔案系統' },
 ]
 const selectedId = ref('kernel')
 const selected = computed(() => modules.find((module) => module.id === selectedId.value) ?? modules[0])
@@ -37,7 +38,7 @@ function onKey(event: KeyboardEvent, id: string) {
     >
       <svg class="system-svg" viewBox="0 0 1090 580" role="group" aria-labelledby="system-svg-title system-svg-desc">
         <title id="system-svg-title">WUWAOS QEMU 系統分層架構</title>
-        <desc id="system-svg-desc">QEMU 虛擬硬體提供 CPU、RAM、VirtIO 裝置和磁碟。OpenSBI 韌體交接給 S-mode WUWAOS 核心；核心內含桌面服務。核心啟動 U-mode 使用者行程，行程透過 ecall 使用核心服務。</desc>
+        <desc id="system-svg-desc">QEMU 虛擬硬體提供 CPU、RAM、VirtIO 裝置和磁碟。OpenSBI 交接給 S-mode 的磁碟載入器，或直接交接給核心。核心內含桌面服務，並啟動以 ecall 使用核心服務的 U-mode 行程。</desc>
         <defs>
           <marker id="system-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" /></marker>
         </defs>
@@ -85,7 +86,7 @@ function onKey(event: KeyboardEvent, id: string) {
       <div class="detail-role" :class="`text-${selected.role}`">已選取 · {{ selected.label }}</div>
       <p>{{ selected.definition }}</p>
       <div class="detail-source"><span>Source</span><code>{{ selected.source }}</code></div>
-      <a :href="selected.href">閱讀：{{ selected.chapter }} →</a>
+      <a :href="withBase(selected.href)">閱讀{{ selected.chapter }} →</a>
     </div>
     <p class="system-caption">分層依 WUWAOS 目前實作整理；QEMU 的 1280×720 指可選 VirtIO GPU 桌面解析度，並非 QEMU RAM 或 CPU 規格。</p>
   </section>

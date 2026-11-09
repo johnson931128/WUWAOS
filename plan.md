@@ -10,6 +10,12 @@
 - 預設磁碟 `build/wuwaos-cli.img` 與新建驗收映像都啟動至 `wuwaos/>`，`echo disk-boot-ok` 與 `ls /boot` 回傳預期結果。用同一顆驗收磁碟重啟並讀回先前寫入的檔案，重啟時直接使用韌體與磁碟。QEMU 參數沒有 `-kernel`；移除磁碟時，載入器在核心啟動前顯示 `boot: virtio-blk init failed`。序列記錄見 `build/disk-boot-acceptance.log`、`build/disk-boot-final-fresh.log` 與 `build/disk-boot-final-reboot.log`。
 - 範圍為 QEMU `virt`、單 hart、128 MiB、唯讀載入器與一顆 WUFS0002 磁碟。CLI 磁碟開機要求 journal 無待重播紀錄，且此入口停用 swap。其他平台及損毀映像未進行實機驗收。
 
+### 文件與網站同步
+
+- 更新 README、入門與開機章、首頁架構圖、程式碼導覽與歷程。標明 `run-disk` 的磁碟開機與 `run`／GUI 的直接開機，舊規格保留當時驗收。同步移除現行文件對磁碟核心與系統內編譯的過時說明。
+- 驗收範圍是來源差異、網站建置、關鍵連結及 GitHub Pages。從乾淨的來源提交發布，避免將既有未提交的文件修改帶入網站。
+- VitePress 發布設定下的本機建置通過。修正排程與記憶體兩章的課程筆記連結，改指 GitHub 上對應檔案，保留 VitePress 的死連結檢查。這次文件同步沿用 2026-11-09 的 OS 驗收紀錄。
+
 ## 1. 多 TTY 與 session 物件化
 
 - 進度：完成；本階段驗收時 UI 為單一 Terminal view，後續第 5 階段已實作四視窗（runtime NOT_RUN）。

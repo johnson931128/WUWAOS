@@ -109,7 +109,7 @@ counter 每輪會 yield，交替輸出只能展示輪轉，不能單憑它證明
 
 ## Further Reading
 
-- 本地課程筆記：[notes/ch5 CPU schedueling.md](../../notes/ch5%20CPU%20schedueling.md)，Round-Robin 基本定義（§「RR 核心定義與硬體依賴」）與 FIFO queue 概念。教材中的一般 RR 模型與 C++ 示例是教科書概念；本站互動器是有限 workload 計算，核心實作則由上述 WUWAOS source 決定。
+- 課程筆記的「RR 核心定義與硬體依賴」一節介紹 Round-Robin 與 FIFO queue。本站互動器以有限 workload 示範這些概念，WUWAOS 的核心實作見上方原始碼。 [notes/ch5 CPU schedueling.md](https://github.com/johnson931128/WUWAOS/blob/main/notes/ch5%20CPU%20schedueling.md)
 - 原始合作式 FIFO 設計保留於 [Spec 07](../SPEC-07-fifo-scheduler.md)，現行設計以 [Spec 15](../SPEC-15-timer-rr.md) 為準。
 - [OSTEP CPU Scheduling](https://research.cs.wisc.edu/wind/OSTEP/cpu-sched.pdf) §7.7：RR time slice 與工作負載推演。
 - [OSTEP VizTools Scheduling](https://srg-ics-uplb.github.io/cmsc125/viztools/scheduling/) 與 [OS Lab CPU Scheduling](https://oslab.xikai.me/cpu-scheduling)：互動步驟與 queue/Gantt 視圖參考。

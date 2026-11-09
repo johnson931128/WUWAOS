@@ -10,12 +10,13 @@
 
 ```text
 QEMU → OpenSBI（機器模式韌體）
+  → 磁碟開機經 flash 載入器，從 WUFS 讀取 /boot/kernel.elf
   → arch/riscv/entry.S：準備監督模式核心的執行環境
   → kernel/boot/main.c：安裝例外入口、UART 開機字樣、FDT 探測、核心映射、PID 1
   → 有 GPU/tablet/keyboard：建立 framebuffer、繪製桌面 Terminal 圖示、排程器輪詢輸入事件
   → process_start → swtch → scheduler_loop → swtch → first_run → user_enter → sret
   → user/lib/entry.S → user_main(0) → shell_main
-      → 顯示 wuwaos>，以 read 等待輸入
+      → 顯示 wuwaos/>，以 read 等待輸入
       → scheduler 的 io_poll 輪詢 UART 並通知 TTY event；shell 在原 syscall stack 醒來後取字元、完成一行
       → user/shell/shell.c 解析指令
       → user/lib/api.c 的 ecall → arch/riscv/trap.S → arch/riscv/trap.c → kernel/syscall/syscall.c
@@ -27,7 +28,7 @@ QEMU → OpenSBI（機器模式韌體）
       → trap.S 還原同一行程的使用者 frame → sret
 ```
 
-CPU 執行記憶體中的機器碼，不知道來源檔名。OpenSBI 負責早期平台準備，核心負責頁表、行程、例外與裝置操作，shell 在 U-mode（使用者模式）透過系統呼叫要求服務。
+CPU 執行記憶體中的機器碼。OpenSBI 負責早期平台準備，直接開機時把控制權交給 QEMU 已載入的核心。磁碟開機時則先交給 `bootloader/entry.S`，再由載入器找到磁碟上的核心。兩條路徑會進入同一份核心入口，之後由 U-mode（使用者模式）的 shell 透過系統呼叫要求服務。 [開機流程](./topics/boot.md)
 
 ### UI 與 kernel 的資料通道
 

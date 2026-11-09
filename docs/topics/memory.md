@@ -105,7 +105,7 @@ Process 與 scheduler 的核心 stack 下方各有一頁 4 KiB 未映射 guard�
 
 ## Further Reading
 
-- 本地課程筆記：[notes/ch9 Main Memory.md](../../notes/ch9%20Main%20Memory.md) §9.3「分頁機制與基本方法」及 §9.4「階層式分頁」：page/offset、頁框與多層 page table 是教科書概念。筆記中 32-bit/雙層位址數值不能直接套用 RISC-V Sv39；此處 9/9/9/12、2^38 limit 與 4 KiB leaf 由 WUWAOS source 決定。
+- 課程筆記的 §9.3「分頁機制與基本方法」及 §9.4「階層式分頁」介紹 page offset、頁框與多層頁表。WUWAOS 的 9/9/9/12 位元配置、2^38 上限與 4 KiB leaf 依 RISC-V Sv39 與實際程式碼。 [notes/ch9 Main Memory.md](https://github.com/johnson931128/WUWAOS/blob/main/notes/ch9%20Main%20Memory.md)
 - [RISC-V Privileged Architecture: Sv39](https://github.com/riscv/riscv-isa-manual/blob/main/src/supervisor.adoc)：`satp`、canonical virtual address、PTE 與 page fault 規則。
 - [MIT xv6 RISC-V Book · Page tables](https://mit-pdos.github.io/xv6-riscv-book/mem.html)：以逐層 index 解釋硬體 page-table walk；xv6 的虛擬位址區配置不等同 WUWAOS。
 - [OSTEP · Advanced Page Tables](https://research.cs.wisc.edu/wind/OSTEP/vm-smalltables.pdf)：多層頁表與空間成本。
