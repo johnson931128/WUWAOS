@@ -1,6 +1,6 @@
 - 詳細步驟與方法：[plan.md](./plan.md)
 - CLI 磁碟開機已驗收。PowerShell 在專案根目錄執行 `wsl -d Ubuntu -- make run-disk`，由 OpenSBI 與 flash 載入器從一顆 WUFS 磁碟啟動至 `wuwaos/>`。已驗證新磁碟、重啟後讀回檔案及缺少磁碟時停止開機。詳見 [CLI 磁碟開機](./plan.md#cli-磁碟開機2026-11-09)。
-- CLI 文件已同步並通過 VitePress 本機建置。以 `run-disk` 為目前原始碼的 CLI 入門流程，另記直接開機與舊版 portable 的範圍。公開部署待確認。
+- CLI 文件已同步並通過 VitePress 建置。來源 `8b8ce26` 已推送至 `main`，`gh-pages` `4725bb6` 部署成功，已核對公開首頁、入門、開機、歷程與 journal 復原頁的更新內容。 [部署紀錄](https://github.com/johnson931128/WUWAOS/actions/runs/42569717948)
 - 整體進度：第 1 階段、2A、2B1 保留既有驗收；2026-11-08 的 2B2、2C 與第 3–6 階段已實作、整合編譯成功，runtime NOT_RUN。
 - 第 1 階段：多 TTY/session 已完成並有既有 QEMU/GDB 驗收；後續四視窗見第 5 階段。
 - 第 2 階段：已實作 Block gate/event/bounce 非同步請求、Swap PTE 撤銷／回復、GPU shadow/backing 與非阻塞 present；runtime NOT_RUN。
