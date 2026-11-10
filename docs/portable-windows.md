@@ -35,6 +35,22 @@ README 的 [Windows portable release](https://github.com/johnson931128/WUWAOS#wi
 
 此環境用於 Windows x64；macOS、Linux 和其他 CPU 平台請另行準備對應工具。
 
+### 使用目前原始碼從磁碟開機
+
+現有 portable 工具環境搭配目前原始碼時，可先在 PowerShell 執行 `.\Start-WUWAOS.cmd shell`，進入 Bash 後輸入 `make run-disk`。主機會編譯並準備唯讀 `build/boot-flash.img` 和 WUFS0002 `build/wuwaos-cli.img`。客體內由 OpenSBI 交接到 flash 載入器，再從磁碟的 `/boot/kernel.elf` 載入核心。
+
+```text
+OpenSBI -> Flash Bootloader -> WUFS: /boot/kernel.elf
+                                        |
+                                        v
+                              RAM: kernel _start
+                                        |
+                                        v
+                              kernel_main -> shell
+```
+
+此路徑使用單顆磁碟、停用 swap，且 journal 必須無待重播紀錄。`.\Start-WUWAOS.cmd` 與 `gui` 仍由 QEMU `-kernel` 直接載入核心。原始 portable v1 ZIP 沒有 `run-disk` target，需要目前原始碼。詳細圖解見[開機流程](./topics/boot.md)。
+
 ## 檔案系統初始化驗證
 
 在專案根目錄執行下列固定入口，不需要先在 PowerShell 定義函式：

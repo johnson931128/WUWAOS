@@ -39,7 +39,19 @@ wsl -d Ubuntu -- make run-disk
 
 需要操作 Makefile 時，可先用 `.\Start-WUWAOS.cmd shell` 進入隨附環境，再輸入 `make`、`make run` 或 `make run-gui GUI_DISPLAY=gtk`。一般啟動不必手動設定 Bash 路徑或環境變數。
 
-此處的 v1 ZIP 使用該版本內的直接開機流程。`make run-disk` 適用於上方的目前原始碼與 WSL 流程。
+**目前原始碼搭配 portable 工具環境**也支援磁碟開機。在 PowerShell 執行：
+
+```powershell
+.\Start-WUWAOS.cmd shell
+```
+
+進入 Bash 後輸入：
+
+```bash
+make run-disk
+```
+
+這會使用 `build/boot-flash.img` 的載入器，從 `build/wuwaos-cli.img` 讀取 `/boot/kernel.elf`；完整 ASCII 圖解見[磁碟開機原理](./boot.md#磁碟開機-主機先準備什麼)。原始 portable v1 ZIP 使用該版本內的直接開機流程，須有目前原始碼才有 `run-disk` target。
 
 ### 最新原始碼的磁碟保護與檢查
 

@@ -134,6 +134,27 @@ This cross-compiles WUWAOS and installs `/boot/kernel.elf` in `build/wuwaos-cli.
 
 The CLI disk preserves its files across launches and `make clean`. Disk boot uses one WUFS0002 image with swap disabled. If the journal has a pending transaction, use the direct kernel launch in the [WUFS recovery procedure](docs/SPEC-32-wufs-redo-journal.md#新磁碟與-pending-recovery-操作). For everyday direct kernel boot with a dedicated swap disk, run `wsl -d Ubuntu -- make run` from the same directory. That target uses `build/wuwaos.img` and `build/wuwaos-swap.img`.
 
+With the current source and an existing portable tool environment, disk boot also works without WSL: run `.\Start-WUWAOS.cmd shell` in PowerShell, then enter `make run-disk` in Bash. The original portable v1 ZIP needs updated source for this target.
+
+```text
+Host: source -> compile loader -> boot-flash.img (read-only)
+             -> compile kernel -> WUFS disk: /boot/kernel.elf
+
+Guest:
+CPU -> OpenSBI -> Flash Bootloader -> read /boot/kernel.elf
+                                            |
+                                            v
+                                  load ELF segments into RAM
+                                            |
+                                            v
+                                  kernel _start (0x80200000)
+                                            |
+                                            v
+                                  kernel_main -> shell
+```
+
+The loader reads the kernel from disk; the running kernel then initializes its own drivers and mounts WUFS. Direct boot (`make run` and GUI targets) instead uses QEMU `-kernel` to load `build/kernel.elf`. See the [ASCII boot diagrams and explanation](docs/topics/boot.md) for the host preparation, firmware handoff, and Flash/disk/RAM relationship.
+
 ## Filesystem Initialization Checks
 
 The current source preserves legacy `WUFS0001` images read-only and formats confirmed blank media as `WUFS0002`. WUFS0002 uses a bounded full-sector redo journal with flush barriers and boot-time replay. Unknown nonblank images and images with a pending or invalid journal are never rewritten by the host image tool. These changes postdate portable v1; the existing release ZIP does not include WUFS0002 or the journal and is not rebuilt by this source update. Details, new-disk commands, recovery steps, and scratch QEMU fault-injection results are in [Spec 32](docs/SPEC-32-wufs-redo-journal.md); the older initialization guard is in [Spec 31](docs/SPEC-31-filesystem-initialization-guard.md).

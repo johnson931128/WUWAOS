@@ -2,19 +2,118 @@
 
 CPU 不認識 `entry.S` 或 `main.c` 這些檔名，只會執行記憶體中的機器指令。兩個來源檔最後會被連結到同一份核心映像。
 
-## 從韌體到 C
+## 磁碟開機：主機先準備什麼
+
+`make run-disk` 分成主機建置與 QEMU 開機兩個階段。主機負責交叉編譯 RISC-V 程式，並把核心安裝進 WUFS 映像；這時 WUWAOS 尚未開始執行。
 
 ```text
-QEMU virt → OpenSBI → flash 載入器
-  → 從 WUFS 磁碟讀取 /boot/kernel.elf → 0x80200000 的 _start
-  → 設定 stack、清除 BSS → call kernel_main
-  → FDT 裝置探測、頁表與檔案系統初始化
-  → process_start → scheduler_loop → UART shell
+HOST: make run-disk
+============================================================
+
+WUWAOS source
+    |
+    +-- compile kernel --> build/kernel-disk.elf
+    |                              |
+    |                              | install into WUFS
+    |                              v
+    |                     build/wuwaos-cli.img
+    |                     +------------------------+
+    |                     | WUFS0002 filesystem    |
+    |                     |   /boot/kernel.elf     |
+    |                     +------------------------+
+    |
+    +-- compile loader --> build/bootloader.elf
+                                   |
+                                   v
+                          build/boot-flash.img
 ```
 
-`make run-disk` 先在主機交叉編譯並把核心安裝到 `build/wuwaos-cli.img`。QEMU 啟動 OpenSBI（RISC-V 韌體），接著進入唯讀 flash 裡的載入器。載入器從磁碟讀出 `/boot/kernel.elf`，檢查 ELF 標頭後將各區段放到記憶體。它保留 OpenSBI 傳來的硬體執行緒編號和裝置樹位址，跳到核心的 `_start`。 [載入器原始碼](https://github.com/johnson931128/WUWAOS/blob/main/bootloader/boot.c)
+`build/kernel-disk.elf` 是移除符號後、供磁碟開機使用的核心 ELF。`build/boot-flash.img` 裡放的是載入器，QEMU 將它接成唯讀 flash；核心檔案則在另一顆 VirtIO 磁碟的 `/boot/kernel.elf`。此 CLI 路徑使用單顆 WUFS0002 磁碟，停用 swap，並要求 journal 無待重播紀錄。
 
-`make run` 與 GUI 指令採用直接開機，QEMU 以 `-kernel` 載入 `build/kernel.elf`，OpenSBI 直接交接到核心。兩條路徑都在 `0x80200000` 進入同一份 `arch/riscv/entry.S`。 [入門指令](./getting-started.md)
+## 從韌體到使用者 shell
+
+QEMU 的 RISC-V CPU 啟動後，先執行 OpenSBI 韌體，再交接到 S-mode（監督模式）的 flash 載入器。以下才是客體電腦內部的開機過程。
+
+```text
+GUEST: QEMU virt / RISC-V 64
+============================================================
+
+                    CPU starts
+                        |
+                        v
+              +--------------------+
+              | OpenSBI firmware   |
+              +--------------------+
+                        |
+                        | hand off to S-mode
+                        v
+              +--------------------+
+              | Flash Bootloader   |
+              | 0x20000000         |
+              +--------------------+
+                        |
+                        | discover VirtIO disk
+                        v
+              +--------------------+
+              | Read WUFS          |
+              | /boot/kernel.elf   |
+              +--------------------+
+                        |
+                        | validate ELF, load segments into RAM
+                        v
+              +--------------------+
+              | Kernel _start      |
+              | 0x80200000         |
+              | stack + clear BSS  |
+              +--------------------+
+                        |
+                        | call kernel_main(hart_id, fdt)
+                        v
+              +--------------------+
+              | Initialize kernel  |
+              | devices / VM / FS  |
+              | IRQ / timer / proc |
+              +--------------------+
+                        |
+                        | process_start -> scheduler_loop
+                        v
+              +--------------------+
+              | User-mode shell    |
+              | wuwaos/>           |
+              +--------------------+
+```
+
+載入器找到 `/boot/kernel.elf` 後，檢查 ELF 標頭與可載入區段，將核心放到 RAM，再跳到核心入口。交接時保留 OpenSBI 傳來的 hart ID（硬體執行緒編號）與 FDT（裝置樹）位址。找不到磁碟、核心檔案或 ELF 不合法時，載入器會印出錯誤並停止開機。[載入器原始碼](https://github.com/johnson931128/WUWAOS/blob/main/bootloader/boot.c)
+
+### Flash、磁碟與 RAM 的關係
+
+```text
+Read-only Flash       VirtIO disk                 RAM
++---------------+     +--------------------+      +----------------+
+| Bootloader    |---->| /boot/kernel.elf   |----->| WUWAOS kernel  |
++---------------+     +--------------------+      | 0x80200000     |
+        |                                        +----------------+
+        |                                                ^
+        +---------------- jump to _start ----------------+
+```
+
+Bootloader 負責找到並載入核心；核心開始執行後，會初始化自己的磁碟驅動並掛載 WUFS。**載入器讀磁碟與核心掛載檔案系統，是兩個不同階段。**
+
+## 直接開機：文字與圖形入口
+
+`make run`、`make run-gui` 與 `.\Start-WUWAOS.cmd gui` 採用直接開機。QEMU 以 `-kernel` 預先載入 `build/kernel.elf`，OpenSBI 直接交接到核心。
+
+```text
+HOST: QEMU -kernel build/kernel.elf --> kernel placed in RAM
+
+GUEST: CPU -> OpenSBI -> kernel _start -> kernel_main
+                                            |
+                                            +--> UART shell
+                                            |
+                                            +--> desktop, if devices exist
+```
+
+兩條路徑都在 `0x80200000` 進入同一份 `arch/riscv/entry.S`。直接開機仍可掛載 WUFS，但啟動用的核心由 QEMU 載入。圖形模式目前使用這條路徑。[啟動指令](./getting-started.md)
 
 ## entry.S：先準備 C 所需的環境
 
@@ -30,7 +129,7 @@ QEMU virt → OpenSBI → flash 載入器
 
 原始碼：[kernel/boot/main.c（GitHub）](https://github.com/johnson931128/WUWAOS/blob/main/kernel/boot/main.c)。
 
-先安裝 trap（陷阱／例外入口），再顯示 UART 動畫、探索 VirtIO 裝置、建立核心分頁映射與掛載檔案系統。若 FDT 找到 VirtIO GPU、tablet 與 keyboard，核心建立 framebuffer、啟用輸入 queue 後繪製 Terminal 圖示；點擊後由 scheduler 建立獨立的 GUI shell。原始 PID 1 UART shell 仍存在；沒有圖形輸入設備時直接使用 UART。
+先安裝 trap（陷阱／例外入口），再顯示 UART 動畫、依 FDT 探索 PLIC 與 VirtIO 裝置、建立 Sv39 分頁映射並掛載 WUFS。接著註冊磁碟 IRQ、啟用 PLIC 通知與計時器，建立行程並進入排程器。若 FDT 找到 VirtIO GPU、tablet 與 keyboard，核心也建立 framebuffer、啟用輸入 queue 並繪製 Terminal 圖示；點擊後由 scheduler 建立獨立的 GUI shell。原始 PID 1 UART shell 仍存在；沒有圖形輸入設備時直接使用 UART。
 
 `fdt` 指向 FDT（硬體裝置樹），是韌體交給核心的硬體描述資料。核心用它尋找 VirtIO 裝置，實體頁配置器也會保留它占用的記憶體。
 

@@ -5,6 +5,8 @@ Spec 33 以前的歷史 source link 若指向舊 `kernel/` 或 `user/` 路徑，
 
 ## CLI 磁碟開機（2026-11-09）
 
+2026-11-10 文件補充：新增主機建置、客體開機及 Flash／磁碟／RAM 關係的 ASCII 圖，並同步 portable／WSL 啟動方式與直接開機的差異。[磁碟開機原理](./topics/boot.md#磁碟開機-主機先準備什麼)
+
 `make run-disk` 交叉編譯核心並安裝到 WUFS0002。QEMU 透過 OpenSBI 進入唯讀 flash 載入器，再從磁碟的 `/boot/kernel.elf` 啟動 UART shell。使用 QEMU 8.2.2／OpenSBI 1.3 驗證了 PowerShell 啟動至 `wuwaos/>`、CLI 指令、新磁碟開機、重啟讀回與無磁碟時停止開機。 [開機流程](./topics/boot.md) · [實作與驗收範圍](https://github.com/johnson931128/WUWAOS/blob/main/plan.md#cli-磁碟開機2026-11-09) · [實作提交](https://github.com/johnson931128/WUWAOS/commit/7b0b3e2)
 
 ## 互動教學整理（2026-11-08）
