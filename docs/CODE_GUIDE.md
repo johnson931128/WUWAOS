@@ -20,11 +20,11 @@ QEMU → OpenSBI（機器模式韌體）
       → scheduler 的 io_poll 輪詢 UART 並通知 TTY event；shell 在原 syscall stack 醒來後取字元、完成一行
       → user/shell/shell.c 解析指令
       → user/lib/api.c 的 ecall → arch/riscv/trap.S → arch/riscv/trap.c → kernel/syscall/syscall.c
-          ├─ kernel/proc/process.c → kernel/proc/scheduler.c：PCB 狀態／生命週期 → FIFO 就緒佇列
+          ├─ kernel/proc/process.c → kernel/proc/scheduler.c：PCB 生命週期／TCB 執行狀態 → TCB FIFO 就緒佇列
           ├─ kernel/io/io.c：FD／pipe／console 路由及阻塞；GUI console endpoint 經 kernel/io/tty.c
           └─ kernel/fs/fs.c → drivers/virtio/block.c：檔案路徑／WUFS inode → VirtIO → QEMU 磁碟
       → 阻塞／讓出／到期：swtch 保存核心 C 呼叫，交給獨立 scheduler stack
-      → 再次派發：swtch 恢復該行程原核心呼叫，process_resume 完成返回準備
+      → 再次派發：swtch 恢復該行程原核心呼叫，thread_resume 完成返回準備
       → trap.S 還原同一行程的使用者 frame → sret
 ```
 
@@ -95,6 +95,7 @@ flowchart LR
 | kernel/proc/workstate.c / workstate.h | 派發時間累計、系統 busy 總計、安全唯讀監測快照 |
 | include/workstate_info.h | 固定容量、版本化的行程 CPU／記憶體快照 ABI |
 | user/apps/workstate/workstate.c / workstate.h、user/apps/workstate/main.c | 獨立 workstate image、區間比率、定時休眠與 q 退出 |
+| kernel/proc/thread.c / thread.h | 獨立 TCB 表、TID、目前執行者、每 Thread 核心堆疊／guard 與安全配置回收 |
 | kernel/proc/scheduler.c / scheduler.h | 單向鏈結 FIFO 就緒佇列、入列／取隊首／移除與順序查閱 |
 | kernel/ipc/sync.c / sync.h、include/sync_ops.h | 自製 mutex／semaphore、等待佇列與行程離開清理；詳見 Spec 22 |
 | kernel/exec/elf.c / elf.h | 驗證並載入受限 RV64 ELF 段，準備私有 VM；見 Spec 26 |
@@ -214,7 +215,7 @@ trap_entry 用 `csrrw sp, sscratch, sp` 交換堆疊。來自使用者時取得�
 trap.h 的數字位移供組合語言使用，C 結構用相同布局；_Static_assert（編譯期布局契約）避免兩邊不一致，並非 runtime 測試。
 
 trap_handler 保存目前行程的 frame，僅在 SPP=0、scause=8 時分派使用者 ecall（環境呼叫指令）。ecall 固定 4 bytes，因此先將 sepc 加 4；其他例外不套用此位移。
-使用者其他例外終止該行程，核心錯誤顯示資訊後停止。一般呼叫後透過 process_resume 返回本行程的 frame；阻塞或換下時以 swtch 保存核心呼叫，恢復後才沿原陷阱路徑返回。
+使用者其他例外終止該行程，核心錯誤顯示資訊後停止。一般呼叫後透過 thread_resume 返回本行程的 frame；阻塞或換下時以 swtch 保存核心呼叫，恢復後才沿原陷阱路徑返回。
 使用者 page fault（缺頁例外）12／13／15 則先呼叫 vm_handle_fault；合法按需配置／換入成功後保留原 sepc 重試，非法或無法補頁才結束行程。這不是把所有缺頁當成一般錯誤，也不對缺頁指令套用 ecall 的 +4。
 S-mode page fault 若地址落在登記的 kernel stack guard，C handler 會輸出目前 PID、stack 範圍與 fault address 後停機。`trap.S` 必須先在原核心 stack 配置並寫入 TrapFrame；若真實 stack overflow 在這一步踩到 guard，可能在抵達 C handler 前再次 fault，因此此診斷不能保證可達，也不表示可恢復。2026-11-08 新增 guard 路徑 runtime NOT_RUN。
 `mv sp, a0` 改用 C 回傳的 frame；trap_restore 寫回 CSR（控制與狀態暫存器）、還原一般暫存器，最後 sret（監督模式陷阱返回指令）。
@@ -257,8 +258,8 @@ ps 的 free／total 是底層配置池頁數；vmstat 的 resident／limit 是�
 ## 7. process.c / process.h：PCB 與生命週期
 
 原本的 Process 結構現在以 ProcessControlBlock 標記，仍只有一份真實狀態。processes[16] 是行程表；每個 page-aligned kernel stack slot 為一頁 unmapped guard 加 16 KiB stack，scheduler stack 同樣配置。
-PCB 保存 PID／父 PID／角色／狀態／結束碼、頁表與兩種 stack、frame、等待原因／事件通道／子 PID／結果位址、固定 8 格 FD table、event WaitRecord 與 `kernel_call_active`／`kill_pending`。WaitRecord 保存 source generation/sequence、deadline、完成狀態與結果；TTY／pipe 實際 buffer 位址與短期 staging 留在 caller stack，不交由 scheduler poller 使用。UART FD 0／1／2 是固定 sentinel；GUI TTY、pipe 與 file FD 指向全域 OFD 表。
-`ready_next` 指向下一個就緒 PCB，`ready_queued` 標示是否已入列；只有 Ready 行程位於佇列，Running／Waiting／Zombie／Unused 不佔據佇列節點。行程表仍保存所有狀態，佇列不複製 PCB。
+PCB 保存 PID／父 PID／角色／生命週期／結束碼、頁表、固定 8 格 FD table、cwd、TTY session 與初始 Thread 指標。TCB 保存 TID／Ready-Running-Waiting 狀態、frame／context／stack、等待原因與 event record、取消／cancel-defer／gate 深度。階段 A 每個 Process 只有一條 Thread；詳細責任與本次回歸見[階段 A 紀錄](./thread-stage-a.md)。TTY／pipe 的短期 staging 留在 caller Thread stack，不交給 scheduler poller。
+TCB 的 `ready_next` 指向下一個 Ready TCB，`ready_queued` 標示是否已入列；Running／Waiting／Zombie／Unused 不佔據 Ready queue。PCB 保存資源生命週期，TCB 保存執行狀態，佇列不複製 TCB。
 
 ```text
 Unused（可用）→ New（建立中）→ Ready（就緒）→ Running（執行中）
@@ -271,14 +272,14 @@ Running／Waiting／Ready → exit／kill → Zombie（待回收） → wait →
 
 - create_process 掃描空欄位、分配遞增 PID、清除 PCB／stack、建立私有頁表、設定初始 frame，最後公布為 Ready。頁面不足回 -12 並恢復 Unused；失敗可能消耗 PID，但不占用 PCB 或頁面。
 - 初始 a0 存內建角色，sp 是使用者 stack 頂端，sepc 是 0x400000；sstatus 選 U-mode、SPIE=1、SIE=0，讓 sret 後可接收計時器中斷，核心內維持不搶占；停用浮點／向量能力。
-- process_init 在建立任何 process root 前，從共用 kernel_root 移除 scheduler 與各 PCB stack guard 的 leaf PTE；new roots 共用這些核心映射。建立 PCB 時只清 guard 後的 16 KiB stack，frame/top layout 不變。guard trap 的可診斷範圍與 stack-overflow 限制見第 5 節；本輪 runtime NOT_RUN。
+- process_init 在建立任何 process root 前，從共用 kernel_root 移除 scheduler 與各 TCB stack guard 的 leaf PTE；new roots 共用這些核心映射。建立 PCB 時只清 guard 後的 16 KiB stack，frame/top layout 不變。guard trap 的可診斷範圍與 stack-overflow 限制見第 5 節；本輪 runtime NOT_RUN。
 - process_init 建立 PID 1 的 shell；process_spawn 只接受 worker／quick，父 PID 為目前行程。
 - process_fork 建立尚未公布 Ready 的子 PCB，複製使用者頁及父 TrapFrame，設定子 a0=0、複製 FD table 並增加 OFD 引用後才改成 Ready；父子共用同一個 open-file offset。父回傳新 PID，子從 fork 呼叫後繼續。核心 stack 不複製，子使用新的保存框架。
 - process_exec 先拒絕未知 ID，再準備／交換位址空間。清除舊使用者暫存器、設定 sp／入口／a0 角色，保留原本合法的 sstatus、PID／父子關係／核心 stack／FD table，清除等待及 I/O 欄位。切換 satp 後，trap.S 直接恢復新入口，不會返回舊 shell。所有空間共用核心映射，所以切換時目前核心 stack 仍有效。
 - transition 統一記錄與更新狀態，進入 Ready 時排到 FIFO 隊尾，離開 Ready 時移除；scheduler_next 已出列的節點不重複移除。trace_enabled 可關閉子行程的追蹤，但不會停用佇列維護。PID 1 與 fan 不輸出逐次狀態紀錄，以免打斷提示字元或編輯畫面，仍有真實狀態供 ps／pcb 查閱。fork 出來但還沒 exec 的 shell 子行程照常記錄。
-- PCB 的 context 保存 ra／sp／s0～s11；create_process 設定 first_run 與 frame 下緣作為初始核心入口／堆疊。fork 使用新的核心上下文，exec 保留目前核心 C 呼叫。
+- TCB 的 context 保存 ra／sp／s0～s11；create_process 設定 first_run 與 frame 下緣作為初始核心入口／堆疊。fork 使用新的核心上下文，exec 保留目前核心 C 呼叫。
 - suspend_current 要求 SIE=0 且已離開 Running，停用原事件後以 context_switch 切到有 guard page 的 16 KiB scheduler stack。scheduler_loop 在自己的堆疊切核心根表、清除 current_index、輪詢 UART／Block／UI、回收孤兒 Zombie，再取隊首、增加 dispatches、切頁表並設定新 50 ms 時間片，最後 context_switch 恢復行程核心呼叫。
-- process_resume 只切核心根表並輪詢 UART／Block／UI，必要時暫停當前行程，最後恢復本行程根表並返回自己的 frame。Block completion poll 不進 FS/VM，也不等待；若無 Ready process 但有事件來源或 block request，scheduler 以最多 10 ms deadline 週期喚醒 poll。普通 syscall／缺頁恢復不重設 deadline；計時器仍清 pending、增加 preemptions、Running→Ready，再切到排程器；不修改中斷 sepc 或 a0。
+- thread_resume 只切核心根表並輪詢 UART／Block／UI，必要時暫停當前行程，最後恢復本行程根表並返回自己的 frame。Block completion poll 不進 FS/VM，也不等待；若無 Ready process 但有事件來源或 block request，scheduler 以最多 10 ms deadline 週期喚醒 poll。普通 syscall／缺頁恢復不重設 deadline；計時器仍清 pending、增加 preemptions、Running→Ready，再切到排程器；不修改中斷 sepc 或 a0。
 - 核心 C 呼叫堆疊會保留，恢復後從原函式繼續，再由 trap.S 還原同一行程的使用者 frame。新行程首次派發走 first_run→user_enter；Zombie 不再返回。
 - 沒有 Ready 但等待 UART、UI 或 Block completion 時，scheduler 設定最多 10 ms 的 timer deadline、WFI 後輪詢 source；單純 timer wait 則睡到最近 deadline。沒有任何可喚醒來源的全部阻塞會顯示診斷；全部回收後進 kernel_idle。
 
@@ -292,7 +293,7 @@ process_kill 只接受目前行程的直接子行程，不接受自己、PID 1 �
 父行程退出時子行程交給仍活著的 PID 1，否則無父行程；無父行程的 Zombie 由核心回收。
 `vm_destroy` 釋放私有頁面與表、清除 PCB 的根表指標後才可把欄位改成 Unused；呼叫時必須已切離該根表及堆疊。父行程 wait 可在自己的 stack 上等待並清理；scheduler 對孤兒 zombie 使用 `vm_try_destroy`，Gate 忙碌時延後回收，不在 scheduler stack 睡眠。`PROCESS_NEW` 在建立頁表期間保留 PCB slot；`process_inspect` 遇到尚未建立的 frame 會顯示 initializing，不解參考 null。
 
-`KernelGate` 以 PCB/PID 作 owner 並追蹤遞迴深度；競爭者記錄 event generation/sequence 後，在不持有目標 Gate 時等待。主要巢狀次序為 OFD/Pipe → FS → VM → 單一 Block device；poll 不反向進入這些 scope。Kill 對仍在 syscall/fault 核心 stack 的行程標記 pending；cancel-defer 保護 VM PTE 撤銷回復、已提交 DMA 的 buffer/gate ownership，以及 FS journal commit 等不可中途 unwind 的區段。trap return 邊界檢查內部 Gate/defer 深度後才處理 pending kill。排隊等待 Gate 可取消；DMA submit 後須等安全 completion/collect 才能釋放資源。2026-11-08 的這些整合路徑 runtime NOT_RUN。
+`KernelGate` 以 TCB/TID 作 owner 並追蹤遞迴深度；競爭者記錄 event generation/sequence 後，在不持有目標 Gate 時等待。主要巢狀次序為 OFD/Pipe → FS → VM → 單一 Block device；poll 不反向進入這些 scope。Kill 對仍在 syscall/fault 核心 stack 的行程標記 pending；cancel-defer 保護 VM PTE 撤銷回復、已提交 DMA 的 buffer/gate ownership，以及 FS journal commit 等不可中途 unwind 的區段。trap return 邊界檢查內部 Gate/defer 深度後才處理 pending kill。排隊等待 Gate 可取消；DMA submit 後須等安全 completion/collect 才能釋放資源。2026-11-08 的這些整合路徑 runtime NOT_RUN。
 
 ### 查詢與管道
 

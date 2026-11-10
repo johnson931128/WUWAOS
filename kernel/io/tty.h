@@ -27,8 +27,8 @@ int tty_input_push(TtyId id, const unsigned char *bytes, size_t length);
 int tty_input_read_byte(TtyId id);
 long tty_output_write(TtyId id, const unsigned char *bytes, size_t length);
 long tty_raw_owner(TtyId id);
-long tty_set_raw_owner(TtyId id, long pid, int enabled);
-void tty_release_raw_owner(long pid);
+long tty_set_raw_owner(TtyId id, long tid, int enabled);
+void tty_release_raw_owner(long tid);
 int tty_filter_crlf(TtyId id, int character, int raw);
 
 #endif

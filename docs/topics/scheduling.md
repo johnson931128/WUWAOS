@@ -6,6 +6,8 @@ import SchedulingLab from '../.vitepress/theme/components/SchedulingLab.vue'
 
 <SchedulingLab />
 
+2026-11-10 階段 A 已改為排程 TCB，每個 Process 暫時只有一條 Thread；互動模型的 PID 標籤仍代表其初始 Thread 的工作負載。50 ms RR 政策不變。[PCB／TCB 拆分與驗證](../thread-stage-a.md)
+
 ## Overview
 
 **WUWAOS 目前使用固定 50 ms 時間片的 RR（Round Robin，輪詢排程）**。就緒行程仍以 FIFO（先進先出）順序排隊；在使用者模式執行的行程若時間片到期，核心會切換行程。互動圖使用固定的小型工作負載說明 RR 計算，不讀即時 OS 狀態。
@@ -54,7 +56,7 @@ flowchart TD
 
 ### 派發與時間片
 
-每次取得可執行行程時，scheduler 從 queue head 移除它、將狀態轉成 Running，計數 dispatch，切換至該行程頁表並設定 50 ms timer。時間片到期後，timer trap 呼叫 `process_preempt()`：目前行程計數 preemption、轉回 Ready（因此入隊尾），停止 timer，保存工作狀態後切回 scheduler stack。`context_switch` 保存的是一般 C 呼叫邊界的 callee-saved state；完整使用者 TrapFrame 由 trap 路徑另外保存。
+每次取得可執行行程時，scheduler 從 queue head 移除它、將狀態轉成 Running，計數 dispatch，切換至該行程頁表並設定 50 ms timer。時間片到期後，timer trap 呼叫 `thread_preempt()`：目前行程計數 preemption、轉回 Ready（因此入隊尾），停止 timer，保存工作狀態後切回 scheduler stack。`context_switch` 保存的是一般 C 呼叫邊界的 callee-saved state；完整使用者 TrapFrame 由 trap 路徑另外保存。
 
 ### 系統呼叫、yield 與阻塞
 
@@ -90,7 +92,7 @@ counter 每輪會 yield，交替輸出只能展示輪轉，不能單憑它證明
 | Timer API | [timer.h](https://github.com/johnson931128/WUWAOS/blob/main/arch/riscv/timer.h)：timer start/stop/interrupt 介面 |
 | Scheduler（排程器） | [scheduler.c](https://github.com/johnson931128/WUWAOS/blob/main/kernel/proc/scheduler.c)：FIFO ready queue；[scheduler.h](https://github.com/johnson931128/WUWAOS/blob/main/kernel/proc/scheduler.h)：固定 `SCHEDULER_QUANTUM_MS = 50` |
 | Process（行程管理） | [process.c](https://github.com/johnson931128/WUWAOS/blob/main/kernel/proc/process.c)：狀態、派發、yield/preempt、頁表與保存狀態 |
-| Trap（陷阱分派） | [trap.c](https://github.com/johnson931128/WUWAOS/blob/main/arch/riscv/trap.c)：辨識 timer interrupt 並呼叫 `process_preempt` |
+| Trap（陷阱分派） | [trap.c](https://github.com/johnson931128/WUWAOS/blob/main/arch/riscv/trap.c)：辨識 timer interrupt 並呼叫 `thread_preempt` |
 | Context switch | [context.h](https://github.com/johnson931128/WUWAOS/blob/main/arch/riscv/context.h) 與 [swtch.S](https://github.com/johnson931128/WUWAOS/blob/main/arch/riscv/swtch.S)：保存／還原 `ra`、`sp` 與 `s0–s11` |
 
 ## Failures / Limitations

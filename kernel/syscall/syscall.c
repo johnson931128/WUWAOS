@@ -53,13 +53,13 @@ void syscall_dispatch(TrapFrame *frame) {
         result = process_spawn((long)frame->registers[10]);
         break;
     case SYS_YIELD:
-        result = process_yield();
+        result = thread_yield();
         break;
     case SYS_SLEEP:
-        result = process_sleep((long)frame->registers[10]);
+        result = thread_sleep((long)frame->registers[10]);
         break;
     case SYS_WAKEUP:
-        result = process_wakeup((long)frame->registers[10]);
+        result = thread_wakeup((long)frame->registers[10]);
         break;
     case SYS_WAIT:
         result = process_wait((long)frame->registers[10], frame->registers[11]);
@@ -146,7 +146,7 @@ void syscall_dispatch(TrapFrame *frame) {
         result = workstate_snapshot(frame->registers[10], frame->registers[11]);
         break;
     case SYS_SLEEP_MS:
-        result = process_sleep_ms((long)frame->registers[10]);
+        result = thread_sleep_ms((long)frame->registers[10]);
         break;
     case SYS_CONSOLE_POLL:
         result = io_console_poll();

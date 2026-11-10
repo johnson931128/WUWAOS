@@ -3,8 +3,8 @@
 
 #include "kernel/proc/process.h"
 void workstate_init(void);
-void workstate_dispatch(Process *process);
-void workstate_pause(Process *process);
+void workstate_dispatch(Thread *process);
+void workstate_pause(Thread *process);
 long workstate_snapshot(uintptr_t address, size_t length);
 
 #endif

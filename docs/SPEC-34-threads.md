@@ -1,6 +1,6 @@
 # Spec 34：Thread 與共用行程資源
 
-狀態：**設計草案，尚未實作**。2026-11-10 依目前 `c7de7e0` 的核心結構撰寫。本文定義第一版行為與驗收條件；下列 API、欄位、容量與新檔案均為預定設計，不代表現在已可呼叫。教學背景見 [Thread、OS 與 CPU](./topics/threads.md)。
+狀態：**階段 A 已實作並完成基本回歸；多 Thread 使用者 API 仍為設計草案**。本文最初於 2026-11-10 依 `c7de7e0` 的核心結構撰寫，定義完整第一版的行為與驗收條件。現已完成 PCB／TCB、排程與等待的拆分，每 Process 仍只有一條 Thread；下列額外 stack、create／join／thread_exit／gettid 等設計尚未實作。[階段 A 變更與驗證](./thread-stage-a.md) · [教學背景](./topics/threads.md)。
 
 ## 目標與執行環境
 
@@ -10,7 +10,9 @@
 
 本版不包含 SMP、SMT 管理、獨立的背景 kernel worker、POSIX pthread 相容層、detach、非同步 thread cancellation、TLS、浮點／向量 context。不得只把 QEMU 改成 `-smp 2` 就宣稱支援多核心。
 
-## 現況與需要修改的邊界
+## 設計基底與需要修改的邊界
+
+下表保留起草時的基底對照；階段 A 已將執行、等待、gate／sync owner、raw TTY owner 移至 TCB，尚未完成多 Thread 的 FD table pin／額外 user stacks／join 與群組退出。
 
 | 現行位置 | 現行行為 | Thread 版必須完成的變更 |
 | --- | --- | --- |
@@ -214,8 +216,9 @@ Cwd／previous_cwd 屬 Process，共用更新受保護；相對路徑在 syscall
 | 項目 | 狀態 |
 | --- | --- |
 | 規格與現行欄位／呼叫點比對 | 已完成文件層級調查 |
-| Thread runtime、syscall、stack／生命週期 | NOT_IMPLEMENTED |
-| Thread QEMU／故障注入／效能測量 | NOT_RUN |
+| 階段 A：單 Thread／Process 的 TCB runtime | 已實作，主機與 QEMU 基本回歸通過；見[紀錄](./thread-stage-a.md) |
+| 多 Thread syscall、額外 user stack／join／群組生命週期 | NOT_IMPLEMENTED |
+| 多 Thread QEMU／新增故障注入／效能測量 | NOT_RUN |
 | 網站文件建置 | 2026-11-10 VitePress 建置通過；不代表 Thread 驗收 |
 
 硬體觀念與來源集中於[教學章節](./topics/threads.md#資料來源與實作對照)。本規格的容量、位址、錯誤與生命週期是 WUWAOS 的設計決策，不是 RISC-V ISA 或 POSIX 的強制規定。

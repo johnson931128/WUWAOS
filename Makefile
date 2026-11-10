@@ -7,7 +7,7 @@ KERNEL_SOURCES := \
 	kernel/boot/main.c drivers/uart/uart.c kernel/io/console.c \
 	arch/riscv/trap.c arch/riscv/sbi.c arch/riscv/timer.c arch/riscv/fdt.c arch/riscv/irq.c \
 	kernel/mm/page.c kernel/mm/swap.c kernel/mm/vm.c \
-	kernel/proc/process.c kernel/proc/event.c kernel/proc/gate.c kernel/proc/scheduler.c kernel/ipc/sync.c kernel/proc/workstate.c \
+	kernel/proc/process.c kernel/proc/thread.c kernel/proc/event.c kernel/proc/gate.c kernel/proc/scheduler.c kernel/ipc/sync.c kernel/proc/workstate.c \
 	kernel/syscall/syscall.c kernel/exec/elf.c kernel/io/io.c ui/boot/splash.c \
 	drivers/virtio/block.c drivers/virtio/gpu.c ui/desktop/desktop.c drivers/virtio/input.c \
 	kernel/fs/fs.c kernel/fs/path.c kernel/lib/memory.c kernel/io/tty.c \
@@ -39,6 +39,12 @@ test-kmutex:
 	mkdir -p build
 	$(HOST_CC) -std=c11 -O0 -g -Wall -Wextra -Werror -DWUWAOS_KMUTEX_TEST -I. -Iinclude tests/kmutex_test.c kernel/proc/kmutex.c -o build/kmutex-host-test.exe
 	./build/kmutex-host-test.exe
+
+.PHONY: test-thread-core
+test-thread-core:
+	mkdir -p build
+	$(HOST_CC) -std=c11 -O0 -g -Wall -Wextra -Werror -I. -Iinclude tests/thread_core_test.c kernel/proc/thread.c kernel/proc/scheduler.c kernel/proc/gate.c kernel/proc/event.c kernel/ipc/sync.c -o build/thread-core-host-test.exe
+	./build/thread-core-host-test.exe
 
 build:
 	mkdir -p $@
@@ -79,6 +85,13 @@ $(TARGET): $(KERNEL_OBJECTS) arch/riscv/linker.ld
 
 build/user.elf: $(USER_OBJECTS) user/linker.ld
 	$(CC) $(LDFLAGS) -Wl,-T,user/linker.ld $(USER_OBJECTS) -o $@
+
+build/obj/tests/thread_stage_a_probe.o: tests/thread_stage_a_probe.c
+	mkdir -p $(@D)
+	$(CC) $(CFLAGS) -Oz -c $< -o $@
+
+build/thread-stage-a-probe.elf: build/obj/user/lib/entry.asm.o build/obj/user/lib/api.o build/obj/user/lib/print.o build/obj/tests/thread_stage_a_probe.o user/linker.ld
+	$(CC) $(LDFLAGS) -Wl,-T,user/linker.ld $(filter %.o,$^) -o $@
 
 build/user.bin: build/user.elf
 	$(OBJCOPY) -O binary $< $@
@@ -155,5 +168,7 @@ clean:
 	if [ -d build/obj ]; then find build/obj -type f \( -name '*.o' -o -name '*.d' \) -delete; fi
 	rm -f build/*.o build/*.d build/kernel.elf build/kernel-disk.elf build/kernel.map build/user.elf build/user.bin build/app.elf build/app.bin build/fan.elf build/fan.bin build/workstate.elf build/workstate.bin
 	rm -f build/bootloader.elf build/boot-flash.img build/boot-flash.img.tmp
+	rm -f build/thread-stage-a-probe.elf
 
 -include $(patsubst %.o,%.d,$(KERNEL_OBJECTS) $(BOOT_OBJECTS) $(USER_OBJECTS) $(APP_OBJECTS) $(FAN_OBJECTS) $(WORKSTATE_OBJECTS))
+-include build/obj/tests/thread_stage_a_probe.d

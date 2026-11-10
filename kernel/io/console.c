@@ -4,16 +4,16 @@
 #include "drivers/uart/uart.h"
 
 void console_set_route_tty(TtyId id, long owner_pid) {
-    Process *process = process_current_or_null();
-    if (!process || (owner_pid != 0 && process->pid != owner_pid)) return;
-    process->console_route_tty = id;
+    Thread *thread = thread_current_or_null();
+    if (!thread || (owner_pid != 0 && thread->process->pid != owner_pid)) return;
+    thread->console_route_tty = id;
 }
 
 void console_putc(char character) {
-    Process *process = process_current_or_null();
-    if (process && process->console_route_tty != TTY_ID_INVALID) {
+    Thread *thread = thread_current_or_null();
+    if (thread && thread->console_route_tty != TTY_ID_INVALID) {
         const unsigned char byte = (unsigned char)character;
-        (void)tty_output_write(process->console_route_tty, &byte, 1);
+        (void)tty_output_write(thread->console_route_tty, &byte, 1);
         return;
     }
     if (character == '\n') {

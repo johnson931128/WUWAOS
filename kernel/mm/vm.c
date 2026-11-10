@@ -2,6 +2,7 @@
 #include "kernel/io/console.h"
 #include "syscall_numbers.h"
 #include "process_limits.h"
+#include "thread_limits.h"
 #include "kernel/mm/swap.h"
 #include "kernel/proc/gate.h"
 #include "kernel/proc/process.h"
@@ -40,7 +41,7 @@ typedef struct {
 /* Metadata only; physical user memory is never preallocated here. */
 static VmSpace spaces[PROCESS_LIMIT + 1];
 static uintptr_t kernel_root, mmio[16];
-static uintptr_t kernel_guard_pages[PROCESS_LIMIT + 1];
+static uintptr_t kernel_guard_pages[THREAD_LIMIT + 1];
 static size_t kernel_guard_count;
 static size_t mmio_count, resident, frame_limit = VM_DEFAULT_FRAMES;
 static uint64_t next_arrival;
@@ -127,7 +128,7 @@ static uint64_t permissions(size_t index) {
 
 /* FIFO among eligible pages. Hits never change arrival; pinned pages cannot move. */
 static int evict_one(void) {
-    if (process_runtime_nonblocking()) return ERR_BUSY;
+    if (thread_runtime_nonblocking()) return ERR_BUSY;
     uint64_t after = 0;
     int error = ERR_NO_MEMORY;
     for (;;) {
@@ -162,7 +163,7 @@ static int evict_one(void) {
             /* Keep the whole revoke/write/restore-or-commit sequence atomic
                with respect to cancellation. Other processes that touch this
                address fault on the missing PTE and wait for vm_gate. */
-            const int defer_enter_error = process_cancel_defer_enter();
+            const int defer_enter_error = thread_cancel_defer_enter();
             if (defer_enter_error < 0) {
                 if (allocated_slot) swap_free(slot);
                 return defer_enter_error;
@@ -178,7 +179,7 @@ static int evict_one(void) {
                 if (allocated_slot) swap_free(slot);
                 ++stats.io_errors;
                 error = ERR_IO;
-                const int defer_error = process_cancel_defer_leave();
+                const int defer_error = thread_cancel_defer_leave();
                 if (defer_error < 0) return defer_error;
                 continue; /* RAM remains authoritative and dirty. */
             }
@@ -189,7 +190,7 @@ static int evict_one(void) {
             victim->physical = 0;
             --resident;
             --victim->pins;
-            const int defer_error = process_cancel_defer_leave();
+            const int defer_error = thread_cancel_defer_leave();
             if (defer_error < 0) vm_panic("Cancel defer imbalance after swap-out");
             return 0;
         }
@@ -620,16 +621,16 @@ uintptr_t vm_create(long program) {
 
 int vm_destroy(uintptr_t root) {
     if (!root) return 0;
-    int error = process_cancel_defer_enter();
+    int error = thread_cancel_defer_enter();
     if (error < 0) return error;
     error = vm_scope_enter();
     if (error < 0) {
-        (void)process_cancel_defer_leave();
+        (void)thread_cancel_defer_leave();
         return error;
     }
     vm_destroy_impl(root);
     error = vm_scope_leave();
-    const int defer_error = process_cancel_defer_leave();
+    const int defer_error = thread_cancel_defer_leave();
     return error < 0 ? error : defer_error;
 }
 

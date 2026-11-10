@@ -202,7 +202,7 @@ This first loader accepts a restricted static ELF64 RV64 layout and the WUWAOS s
 
 ## Documentation
 
-Thread support is planned, not implemented. The [Thread design specification](docs/SPEC-34-threads.md) defines resource ownership, scheduling, stacks, syscalls, and lifecycle rules. The [OS and hardware explainer](docs/topics/threads.md) distinguishes software threads, RISC-V harts, CPU cores, and SMT.
+The scheduler now uses separate TCBs, with exactly one initial thread per process. [Stage A implementation and regression results](docs/thread-stage-a.md) cover scheduling, waits, lock ownership, and lifecycle compatibility. User thread creation/join and multiple threads per process remain planned; the [Thread specification](docs/SPEC-34-threads.md) defines their contract. The [OS and hardware explainer](docs/topics/threads.md) distinguishes software threads, RISC-V harts, CPU cores, and SMT.
 
 The documentation and course notes linked below are currently written in Traditional Chinese.
 

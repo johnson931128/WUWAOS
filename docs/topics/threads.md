@@ -1,6 +1,6 @@
 # Thread、OS 與 CPU
 
-本章說明執行緒在作業系統中的角色、軟體工作如何交給硬體執行，以及 WUWAOS 下一階段的設計。**目前 WUWAOS 尚未實作多 Thread API**；現有排程單位仍是 Process，下文標為「規劃」的介面、數量與資料結構要等 [Spec 34](../SPEC-34-threads.md) 實作與驗收後才成立。
+本章說明執行緒在作業系統中的角色、軟體工作如何交給硬體執行，以及 WUWAOS 下一階段的設計。**目前已完成 TCB 排程的階段 A，但每 Process 仍只有一條 Thread，尚未提供多 Thread API**。[階段 A 紀錄](../thread-stage-a.md) 說明已實作範圍；下文標為「規劃」的額外堆疊、create／join 與多 Thread 生命週期，仍須依 [Spec 34](../SPEC-34-threads.md) 繼續實作。
 
 ## 為什麼一個程式需要多條執行路徑
 
@@ -32,13 +32,13 @@ One Process / one address space                  (planned)
 
 | 項目 | 同 Process 的 Thread | 不同 Process，依 WUWAOS 目前設計 |
 | --- | --- | --- |
-| PID／TID | PID 相同，TID 各自不同（規劃） | PID 不同；目前沒有獨立 TID |
+| PID／TID | PID 相同，TID 各自不同（多 Thread 規劃） | PID 不同；目前各自有初始 TCB 與獨立配置的 TID |
 | 程式、global、heap | 共用同一個位址空間 | fork 複製私有內容，沒有 COW |
 | 暫存器與 PC | 各自保存 | 各 Process 現在各自保存 |
-| 使用者與核心堆疊 | 每 Thread 各有一組 | 目前每 Process 一組 |
+| 使用者與核心堆疊 | 每 Thread 各有一組 | 目前各 Process 的初始 TCB 各有一組 |
 | FD table、cwd | 共用，變更會被其他 Thread 看見 | 各 Process 有自己的表與 cwd |
 | 開啟檔案的 offset | 相同 OFD 共用，由鎖序列化 | fork／dup 也可能共用 OFD |
-| 一條執行路徑等待 | 原則上只讓該 Thread Waiting | 目前對應 Process Waiting |
+| 一條執行路徑等待 | 只讓該 Thread Waiting | 目前是初始 TCB Waiting，PCB 資源生命週期仍為 Live |
 
 「自己的 stack」是使用與管理上的分配，不是同 Process 內的記憶體隔離。Thread A 拿到 B stack 的有效指標，仍可能讀寫它；B 結束後更不能繼續依賴其區域變數。
 
@@ -134,15 +134,15 @@ A 提交磁碟工作後阻塞，B／C 使用 CPU；磁碟完成時 A 變 Ready�
 
 Trap 進入 S-mode 時，架構更新 `sepc`、`scause`、`stval` 與 `sstatus` 相關狀態；一般整數暫存器和 stack 切換由入口組合語言處理。返回時 `sret` 依 `sepc` 與特權狀態續行；`satp` 決定位址轉譯使用的頁表根。這些是執行機制，不包含 Ready queue 的選擇政策。[RISC-V Supervisor ISA](https://docs.riscv.org/reference/isa/v20260120/priv/supervisor.html)
 
-在 WUWAOS 現行程式中，對應關係如下；Thread 版要把持有者從 PCB 改成 TCB：
+在 WUWAOS 階段 A 的現行程式中，對應關係如下：
 
 | 保存資料 | 現行位置 | 用途 |
 | --- | --- | --- |
-| User registers 與 `sepc/sstatus/scause/stval` | `TrapFrame`，目前 288 bytes | 保留被 trap 打斷的使用者狀態 |
+| User registers 與 `sepc/sstatus/scause/stval` | TCB 的 `TrapFrame`，目前 288 bytes | 保留被 trap 打斷的使用者狀態 |
 | `ra/sp/s0..s11` | `KernelContext`，目前 112 bytes | 在核心 C 函式呼叫邊界暫停與恢復 |
-| Kernel C call stack | 目前每 Process 的 16 KiB kernel stack | I/O 等待後從原函式繼續 |
+| Kernel C call stack | 每 TCB 的 16 KiB kernel stack | I/O 等待後從原函式繼續 |
 | User function frames | User stack 所在的 RAM／swap pages | 區域變數、函式返回位置等 |
-| Page table root | 目前 `Process.page_table` | Thread 版移留於共用 Process 資源 |
+| Page table root | `Process.page_table` | 留在共用 Process 資源 |
 
 ```text
 Thread A in U-mode
@@ -233,7 +233,7 @@ void thread_example(void) {
 
 例子使用 Process 生命週期的 static 資料，避免把很快返回的 caller stack 當成長期有效的 argument。成功 join 要保證能觀察到已退出 Thread 的寫入；若兩條 Thread 都還在修改 shared_result，則仍需同步保護。
 
-目前可操作的仍是 `ps`、`pcb`、`demo sync` 等 Process 指令；它們不構成 Thread 驗收。預定的 `demo threads`／Thread 清單尚不存在，請勿把上表當成已可執行的命令。[完整 ABI、生命週期、錯誤與驗收條件](../SPEC-34-threads.md)
+目前可操作的仍是 `ps`、`pcb`、`demo sync` 等指令；`ps` 已列 TID 與 TCB 槽位，`pcb` 區分 Process lifecycle 與初始 TCB 的 state。這些只涵蓋每 Process 一條 Thread 的相容路徑。預定的 `demo threads`／多 Thread 清單尚不存在，請勿把上表當成已可執行的命令。[完整 ABI、生命週期、錯誤與驗收條件](../SPEC-34-threads.md)
 
 ## 資料來源與實作對照
 
@@ -245,4 +245,4 @@ void thread_example(void) {
 - [Trap 入口](https://github.com/johnson931128/WUWAOS/blob/main/arch/riscv/trap.S)、[核心 context switch](https://github.com/johnson931128/WUWAOS/blob/main/arch/riscv/swtch.S)、[計時器](https://github.com/johnson931128/WUWAOS/blob/main/arch/riscv/timer.c)。
 - [KernelGate](https://github.com/johnson931128/WUWAOS/blob/main/kernel/proc/gate.c)、[mutex／semaphore](https://github.com/johnson931128/WUWAOS/blob/main/kernel/ipc/sync.c)、[VM](https://github.com/johnson931128/WUWAOS/blob/main/kernel/mm/vm.c)。
 
-教學圖不是硬體模擬器或真實 trace。Thread runtime 為 NOT_IMPLEMENTED、Thread QEMU／效能測試為 NOT_RUN；文件網站建置與 OS 驗收分開記錄。
+教學圖不是硬體模擬器或真實 trace。階段 A 的 TCB runtime／基本 QEMU 回歸已通過，多 Thread API 仍為 NOT_IMPLEMENTED，多 Thread QEMU／效能測試為 NOT_RUN；文件網站建置與 OS 驗收分開記錄。

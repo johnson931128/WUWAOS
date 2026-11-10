@@ -4,8 +4,8 @@
 #include "kernel/proc/event.h"
 
 typedef struct KernelGate {
-    struct ProcessControlBlock *owner;
-    long owner_pid;
+    struct ThreadControlBlock *owner;
+    long owner_tid;
     unsigned depth;
     KernelEventSource event;
     unsigned initialized : 1;

@@ -42,7 +42,7 @@ ecall（環境呼叫指令）長度固定 4 bytes；核心將 sepc 加 4，讓�
 
 計時器中斷也走同一入口：scause 最高位表示中斷、低位原因 5 表示監督模式計時器。先清除 pending，再讓原行程排到隊尾，依 [RR 排程](./scheduling.md) 選擇下一個；保留 sepc 與 a0，不當作 syscall 返回值改寫。
 
-目前原始碼也識別原因碼 9 的 supervisor external interrupt，交由 PLIC claim／驅動 callback／complete 流程處理；保留 `sepc`。U-mode 中斷返回經既有 process_resume，kernel 來源則直接還原 frame，不假設一定有目前行程。`ps → ls / → ps` 可人工比較 WUFS IRQ 計數；設計與驗證方式見 [Spec 32](../SPEC-32-plic-external-interrupts.md)，合併後的編譯與 QEMU 檢查範圍見[整合紀錄](../merge-2026-11-10.md)。
+目前原始碼也識別原因碼 9 的 supervisor external interrupt，交由 PLIC claim／驅動 callback／complete 流程處理；保留 `sepc`。U-mode 中斷返回經既有 thread_resume，kernel 來源則直接還原 frame，不假設一定有目前行程。`ps → ls / → ps` 可人工比較 WUFS IRQ 計數；設計與驗證方式見 [Spec 32](../SPEC-32-plic-external-interrupts.md)，合併後的編譯與 QEMU 檢查範圍見[整合紀錄](../merge-2026-11-10.md)。
 
 核心自身出錯目前會印出陷阱資訊並停止；使用者非法存取則結束該行程。目前已有計時器驅動的 50 ms RR，UART 仍輪詢，也沒有完整訊號機制或核心內搶占。新的外部 IRQ 骨架不改變這些前提。
 

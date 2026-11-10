@@ -1,5 +1,5 @@
 #include "kernel/proc/event.h"
-#include "kernel/proc/process.h"
+#include "kernel/proc/thread.h"
 #include "syscall_numbers.h"
 
 int event_source_init(KernelEventSource *source, uint32_t generation) {
@@ -26,13 +26,13 @@ void event_source_notify(KernelEventSource *source, long result) {
         return;
     }
     ++source->sequence;
-    process_event_notify(source, source->generation, result);
+    thread_event_notify(source, source->generation, result);
 }
 
 void event_source_close(KernelEventSource *source, long result) {
     if (!source || !source->active) return;
     const uint32_t generation = source->generation;
-    process_event_notify(source, generation, result);
+    thread_event_notify(source, generation, result);
     source->active = 0;
     if (source->sequence == UINT64_MAX) source->retired = 1;
     else ++source->sequence;

@@ -5,8 +5,8 @@
 #include "drivers/virtio/block.h"
 
 typedef struct {
-    Process *head;
-    Process *tail;
+    Thread *head;
+    Thread *tail;
     size_t count;
 } ReadyQueue;
 
@@ -16,23 +16,27 @@ void scheduler_init(void) {
     ready_queue = (ReadyQueue){0};
 }
 
-void scheduler_enqueue(Process *process) {
-    if (process->ready_queued) {
+void scheduler_enqueue(Thread *thread) {
+    if (!thread || thread->state != THREAD_READY) {
+        console_puts("[scheduler] Only Ready threads may be queued\n");
+        kernel_idle();
+    }
+    if (thread->ready_queued) {
         return;
     }
-    process->ready_next = 0;
+    thread->ready_next = 0;
     if (ready_queue.tail != 0) {
-        ready_queue.tail->ready_next = process;
+        ready_queue.tail->ready_next = thread;
     } else {
-        ready_queue.head = process;
+        ready_queue.head = thread;
     }
-    ready_queue.tail = process;
-    process->ready_queued = 1;
+    ready_queue.tail = thread;
+    thread->ready_queued = 1;
     ++ready_queue.count;
 }
 
-Process *scheduler_next(void) {
-    Process *next = ready_queue.head;
+Thread *scheduler_next(void) {
+    Thread *next = ready_queue.head;
     if (next == 0) {
         return 0;
     }
@@ -48,13 +52,13 @@ Process *scheduler_next(void) {
 
 size_t scheduler_ready_count(void) { return ready_queue.count; }
 
-void scheduler_remove(Process *process) {
-    if (!process->ready_queued) {
+void scheduler_remove(Thread *thread) {
+    if (!thread->ready_queued) {
         return;
     }
-    Process *previous = 0;
-    Process *entry = ready_queue.head;
-    while (entry != 0 && entry != process) {
+    Thread *previous = 0;
+    Thread *entry = ready_queue.head;
+    while (entry != 0 && entry != thread) {
         previous = entry;
         entry = entry->ready_next;
     }
@@ -80,14 +84,14 @@ void scheduler_print_ready(void) {
     console_number(SCHEDULER_QUANTUM_MS);
     console_puts(" timer_interrupts=");
     console_number((long)timer_interrupt_count());
-    console_puts("\nReady queue (RR), count=");
+    console_puts("\nReady TID queue (RR), count=");
     console_number((long)ready_queue.count);
     console_puts(": ");
     if (ready_queue.head == 0) {
         console_puts("(empty)");
     }
-    for (const Process *entry = ready_queue.head; entry != 0; entry = entry->ready_next) {
-        console_number(entry->pid);
+    for (const Thread *entry = ready_queue.head; entry != 0; entry = entry->ready_next) {
+        console_number(entry->tid);
         if (entry->ready_next != 0) {
             console_puts(" -> ");
         }

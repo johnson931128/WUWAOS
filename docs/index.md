@@ -81,7 +81,7 @@ Windows 免安裝 v1 ZIP 提供該版本的直接開機流程，可用 `.\Start-
 | CLI 磁碟開機 | 2026-11-09 已通過 QEMU 驗收 | PowerShell 啟動至 CLI、新磁碟開機、重啟後讀回檔案、缺少磁碟時停止開機。 [驗收紀錄](./history.md#cli-磁碟開機-2026-11-09) |
 | 2026-11-08 核心與桌面更新 | 整合編譯通過，runtime **NOT_RUN** | Block 非同步請求、Swap PTE 回復、GPU 非阻塞 present／復原、stack guard、四個終端視窗、Fan 原子替換與故障診斷。 |
 | 網站視覺／互動 | 設計規範與首頁已實作，整合驗收待執行 | 網站建置、瀏覽器操作與 QEMU 驗收分別記錄。 |
-| Thread 機制 | 設計草案，**NOT_IMPLEMENTED** | [OS／硬體觀念](./topics/threads.md)與 [Spec 34](./SPEC-34-threads.md) 定義單 hart、共用 Process 資源與 Thread 生命週期；尚未新增 runtime API。 |
+| Thread 機制 | 階段 A 已實作，多 Thread API **NOT_IMPLEMENTED** | [PCB／TCB 與排程拆分驗證](./thread-stage-a.md)；目前每 Process 一條 Thread。[教學](./topics/threads.md)與 [Spec 34](./SPEC-34-threads.md) 說明後續建立／join 設計。 |
 
 詳細步驟、演算法及已執行／未執行的驗收見 [實作計畫](https://github.com/johnson931128/WUWAOS/blob/main/plan.md)；只看進度可讀 [精簡清單](https://github.com/johnson931128/WUWAOS/blob/main/plan_current.md)。這些原始碼更新不包含於既有 portable v1 ZIP。
 

@@ -5,6 +5,8 @@ Spec 33 以前的歷史 source link 若指向舊 `kernel/` 或 `user/` 路徑，
 
 ## Thread 設計草案（2026-11-10）
 
+後續已完成[階段 A：PCB／TCB 拆分與回歸](./thread-stage-a.md)。Ready queue、事件與同步等待、KernelGate／mutex owner 已改為 Thread，每個 Process 暫時只有一條；下述使用者多 Thread API 仍未實作。
+
 [Spec 34](./SPEC-34-threads.md) 定義 Process／Thread 資源拆分、單 hart 1:1 排程、create／join／exit ABI、stack／guard、Thread owner、FD／TTY 引用及 Process 群組退出。新增[教學章節](./topics/threads.md)說明 Thread 在 OS 的角色、CPU／hart／core／SMT 與 context switch。狀態為 NOT_IMPLEMENTED，Thread runtime／故障注入／效能驗收為 NOT_RUN；文件建置不代表核心功能已完成。
 
 ## CLI 磁碟開機（2026-11-09）

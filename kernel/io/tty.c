@@ -244,12 +244,12 @@ long tty_raw_owner(TtyId id) {
     return endpoint && endpoint->active ? endpoint->raw_owner : ERR_BAD_FD;
 }
 
-long tty_set_raw_owner(TtyId id, long pid, int enabled) {
+long tty_set_raw_owner(TtyId id, long tid, int enabled) {
     tty_init();
     TtyEndpoint *endpoint = get_endpoint(id);
-    if (!endpoint || !endpoint->active || pid <= 0 || (enabled != 0 && enabled != 1)) return ERR_BAD_FD;
-    if (endpoint->raw_owner != 0 && endpoint->raw_owner != pid) return ERR_BUSY;
-    const long next_owner = enabled ? pid : 0;
+    if (!endpoint || !endpoint->active || tid <= 0 || (enabled != 0 && enabled != 1)) return ERR_BAD_FD;
+    if (endpoint->raw_owner != 0 && endpoint->raw_owner != tid) return ERR_BUSY;
+    const long next_owner = enabled ? tid : 0;
     if (endpoint->raw_owner != next_owner) {
         endpoint->raw_owner = next_owner;
         event_source_notify(&endpoint->input_event, 0);
@@ -257,10 +257,10 @@ long tty_set_raw_owner(TtyId id, long pid, int enabled) {
     return 0;
 }
 
-void tty_release_raw_owner(long pid) {
+void tty_release_raw_owner(long tid) {
     tty_init();
     for (unsigned i = 0; i < TTY_ENDPOINT_LIMIT; ++i)
-        if (endpoints[i].used && endpoints[i].raw_owner == pid) {
+        if (endpoints[i].used && endpoints[i].raw_owner == tid) {
             endpoints[i].raw_owner = 0;
             event_source_notify(&endpoints[i].input_event, 0);
         }

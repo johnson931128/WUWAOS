@@ -122,7 +122,7 @@ static int transaction_commit(void) {
     uint32_t crc = 0xffffffffU;
     if (transaction_error) return transaction_error;
     if (transaction_count == 0) return 0;
-    const int defer_error = process_cancel_defer_enter();
+    const int defer_error = thread_cancel_defer_enter();
     if (defer_error < 0) return defer_error;
     int header_attempted = 0;
     long result = 0;
@@ -157,7 +157,7 @@ io_failure:
     kernel_diagnostic("fs", "commit", result, header_attempted,
                       (uintptr_t)FS_JOURNAL_START);
 finish: {
-        const int leave_error = process_cancel_defer_leave();
+        const int leave_error = thread_cancel_defer_leave();
         if (leave_error < 0 && result == 0) result = leave_error;
     }
     return (int)result;

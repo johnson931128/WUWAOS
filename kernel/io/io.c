@@ -113,7 +113,7 @@ static void close_slot(Process *process, int fd) {
     const int value = process->fd_table[fd];
     process->fd_table[fd] = -99;
     if (value >= 0) ofd_release(value);
-    if (fd == 0) tty_release_raw_owner(process->pid);
+    if (fd == 0) tty_release_raw_owner(process->thread->tid);
 }
 
 int io_inode_is_open(uint32_t inode) {
@@ -131,7 +131,7 @@ void io_inherit(Process *child, const Process *parent) {
 }
 
 void io_close_process(Process *process) {
-    tty_release_raw_owner(process->pid);
+    tty_release_raw_owner(process->thread->tid);
     for (int fd = 0; fd < PROCESS_FD_LIMIT; ++fd) close_slot(process, fd);
 }
 
@@ -306,7 +306,7 @@ long io_console_mode(long raw) {
     if (raw != 0 && raw != 1) return ERR_INVALID;
     const int input = fd_value(process, 0);
     if (!fd_tty_readable(input)) return raw ? ERR_INVALID : 0;
-    return tty_set_raw_owner(fd_tty_id(input), process->pid, (int)raw);
+    return tty_set_raw_owner(fd_tty_id(input), process->thread->tid, (int)raw);
 }
 
 TtyId io_console_route_tty(void) {
@@ -368,7 +368,7 @@ static long pipe_read_wait(Process *process, int fd, uintptr_t buffer, size_t le
         const int leave_error = kernel_gate_leave(&pipe_gates[ofd->pipe]);
         if (leave_error < 0) return leave_error;
         if (result != IO_PENDING) return result;
-        const long wait = process_wait_event(&pipe->event, generation, sequence, 0, ERR_TIMED_OUT);
+        const long wait = thread_wait_event(&pipe->event, generation, sequence, 0, ERR_TIMED_OUT);
         if (wait < 0) return wait;
     }
 }
@@ -394,7 +394,7 @@ static long pipe_write_wait(Process *process, int fd, uintptr_t buffer, size_t l
         const int leave_error = kernel_gate_leave(&pipe_gates[ofd->pipe]);
         if (leave_error < 0) return leave_error;
         if (result != IO_PENDING) return result;
-        const long wait = process_wait_event(&pipe->event, generation, sequence, 0, ERR_TIMED_OUT);
+        const long wait = thread_wait_event(&pipe->event, generation, sequence, 0, ERR_TIMED_OUT);
         if (wait < 0) return wait;
     }
 }
@@ -404,14 +404,14 @@ static long tty_wait_byte(Process *process, TtyId id, int raw, int *character) {
         if (!tty_session_active(id)) return ERR_IO;
         const long owner = tty_raw_owner(id);
         if (owner < 0) return owner;
-        if ((raw && owner != process->pid) || (!raw && owner != 0)) return ERR_BUSY;
+        if ((raw && owner != process->thread->tid) || (!raw && owner != 0)) return ERR_BUSY;
         uint32_t generation;
         uint64_t sequence;
         KernelEventSource *source = tty_input_event(id, &generation);
         if (!source || event_source_snapshot(source, &generation, &sequence) < 0) return ERR_IO;
         const int byte = tty_input_read_byte(id);
         if (byte >= 0) { *character = byte; return 0; }
-        const long wait = process_wait_event(source, generation, sequence, 0, ERR_TIMED_OUT);
+        const long wait = thread_wait_event(source, generation, sequence, 0, ERR_TIMED_OUT);
         if (wait < 0) return wait;
     }
 }
@@ -433,7 +433,7 @@ long io_read(long fd, uintptr_t buffer, size_t length) {
         const long owner = tty_raw_owner(id);
         if (owner < 0) return owner;
         if (owner != 0) {
-            if (owner != process->pid) return ERR_BUSY;
+            if (owner != process->thread->tid) return ERR_BUSY;
             if (length > 128) return ERR_INVALID;
             return console_read_raw(process, id, buffer);
         }

@@ -467,11 +467,11 @@ static int submit_request(BlockDevice *target, uint32_t sector, const void *buff
     if (target == 0 || target->registers == 0 || target->offline ||
         (operation != BLOCK_OP_FLUSH && (buffer == 0 || sector >= target->capacity)) ||
         (operation == BLOCK_OP_FLUSH && !target->flush_supported)) return ERR_IO;
-    if (process_runtime_started() && !process_wait_allowed()) return ERR_BUSY;
+    if (process_runtime_started() && !thread_wait_allowed()) return ERR_BUSY;
 
     const int gate_result = kernel_gate_enter(&target->gate);
     if (gate_result < 0) return gate_result;
-    const int defer_result = process_cancel_defer_enter();
+    const int defer_result = thread_cancel_defer_enter();
     if (defer_result < 0) {
         (void)kernel_gate_leave(&target->gate);
         return defer_result;
@@ -480,7 +480,7 @@ static int submit_request(BlockDevice *target, uint32_t sector, const void *buff
     /* Request storage and the data DMA target remain owned until collect. */
     if (target->request_state != BLOCK_REQUEST_IDLE || target->offline) {
         (void)kernel_gate_leave(&target->gate);
-        (void)process_cancel_defer_leave();
+        (void)thread_cancel_defer_leave();
         return target->offline ? ERR_IO : ERR_BUSY;
     }
     if (operation == BLOCK_OP_WRITE) {
@@ -508,7 +508,7 @@ static int submit_request(BlockDevice *target, uint32_t sector, const void *buff
     uint64_t sequence;
     if (event_source_snapshot(&target->completion, &generation, &sequence) < 0) {
         (void)kernel_gate_leave(&target->gate);
-        (void)process_cancel_defer_leave();
+        (void)thread_cancel_defer_leave();
         return ERR_IO;
     }
     const uint16_t index = target->avail_ring.index;
@@ -525,7 +525,7 @@ static int submit_request(BlockDevice *target, uint32_t sector, const void *buff
             poll_device(target);
             continue;
         }
-        (void)process_wait_event(&target->completion, generation, sequence, 0, ERR_TIMED_OUT);
+        (void)thread_wait_event(&target->completion, generation, sequence, 0, ERR_TIMED_OUT);
         (void)event_source_snapshot(&target->completion, &generation, &sequence);
     }
 
@@ -545,7 +545,7 @@ static int submit_request(BlockDevice *target, uint32_t sector, const void *buff
     }
     target->request_state = BLOCK_REQUEST_IDLE;
     (void)kernel_gate_leave(&target->gate);
-    (void)process_cancel_defer_leave();
+    (void)thread_cancel_defer_leave();
     return result;
 }
 

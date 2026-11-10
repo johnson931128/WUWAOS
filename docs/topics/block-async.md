@@ -19,7 +19,7 @@ import BlockAsyncLab from '../.vitepress/theme/components/BlockAsyncLab.vue'
 1. caller 進入 `block_read()`／`block_write()`；runtime 啟動後，若當前 context 不允許等待，提交會回 `ERR_BUSY`。
 2. `submit_request()` 取得該裝置的 `KernelGate`，進入 cancel-defer，準備持久 request header、descriptor、status、bounce buffer 與 completion event snapshot。
 3. WRITE 先將 512 bytes 從 caller buffer 複製到 bounce。READ 的 descriptor 則讓裝置把資料 DMA 到 bounce。driver 發布 available ring entry，通知 VirtIO。
-4. caller 呼叫 `process_wait_event()`。其 PCB 保存 `KernelEventWait`，行程變成 `PROCESS_WAITING`，`wait_reason` 為 `WAIT_EVENT`。scheduler 可排程其他 READY 行程。
+4. caller 呼叫 `thread_wait_event()`。其 PCB 保存 `KernelEventWait`，行程變成 `PROCESS_WAITING`，`wait_reason` 為 `WAIT_EVENT`。scheduler 可排程其他 READY 行程。
 5. 裝置完成時先更新 used ring。這本身不會呼叫 WUWAOS event API，也不會直接把 caller 喚醒。scheduler 稍後在 poll context 執行 `block_poll()`，檢查 used entry、status 與長度，再將 request 設為 `DONE` 並通知 completion event。
 6. event 通知將 caller 轉成 READY。caller 再次被排程後回到自己的 kernel stack，收取結果；成功 READ 才將 bounce 複製至 caller buffer。最後 request 回到 `IDLE`，釋放 gate 和 cancel-defer，函式才返回。
 
@@ -70,7 +70,7 @@ Gate 排隊和提交後等待的取消邊界不同：在 gate 還沒取得時，
 | `int block_swap_read(uint32_t sector, void *buffer)` | swap 裝置 sector 與目的 buffer | `0` 並複製 bounce | `ERR_IO`、`ERR_BUSY`、`ERR_TIMED_OUT` |
 | `int block_swap_write(uint32_t sector, const void *buffer)` | swap 裝置 sector 與來源 buffer | `0` | `ERR_IO`、`ERR_BUSY`、`ERR_TIMED_OUT` |
 | `void block_poll(void)` | 無；poll 已初始化的裝置 | 無回傳值 | 不等待；由 scheduler/poll context 呼叫 |
-| `long process_wait_event(KernelEventSource *source, uint32_t generation, uint64_t sequence, uint64_t deadline, long timeout_result)` | event 版本與序號、可選 deadline、timeout 結果 | 通知結果；sequence 已變可立即回 0 | `ERR_BUSY`、`ERR_IO`、傳入的 timeout result |
+| `long thread_wait_event(KernelEventSource *source, uint32_t generation, uint64_t sequence, uint64_t deadline, long timeout_result)` | event 版本與序號、可選 deadline、timeout 結果 | 通知結果；sequence 已變可立即回 0 | `ERR_BUSY`、`ERR_IO`、傳入的 timeout result |
 | `void event_source_notify(KernelEventSource *source, long result)` | 要通知的 source 與結果 | 無回傳值；sequence 增加並通知等待者 | source 無效或關閉時不通知 |
 | `int kernel_gate_enter(KernelGate *gate)` / `int kernel_gate_leave(KernelGate *gate)` | 裝置 gate | `0` | `ERR_BUSY`、`ERR_INTERRUPTED`、`ERR_INVALID`、`ERR_IO` |
 
@@ -97,7 +97,7 @@ Gate 排隊和提交後等待的取消邊界不同：在 gate 還沒取得時，
 | `poll_device()` / `block_poll()` | 收取 used ring、檢查完成或 timeout；`block_poll()` 逐一輪詢裝置 |
 | `begin_reset()` / `poll_reset()` | 要求 reset、等待確認；確認後 offline 並通知 |
 | `reset_fail_stop()` | reset ownership 不確定時保留資源並停機 |
-| `process_wait_event()` | 在 caller PCB 登記等待後讓出；恢復時取回 wait result |
+| `thread_wait_event()` | 在 caller PCB 登記等待後讓出；恢復時取回 wait result |
 | `process_event_notify()` | 將匹配的等待行程轉為 READY |
 | `kernel_gate_enter()` / `kernel_gate_leave()` | 取得／釋放有 owner 的裝置 gate |
 | `process_kernel_call_return()` | 在安全返回邊界處理延後的 kill |
@@ -117,7 +117,7 @@ submit_request(device, sector, buffer, op):
         if runtime_not_started:
             poll_device(device)          // boot/setup 階段同步輪詢
         else:
-            process_wait_event(completion, generation, sequence)
+            thread_wait_event(completion, generation, sequence)
             refresh_snapshot()
 
     result = device.request_result

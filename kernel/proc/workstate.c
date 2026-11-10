@@ -8,10 +8,10 @@
 static uint64_t busy_ticks;
 
 void workstate_init(void) { busy_ticks = 0; }
-void workstate_dispatch(Process *process) { process->run_started = clock_ticks(); }
-void workstate_pause(Process *process) {
-    const uint64_t elapsed = clock_ticks() - process->run_started;
-    process->cpu_ticks += elapsed;
+void workstate_dispatch(Thread *thread) { thread->run_started = clock_ticks(); }
+void workstate_pause(Thread *thread) {
+    const uint64_t elapsed = clock_ticks() - thread->run_started;
+    thread->cpu_ticks += elapsed;
     busy_ticks += elapsed; /* Keep exited/reaped processes in the system total. */
 }
 
@@ -47,10 +47,10 @@ long workstate_snapshot(uintptr_t address, size_t length) {
         row->pid = process->pid;
         row->parent_pid = process->parent_pid;
         copy_label(row->name, process_name(process), sizeof(row->name));
-        copy_label(row->state, process_state_name(process->state), sizeof(row->state));
-        row->cpu_ticks = process->cpu_ticks;
+        copy_label(row->state, thread_state_name(process->thread->state), sizeof(row->state));
+        row->cpu_ticks = process->thread->cpu_ticks;
         if (process == caller) {
-            const uint64_t pending = snapshot.ticks - process->run_started;
+            const uint64_t pending = snapshot.ticks - process->thread->run_started;
             row->cpu_ticks += pending;
             snapshot.busy_ticks += pending;
         }
