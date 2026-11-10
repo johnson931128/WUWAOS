@@ -10,6 +10,7 @@ const chapters = [
   ['WUFS 檔案系統', 'filesystem'], ['Shell 與 fan 編輯器', 'applications'],
   ['workstate 即時監測', 'monitoring'],
   ['維護文件網站', 'writing'],
+  ['Thread、OS 與 CPU（規劃）', 'threads'],
 ]
 
 export default defineConfig({
@@ -51,7 +52,7 @@ export default defineConfig({
       { text: 'WUWAOS', items: [{ text: '00 · 專案總覽', link: '/' }, { text: 'Windows 免安裝環境', link: '/portable-windows' }] },
       { text: '互動教學', items: [{ text: 'Block Async I/O', link: '/topics/block-async' }, { text: 'FD 與 OFD', link: '/topics/file-descriptors' }, { text: '換頁與 Swap', link: '/topics/paging' }, { text: 'Journal 與安全替換', link: '/topics/journal' }] },
       { text: '從硬體到應用程式', items: chapters.map(([text, slug], i) => ({ text: `${String(i + 1).padStart(2, '0')} · ${text}`, link: `/topics/${slug}` })) },
-      { text: '規格與參考', items: [{ text: '原始規格與驗收紀錄', link: '/history' }, { text: '磁碟保護與驗證', link: '/SPEC-31-filesystem-initialization-guard' }, { text: '完整程式碼導覽', link: '/CODE_GUIDE' }] },
+      { text: '規格與參考', items: [{ text: '原始規格與驗收紀錄', link: '/history' }, { text: 'Thread 設計草案', link: '/SPEC-34-threads' }, { text: '磁碟保護與驗證', link: '/SPEC-31-filesystem-initialization-guard' }, { text: '完整程式碼導覽', link: '/CODE_GUIDE' }] },
       { text: '網站改版規範', items: [{ text: '視覺教材設計', link: '/visual-system' }, { text: '研究與來源對照', link: '/redesign' }] },
     ],
     outline: { level: [2, 3], label: '本頁內容' },

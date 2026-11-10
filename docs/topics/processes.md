@@ -80,7 +80,7 @@ ps
 
 exit 關閉端點並留下 Zombie；wait 取得結果後釋放使用者頁、Swap slots（交換區槽位）、私有頁表及 PCB。孤兒行程另有接管與回收流程。狀態結果寫入父使用者空間失敗時，不會先丟棄 Zombie。
 
-最多 16 個行程（含 shell），exec 支援內建程式 ID，也支援從路徑載入受限的靜態 RV64 ELF；不支援任意 Linux 執行檔。沒有執行緒與完整作業控制。
+最多 16 個行程（含 shell），exec 支援內建程式 ID，也支援從路徑載入受限的靜態 RV64 ELF；不支援任意 Linux 執行檔。沒有執行緒與完整作業控制。下一階段的 [Thread／硬體教學](./threads.md)與 [Spec 34 設計草案](../SPEC-34-threads.md) 已整理，但 TCB、共用位址空間執行緒與 thread syscall 尚未實作；本章仍描述目前的 Process 排程。
 
 觀念參考：`notes/ch3 Process.md`。實作脈絡見 [Spec 02](../SPEC-02-process-lifecycle.md)、[Spec 05](../SPEC.md)，目前私有記憶體複製見 [Spec 10](../SPEC-10-demand-paging.md)。
 

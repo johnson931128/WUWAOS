@@ -49,6 +49,7 @@ import SystemOverview from './.vitepress/theme/components/SystemOverview.vue'
   <a href="./topics/applications"><small>10 · USER SPACE</small><strong>Shell 與 fan 編輯器</strong><span>使用者映像與檔案操作</span></a>
   <a href="./topics/monitoring"><small>11 · OBSERVE</small><strong>workstate 即時監測</strong><span>CPU 派發時間、RSS 與 Swap</span></a>
   <a href="./topics/writing"><small>12 · DOCUMENT</small><strong>維護文件網站</strong><span>Markdown、Vue 與發布流程</span></a>
+  <a href="./topics/threads"><small>13 · THREAD DESIGN</small><strong>Thread、OS 與 CPU</strong><span>執行緒角色、硬體與實作規劃；尚未實作</span></a>
 </div>
 
 ## 從互動圖看狀態變化
@@ -80,6 +81,7 @@ Windows 免安裝 v1 ZIP 提供該版本的直接開機流程，可用 `.\Start-
 | CLI 磁碟開機 | 2026-11-09 已通過 QEMU 驗收 | PowerShell 啟動至 CLI、新磁碟開機、重啟後讀回檔案、缺少磁碟時停止開機。 [驗收紀錄](./history.md#cli-磁碟開機-2026-11-09) |
 | 2026-11-08 核心與桌面更新 | 整合編譯通過，runtime **NOT_RUN** | Block 非同步請求、Swap PTE 回復、GPU 非阻塞 present／復原、stack guard、四個終端視窗、Fan 原子替換與故障診斷。 |
 | 網站視覺／互動 | 設計規範與首頁已實作，整合驗收待執行 | 網站建置、瀏覽器操作與 QEMU 驗收分別記錄。 |
+| Thread 機制 | 設計草案，**NOT_IMPLEMENTED** | [OS／硬體觀念](./topics/threads.md)與 [Spec 34](./SPEC-34-threads.md) 定義單 hart、共用 Process 資源與 Thread 生命週期；尚未新增 runtime API。 |
 
 詳細步驟、演算法及已執行／未執行的驗收見 [實作計畫](https://github.com/johnson931128/WUWAOS/blob/main/plan.md)；只看進度可讀 [精簡清單](https://github.com/johnson931128/WUWAOS/blob/main/plan_current.md)。這些原始碼更新不包含於既有 portable v1 ZIP。
 
@@ -114,6 +116,7 @@ Windows 免安裝 v1 ZIP 提供該版本的直接開機流程，可用 `.\Start-
 | 桌面圖示如何開啟 GUI shell？ | [開機流程](./topics/boot.md#桌面-terminal-與-gui-shell) |
 | 使用者程式怎麼請核心幫忙？ | [例外與系統呼叫](./topics/traps.md) |
 | 行程如何建立、排程、結束與回收？ | [行程管理](./topics/processes.md) → [計時器與 RR 排程](./topics/scheduling.md) |
+| Thread 與 Process 有何不同，CPU 如何執行？ | [Thread、OS 與 CPU（規劃）](./topics/threads.md) → [Spec 34](./SPEC-34-threads.md) |
 | CPU 如何找到資料，缺頁時發生什麼？ | [Sv39](./topics/memory.md) → [按需分頁與交換](./topics/paging.md) |
 | 輸入的文字如何存到磁碟？ | [輸入輸出](./topics/io.md) → [WUFS](./topics/filesystem.md) |
 | 如何寫自己的互動程式？ | [Shell 與 fan](./topics/applications.md) |

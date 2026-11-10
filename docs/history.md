@@ -3,6 +3,10 @@
 此處按開發順序保存規格。它們記錄「當時做了什麼」，不一定代表現在的架構；第一次閱讀建議先看左側主題章節。
 Spec 33 以前的歷史 source link 若指向舊 `kernel/` 或 `user/` 路徑，固定指向 2026-11-07 重整前 commit `800a805`，以保留當時程式碼參照；目前目錄與 UI/kernel 邊界見 [Spec 33](./SPEC-33-module-architecture.md)。
 
+## Thread 設計草案（2026-11-10）
+
+[Spec 34](./SPEC-34-threads.md) 定義 Process／Thread 資源拆分、單 hart 1:1 排程、create／join／exit ABI、stack／guard、Thread owner、FD／TTY 引用及 Process 群組退出。新增[教學章節](./topics/threads.md)說明 Thread 在 OS 的角色、CPU／hart／core／SMT 與 context switch。狀態為 NOT_IMPLEMENTED，Thread runtime／故障注入／效能驗收為 NOT_RUN；文件建置不代表核心功能已完成。
+
 ## CLI 磁碟開機（2026-11-09）
 
 2026-11-10 文件補充：新增主機建置、客體開機及 Flash／磁碟／RAM 關係的 ASCII 圖，並同步 portable／WSL 啟動方式與直接開機的差異。[磁碟開機原理](./topics/boot.md#磁碟開機-主機先準備什麼)
