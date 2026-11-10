@@ -26,4 +26,4 @@ shell 提供 `sync mutex create`、`sync mutex lock <id>`、`sync mutex unlock <
 
 WSL Clang 建置成功。QEMU 獨立磁碟單行程互動確認建立、取得、重複上鎖拒絕、持鎖時不可銷毀、解鎖、銷毀與過期編號拒絕；Semaphore 初始值 1 的 wait、post、destroy 成功。以 shell 的 syncbg 實際 fork 多個行程：確認 semaphore 等待與 post 喚醒、兩位等待者依佇列順序喚醒、等待中 kill 後下一等待者仍能進行；mutex 競爭、非持有者解鎖拒絕、持有者正常釋放及 kill 持有者後等待者收到 -130。忙碌物件拒絕銷毀。尚未驗證已喚醒但尚未執行時被 kill、持鎖成功 exec、所有資源耗盡與多核心；不保證無飢餓。
 
-參考 `notes/ch6 Synchronization Tools.md` 的互斥、計數號誌和等待佇列；實際語意以本文件與 [核心實作](https://github.com/johnson931128/WUWAOS/blob/main/kernel/sync.c) 為準。
+參考 `notes/ch6 Synchronization Tools.md` 的互斥、計數號誌和等待佇列；實際語意以本文件與 [核心實作](https://github.com/johnson931128/WUWAOS/blob/800a805/kernel/sync.c) 為準。

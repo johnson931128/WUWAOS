@@ -2,7 +2,7 @@
  * No RV64 kernel, disk or QEMU is built/run by this test. Context-switch assembly
  * and real interrupt delivery still require the separate guest checks.
  */
-#include "kmutex.h"
+#include "kernel/proc/kmutex.h"
 #include <setjmp.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -37,12 +37,13 @@ void process_wake_sync(Process *process) {
     process->wait_reason = WAIT_NONE;
     ++wakes;
 }
-void process_block_sync(void) {
+long process_block_sync(void) {
     current->state = PROCESS_WAITING;
     current->wait_reason = WAIT_SYNC;
     if (queue_only) longjmp(wait_jump, 1);
     CHECK(on_block != 0);
     on_block();
+    return 0;
 }
 
 #define PANICS(statement) do { \

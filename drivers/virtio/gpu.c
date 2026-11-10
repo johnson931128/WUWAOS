@@ -1,0 +1,474 @@
+#include "drivers/virtio/gpu.h"
+#include "arch/riscv/clock.h"
+#include "kernel/io/console.h"
+#include "kernel/io/diagnostic.h"
+#include "kernel/mm/page.h"
+#include "kernel/proc/process.h"
+#include <stddef.h>
+
+#define FDT_MAGIC 0xd00dfeedU
+#define FDT_BEGIN_NODE 1U
+#define FDT_END_NODE 2U
+#define FDT_PROP 3U
+#define FDT_NOP 4U
+#define FDT_END 9U
+#define VIRTIO_MAGIC 0x000U
+#define VIRTIO_VERSION 0x004U
+#define VIRTIO_DEVICE_ID 0x008U
+#define VIRTIO_DEVICE_FEATURES 0x010U
+#define VIRTIO_DEVICE_FEATURES_SEL 0x014U
+#define VIRTIO_DRIVER_FEATURES 0x020U
+#define VIRTIO_DRIVER_FEATURES_SEL 0x024U
+#define VIRTIO_QUEUE_SEL 0x030U
+#define VIRTIO_QUEUE_NUM_MAX 0x034U
+#define VIRTIO_QUEUE_NUM 0x038U
+#define VIRTIO_QUEUE_READY 0x044U
+#define VIRTIO_QUEUE_NOTIFY 0x050U
+#define VIRTIO_STATUS 0x070U
+#define VIRTIO_QUEUE_DESC_LOW 0x080U
+#define VIRTIO_QUEUE_AVAIL_LOW 0x090U
+#define VIRTIO_QUEUE_USED_LOW 0x0a0U
+#define DEVICE_ACKNOWLEDGE 1U
+#define DEVICE_DRIVER 2U
+#define DEVICE_DRIVER_OK 4U
+#define DEVICE_FEATURES_OK 8U
+#define FEATURE_VERSION_1 0U
+#define QUEUE_SIZE 8U
+#define REQUEST_TIMEOUT_MS 5000UL
+
+#define GPU_CMD_RESOURCE_CREATE_2D 0x0101U
+#define GPU_CMD_SET_SCANOUT 0x0103U
+#define GPU_CMD_RESOURCE_FLUSH 0x0104U
+#define GPU_CMD_TRANSFER_TO_HOST_2D 0x0105U
+#define GPU_CMD_RESOURCE_ATTACH_BACKING 0x0106U
+#define GPU_RESP_OK_NODATA 0x1100U
+#define GPU_FORMAT_B8G8R8X8_UNORM 2U
+#define GPU_RESOURCE_ID 1U
+#define GPU_RECOVERY_RETRIES 2U
+
+typedef enum {
+    GPU_IDLE, GPU_TRANSFER, GPU_FLUSH,
+    GPU_RECOVERY_RESET_WAIT, GPU_RECOVERY_CREATE_WAIT,
+    GPU_RECOVERY_ATTACH_WAIT, GPU_RECOVERY_SCANOUT_WAIT, GPU_DISABLED
+} GpuState;
+
+typedef struct {
+    uint64_t address;
+    uint32_t length;
+    uint16_t flags;
+    uint16_t next;
+} VirtqDescriptor;
+typedef struct { uint16_t flags; volatile uint16_t index; uint16_t ring[QUEUE_SIZE]; uint16_t event; } VirtqAvailable;
+typedef struct { uint32_t id, length; } VirtqUsedElement;
+typedef struct { uint16_t flags; volatile uint16_t index; VirtqUsedElement ring[QUEUE_SIZE]; uint16_t event; } VirtqUsed;
+typedef struct {
+    uint32_t type, flags;
+    uint64_t fence_id;
+    uint32_t context_id;
+    uint8_t ring_index, padding[3];
+} GpuHeader;
+typedef struct { uint32_t x, y, width, height; } GpuRectangle;
+typedef struct { GpuHeader header; GpuRectangle rectangle; } GpuRectCommand;
+typedef struct { GpuHeader header; uint32_t resource_id, format, width, height; } GpuCreateCommand;
+typedef struct { uint64_t address; uint32_t length, padding; } GpuMemoryEntry;
+typedef struct { GpuHeader header; uint32_t resource_id, entries; GpuMemoryEntry memory; } GpuAttachCommand;
+typedef struct { GpuHeader header; GpuRectangle rectangle; uint32_t scanout_id, resource_id; } GpuSetScanoutCommand;
+typedef struct { GpuHeader header; GpuRectangle rectangle; uint32_t resource_id, padding; } GpuFlushCommand;
+typedef struct { GpuHeader header; GpuRectangle rectangle; uint64_t offset; uint32_t resource_id, padding; } GpuTransferCommand;
+typedef union {
+    GpuHeader header;
+    GpuRectCommand rectangle;
+    GpuCreateCommand create;
+    GpuAttachCommand attach;
+    GpuSetScanoutCommand scanout;
+    GpuFlushCommand flush;
+    GpuTransferCommand transfer;
+    uint8_t bytes[128];
+} GpuCommand;
+
+typedef struct {
+    volatile uint32_t *registers;
+    uintptr_t base, framebuffer_physical, shadow_physical;
+    uint32_t *framebuffer; /* CPU-owned shadow surface */
+    uint32_t *backing;      /* persistent DMA backing attached to the resource */
+    size_t framebuffer_pages;
+    uint16_t consumed, queue_length;
+    VirtqDescriptor descriptors[QUEUE_SIZE] __attribute__((aligned(16)));
+    VirtqAvailable available __attribute__((aligned(2)));
+    VirtqUsed used __attribute__((aligned(4)));
+    GpuCommand command __attribute__((aligned(16)));
+    GpuHeader response __attribute__((aligned(16)));
+    GpuState state;
+    GpuRectangle inflight, pending;
+    uint64_t state_started;
+    unsigned int recovery_attempts;
+    int pending_valid, initialized, resource_attached;
+} GpuDevice;
+static GpuDevice gpu;
+
+typedef struct {
+    uint32_t address_cells, size_cells;
+    uint64_t address;
+    int compatible, has_reg;
+} FdtNode;
+
+static uint32_t load_be32(const uint8_t *bytes) {
+    return ((uint32_t)bytes[0] << 24) | ((uint32_t)bytes[1] << 16) |
+           ((uint32_t)bytes[2] << 8) | bytes[3];
+}
+static int compatible_virtio(const uint8_t *bytes, uint32_t length) {
+    static const char target[] = "virtio,mmio";
+    for (uint32_t at = 0; at < length;) {
+        uint32_t end = at;
+        while (end < length && bytes[end]) ++end;
+        if (end - at == sizeof(target) - 1) {
+            uint32_t i = 0;
+            while (i < sizeof(target) - 1 && bytes[at + i] == (uint8_t)target[i]) ++i;
+            if (i == sizeof(target) - 1) return 1;
+        }
+        at = end + 1;
+    }
+    return 0;
+}
+
+int gpu_probe(const void *blob) {
+    if (blob == 0) return -1;
+    const uint8_t *bytes = blob;
+    if (load_be32(bytes) != FDT_MAGIC) return -1;
+    const uint32_t struct_offset = load_be32(bytes + 8), strings_offset = load_be32(bytes + 12);
+    const uint32_t strings_size = load_be32(bytes + 32), struct_size = load_be32(bytes + 36);
+    const uint8_t *cursor = bytes + struct_offset, *limit = cursor + struct_size, *strings = bytes + strings_offset;
+    FdtNode nodes[16] = {{0}};
+    int depth = -1;
+    while (cursor + 4 <= limit) {
+        const uint32_t token = load_be32(cursor); cursor += 4;
+        if (token == FDT_BEGIN_NODE) {
+            const uint8_t *end = cursor;
+            while (end < limit && *end) ++end;
+            if (end == limit || depth + 1 >= 16) return -1;
+            ++depth;
+            nodes[depth] = (FdtNode){ .address_cells = depth == 0 ? 2 : nodes[depth - 1].address_cells,
+                                      .size_cells = depth == 0 ? 1 : nodes[depth - 1].size_cells };
+            cursor = (const uint8_t *)(((uintptr_t)(end + 1) + 3U) & ~(uintptr_t)3U);
+        } else if (token == FDT_END_NODE) {
+            if (depth < 0) return -1;
+            FdtNode *node = &nodes[depth];
+            if (node->compatible && node->has_reg) {
+                volatile uint32_t *candidate = (volatile uint32_t *)(uintptr_t)node->address;
+                if (candidate[0] == 0x74726976U && candidate[1] == 2U && candidate[2] == 16U) {
+                    gpu.base = (uintptr_t)node->address;
+                    gpu.registers = candidate;
+                    console_puts("[gpu] FDT VirtIO GPU at "); console_hex(gpu.base); console_putc('\n');
+                    return 0;
+                }
+            }
+            --depth;
+        } else if (token == FDT_PROP) {
+            if (depth < 0 || cursor + 8 > limit) return -1;
+            const uint32_t length = load_be32(cursor), name_offset = load_be32(cursor + 4); cursor += 8;
+            if (cursor + length > limit || name_offset >= strings_size) return -1;
+            const char *name = (const char *)(strings + name_offset);
+            const uint8_t *value = cursor;
+            FdtNode *node = &nodes[depth];
+            if (name[0] == '#' && name[1] == 'a' && length == 4) node->address_cells = load_be32(value);
+            else if (name[0] == '#' && name[1] == 's' && length == 4) node->size_cells = load_be32(value);
+            else if (name[0] == 'c' && compatible_virtio(value, length)) node->compatible = 1;
+            else if (name[0] == 'r' && name[1] == 'e' && name[2] == 'g' && depth > 0) {
+                const FdtNode *parent = &nodes[depth - 1];
+                if (parent->address_cells == 2 && length >= 16) {
+                    node->address = ((uint64_t)load_be32(value) << 32) | load_be32(value + 4); node->has_reg = 1;
+                } else if (parent->address_cells == 1 && length >= 8) {
+                    node->address = load_be32(value); node->has_reg = 1;
+                }
+            }
+            cursor = (const uint8_t *)(((uintptr_t)(cursor + length) + 3U) & ~(uintptr_t)3U);
+        } else if (token == FDT_NOP) continue;
+        else if (token == FDT_END) break;
+        else return -1;
+    }
+    console_puts("[gpu] No modern VirtIO GPU in FDT\n");
+    return -1;
+}
+
+uintptr_t gpu_mmio_base(void) { return gpu.base; }
+static GpuHeader header(uint32_t type);
+static void queue_command(size_t request_size);
+static void write_address(uint32_t offset, uintptr_t address) {
+    gpu.registers[offset / 4] = (uint32_t)address;
+    gpu.registers[(offset + 4) / 4] = (uint32_t)(address >> 32);
+}
+
+static int configure_device(void) {
+    gpu.registers[VIRTIO_STATUS / 4] = DEVICE_ACKNOWLEDGE;
+    gpu.registers[VIRTIO_STATUS / 4] |= DEVICE_DRIVER;
+    gpu.registers[VIRTIO_DEVICE_FEATURES_SEL / 4] = 1;
+    const uint32_t high_features = gpu.registers[VIRTIO_DEVICE_FEATURES / 4];
+    gpu.registers[VIRTIO_DRIVER_FEATURES_SEL / 4] = 0;
+    gpu.registers[VIRTIO_DRIVER_FEATURES / 4] = 0;
+    gpu.registers[VIRTIO_DRIVER_FEATURES_SEL / 4] = 1;
+    if ((high_features & 1U) == 0) return -1;
+    gpu.registers[VIRTIO_DRIVER_FEATURES / 4] = 1U << FEATURE_VERSION_1;
+    gpu.registers[VIRTIO_STATUS / 4] |= DEVICE_FEATURES_OK;
+    if ((gpu.registers[VIRTIO_STATUS / 4] & DEVICE_FEATURES_OK) == 0) return -1;
+    gpu.registers[VIRTIO_QUEUE_SEL / 4] = 0;
+    const uint32_t maximum = gpu.registers[VIRTIO_QUEUE_NUM_MAX / 4];
+    if (maximum < 2) return -1;
+    gpu.queue_length = maximum < QUEUE_SIZE ? (uint16_t)maximum : QUEUE_SIZE;
+    gpu.registers[VIRTIO_QUEUE_NUM / 4] = gpu.queue_length;
+    write_address(VIRTIO_QUEUE_DESC_LOW, (uintptr_t)gpu.descriptors);
+    write_address(VIRTIO_QUEUE_AVAIL_LOW, (uintptr_t)&gpu.available);
+    write_address(VIRTIO_QUEUE_USED_LOW, (uintptr_t)&gpu.used);
+    gpu.registers[VIRTIO_QUEUE_READY / 4] = 1;
+    gpu.registers[VIRTIO_STATUS / 4] |= DEVICE_DRIVER_OK;
+    return 0;
+}
+
+static void disable_gpu(void) {
+    kernel_diagnostic("gpu", "recovery-exhausted", -1, 1, gpu.recovery_attempts);
+    /* Keep command, response, queue, shadow and attached backing storage alive. */
+    gpu.state = GPU_DISABLED;
+}
+
+static void begin_recovery(void) {
+    if (gpu.recovery_attempts >= GPU_RECOVERY_RETRIES) {
+        disable_gpu();
+        return;
+    }
+    ++gpu.recovery_attempts;
+    kernel_diagnostic("gpu", "reset-request", -1, 1, gpu.recovery_attempts);
+    gpu.registers[VIRTIO_STATUS / 4] = 0;
+    gpu.state = GPU_RECOVERY_RESET_WAIT;
+    gpu.state_started = clock_ticks();
+}
+
+static void queue_resource_create(void) {
+    gpu.command.create = (GpuCreateCommand){ .header = header(GPU_CMD_RESOURCE_CREATE_2D),
+        .resource_id = GPU_RESOURCE_ID, .width = GPU_WIDTH, .height = GPU_HEIGHT,
+        .format = GPU_FORMAT_B8G8R8X8_UNORM };
+    queue_command(sizeof(gpu.command.create));
+    gpu.state = GPU_RECOVERY_CREATE_WAIT;
+    gpu.state_started = clock_ticks();
+}
+
+static void queue_resource_attach(void) {
+    gpu.command.attach = (GpuAttachCommand){ .header = header(GPU_CMD_RESOURCE_ATTACH_BACKING),
+        .resource_id = GPU_RESOURCE_ID, .entries = 1,
+        .memory = { gpu.framebuffer_physical, GPU_WIDTH * GPU_HEIGHT * 4U, 0 } };
+    queue_command(sizeof(gpu.command.attach));
+    gpu.state = GPU_RECOVERY_ATTACH_WAIT;
+    gpu.state_started = clock_ticks();
+}
+
+static void queue_set_scanout(void) {
+    gpu.command.scanout = (GpuSetScanoutCommand){ .header = header(GPU_CMD_SET_SCANOUT),
+        .resource_id = GPU_RESOURCE_ID, .scanout_id = 0,
+        .rectangle = { .x = 0, .y = 0, .width = GPU_WIDTH, .height = GPU_HEIGHT } };
+    queue_command(sizeof(gpu.command.scanout));
+    gpu.state = GPU_RECOVERY_SCANOUT_WAIT;
+    gpu.state_started = clock_ticks();
+}
+static void queue_command(size_t request_size) {
+    gpu.response = (GpuHeader){0};
+    gpu.descriptors[0] = (VirtqDescriptor){ (uintptr_t)&gpu.command, (uint32_t)request_size, 1U, 1U };
+    gpu.descriptors[1] = (VirtqDescriptor){ (uintptr_t)&gpu.response, sizeof(gpu.response), 2U, 0U };
+    const uint16_t index = gpu.available.index;
+    gpu.available.ring[index % gpu.queue_length] = 0;
+    __asm__ volatile("fence rw, w" : : : "memory");
+    gpu.available.index = (uint16_t)(index + 1U);
+    __asm__ volatile("fence w, o" : : : "memory");
+    gpu.registers[VIRTIO_QUEUE_NOTIFY / 4] = 0;
+}
+
+/* Returns 0 while pending, 1 for a valid completion, and -1 for device error. */
+static int command_completion(void) {
+    if (gpu.used.index == gpu.consumed) return 0;
+    __asm__ volatile("fence r, rw" : : : "memory");
+    const uint16_t completed = (uint16_t)(gpu.used.index - gpu.consumed);
+    const VirtqUsedElement element = gpu.used.ring[gpu.consumed % gpu.queue_length];
+    if (completed != 1U || element.id != 0U || element.length < sizeof(GpuHeader) ||
+        element.length > sizeof(gpu.response)) {
+        kernel_diagnostic("gpu", "used-ring-malformed", -1, 1, element.id);
+        return -1;
+    }
+    ++gpu.consumed;
+    if (gpu.response.type != GPU_RESP_OK_NODATA) {
+        kernel_diagnostic("gpu", "command-response", -1, 0, gpu.response.type);
+        return -1;
+    }
+    return 1;
+}
+
+static int command_sync(size_t request_size) {
+    queue_command(request_size);
+    const uint64_t start = clock_ticks();
+    int result;
+    while ((result = command_completion()) == 0) {
+        if (clock_ticks() - start >= clock_ms_ticks(REQUEST_TIMEOUT_MS)) {
+            kernel_diagnostic("gpu", "command-timeout", -1, 1, REQUEST_TIMEOUT_MS);
+            kernel_idle();
+        }
+    }
+    return result < 0 ? -1 : 0;
+}
+
+static GpuHeader header(uint32_t type) { return (GpuHeader){ .type = type }; }
+static int create_resource(void) {
+    gpu.command.create = (GpuCreateCommand){ .header = header(GPU_CMD_RESOURCE_CREATE_2D),
+        .resource_id = GPU_RESOURCE_ID, .width = GPU_WIDTH, .height = GPU_HEIGHT,
+        .format = GPU_FORMAT_B8G8R8X8_UNORM };
+    if (command_sync(sizeof(gpu.command.create)) < 0) return -1;
+    gpu.command.attach = (GpuAttachCommand){ .header = header(GPU_CMD_RESOURCE_ATTACH_BACKING),
+        .resource_id = GPU_RESOURCE_ID, .entries = 1,
+        .memory = { gpu.framebuffer_physical, GPU_WIDTH * GPU_HEIGHT * 4U, 0 } };
+    if (command_sync(sizeof(gpu.command.attach)) < 0) return -1;
+    gpu.command.scanout = (GpuSetScanoutCommand){ .header = header(GPU_CMD_SET_SCANOUT),
+        .resource_id = GPU_RESOURCE_ID, .scanout_id = 0,
+        .rectangle = { .x = 0, .y = 0, .width = GPU_WIDTH, .height = GPU_HEIGHT } };
+    if (command_sync(sizeof(gpu.command.scanout)) < 0) return -1;
+    gpu.resource_attached = 1;
+    return 0;
+}
+
+static void merge_rectangle(GpuRectangle *target, int *valid, uint32_t x, uint32_t y,
+                            uint32_t width, uint32_t height) {
+    const uint32_t right = x + width, bottom = y + height;
+    if (!*valid) { *target = (GpuRectangle){ x, y, width, height }; *valid = 1; return; }
+    const uint32_t old_right = target->x + target->width, old_bottom = target->y + target->height;
+    const uint32_t left = x < target->x ? x : target->x;
+    const uint32_t top = y < target->y ? y : target->y;
+    const uint32_t merged_right = right > old_right ? right : old_right;
+    const uint32_t merged_bottom = bottom > old_bottom ? bottom : old_bottom;
+    *target = (GpuRectangle){ left, top, merged_right - left, merged_bottom - top };
+}
+
+static void copy_shadow_to_backing(const GpuRectangle *rectangle) {
+    for (uint32_t row = 0; row < rectangle->height; ++row) {
+        const size_t offset = (size_t)(rectangle->y + row) * GPU_WIDTH + rectangle->x;
+        for (uint32_t column = 0; column < rectangle->width; ++column)
+            gpu.backing[offset + column] = gpu.framebuffer[offset + column];
+    }
+}
+
+static void start_transfer(void) {
+    gpu.inflight = gpu.pending;
+    gpu.pending_valid = 0;
+    copy_shadow_to_backing(&gpu.inflight);
+    gpu.command.transfer = (GpuTransferCommand){ .header = header(GPU_CMD_TRANSFER_TO_HOST_2D),
+        .offset = ((uint64_t)gpu.inflight.y * GPU_WIDTH + gpu.inflight.x) * 4U,
+        .resource_id = GPU_RESOURCE_ID, .rectangle = gpu.inflight };
+    queue_command(sizeof(gpu.command.transfer));
+    gpu.state = GPU_TRANSFER;
+    gpu.state_started = clock_ticks();
+}
+
+int gpu_present(uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
+    if (!gpu.framebuffer || width == 0 || height == 0 || x >= GPU_WIDTH || y >= GPU_HEIGHT ||
+        width > GPU_WIDTH - x || height > GPU_HEIGHT - y) return -1;
+    if (gpu.state == GPU_DISABLED) return -1;
+    if (process_runtime_started()) {
+        merge_rectangle(&gpu.pending, &gpu.pending_valid, x, y, width, height);
+        return 0;
+    }
+    const GpuRectangle rectangle = { x, y, width, height };
+    copy_shadow_to_backing(&rectangle);
+    gpu.command.transfer = (GpuTransferCommand){ .header = header(GPU_CMD_TRANSFER_TO_HOST_2D),
+        .offset = ((uint64_t)y * GPU_WIDTH + x) * 4U, .resource_id = GPU_RESOURCE_ID,
+        .rectangle = rectangle };
+    if (command_sync(sizeof(gpu.command.transfer)) < 0) return -1;
+    gpu.command.flush = (GpuFlushCommand){ .header = header(GPU_CMD_RESOURCE_FLUSH),
+        .resource_id = GPU_RESOURCE_ID, .rectangle = rectangle };
+    return command_sync(sizeof(gpu.command.flush));
+}
+
+uint32_t *gpu_framebuffer(void) { return gpu.framebuffer; }
+int gpu_is_enabled(void) { return gpu.initialized && gpu.state != GPU_DISABLED; }
+
+int gpu_init(void) {
+    if (!gpu.registers) return -1;
+    if (gpu.registers[VIRTIO_MAGIC / 4] != 0x74726976U || gpu.registers[VIRTIO_VERSION / 4] != 2U ||
+        gpu.registers[VIRTIO_DEVICE_ID / 4] != 16U) return -1;
+    gpu.registers[VIRTIO_STATUS / 4] = 0;
+    if (configure_device() < 0) { console_puts("[gpu] Feature negotiation or queue setup failed\n"); return -1; }
+    gpu.framebuffer_pages = (GPU_WIDTH * GPU_HEIGHT * 4U + PAGE_SIZE - 1) / PAGE_SIZE;
+    gpu.framebuffer_physical = page_alloc_contiguous(gpu.framebuffer_pages);
+    if (!gpu.framebuffer_physical) { console_puts("[gpu] Cannot allocate DMA framebuffer RAM\n"); return -1; }
+    gpu.shadow_physical = page_alloc_contiguous(gpu.framebuffer_pages);
+    if (!gpu.shadow_physical) {
+        for (size_t page = 0; page < gpu.framebuffer_pages; ++page)
+            page_free(gpu.framebuffer_physical + page * PAGE_SIZE);
+        gpu.framebuffer_physical = 0;
+        console_puts("[gpu] Cannot allocate shadow framebuffer RAM\n");
+        return -1;
+    }
+    gpu.backing = (uint32_t *)gpu.framebuffer_physical;
+    gpu.framebuffer = (uint32_t *)gpu.shadow_physical;
+    const uint32_t pixel = 0x00d0b070U;
+    for (size_t i = 0; i < GPU_WIDTH * GPU_HEIGHT; ++i) gpu.framebuffer[i] = pixel;
+    if (create_resource() < 0 || gpu_present(0, 0, GPU_WIDTH, GPU_HEIGHT) < 0) return -1;
+    gpu.initialized = 1;
+    gpu.state = GPU_IDLE;
+    console_puts("[gpu] 1280x720 VirtIO 2D scanout ready\n");
+    return 0;
+}
+
+void gpu_poll(void) {
+    if (!gpu.initialized || gpu.state == GPU_DISABLED) return;
+    if (gpu.state == GPU_IDLE) {
+        if (gpu.pending_valid) start_transfer();
+        return;
+    }
+    if (gpu.state == GPU_RECOVERY_RESET_WAIT) {
+        if (gpu.registers[VIRTIO_STATUS / 4] == 0) {
+            /* The device acknowledged reset, so it can no longer own old queue storage. */
+            __asm__ volatile("fence iorw, iorw" : : : "memory");
+            for (size_t i = 0; i < QUEUE_SIZE; ++i) gpu.descriptors[i] = (VirtqDescriptor){0};
+            gpu.available = (VirtqAvailable){0};
+            gpu.used = (VirtqUsed){0};
+            gpu.consumed = 0;
+            gpu.resource_attached = 0;
+            if (configure_device() < 0) {
+                kernel_diagnostic("gpu", "device-reconfigure", -1, 1, gpu.recovery_attempts);
+                begin_recovery(); return;
+            }
+            queue_resource_create();
+        } else if (clock_ticks() - gpu.state_started >= clock_ms_ticks(REQUEST_TIMEOUT_MS)) {
+            kernel_diagnostic("gpu", "reset-ack-timeout", -1, 1, gpu.recovery_attempts);
+            begin_recovery();
+        }
+        return;
+    }
+    if (gpu.state == GPU_TRANSFER || gpu.state == GPU_FLUSH ||
+        gpu.state == GPU_RECOVERY_CREATE_WAIT || gpu.state == GPU_RECOVERY_ATTACH_WAIT ||
+        gpu.state == GPU_RECOVERY_SCANOUT_WAIT) {
+        const GpuState completed_state = gpu.state;
+        const int result = command_completion();
+        if (result == 0) {
+            if (clock_ticks() - gpu.state_started >= clock_ms_ticks(REQUEST_TIMEOUT_MS)) {
+                kernel_diagnostic("gpu", "async-command-timeout", -1, 1, completed_state);
+                begin_recovery();
+            }
+            return;
+        }
+        if (result < 0) { begin_recovery(); return; }
+        if (completed_state == GPU_TRANSFER) {
+            gpu.command.flush = (GpuFlushCommand){ .header = header(GPU_CMD_RESOURCE_FLUSH),
+                .resource_id = GPU_RESOURCE_ID, .rectangle = gpu.inflight };
+            queue_command(sizeof(gpu.command.flush));
+            gpu.state = GPU_FLUSH;
+            gpu.state_started = clock_ticks();
+        } else if (completed_state == GPU_FLUSH) {
+            gpu.state = GPU_IDLE;
+            gpu.recovery_attempts = 0;
+            if (gpu.pending_valid) start_transfer();
+        } else if (completed_state == GPU_RECOVERY_CREATE_WAIT) {
+            queue_resource_attach();
+        } else if (completed_state == GPU_RECOVERY_ATTACH_WAIT) {
+            gpu.resource_attached = 1;
+            queue_set_scanout();
+        } else {
+            gpu.state = GPU_IDLE;
+            merge_rectangle(&gpu.pending, &gpu.pending_valid, 0, 0, GPU_WIDTH, GPU_HEIGHT);
+            kernel_diagnostic("gpu", "device-recovered", 0, 0, GPU_WIDTH * GPU_HEIGHT * 4U);
+        }
+    }
+}

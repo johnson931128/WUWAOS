@@ -4,17 +4,19 @@
 
 ## PCB 保存什麼
 
-原始碼：[kernel/process.h（GitHub）](https://github.com/johnson931128/WUWAOS/blob/main/kernel/process.h)。
+原始碼：[kernel/proc/process.h（GitHub）](https://github.com/johnson931128/WUWAOS/blob/main/kernel/proc/process.h)。
 
-`ProcessControlBlock` 就是 PCB（行程控制區塊），`processes[16]` 是目前行程表。`page_table` 找到私有位址空間，`frame` 找到暫存器保存狀態；等待與 I/O 欄位記錄阻塞後還沒完成的事。
+`ProcessControlBlock` 就是 PCB（行程控制區塊），`processes[16]` 是目前行程表。`page_table` 找到私有位址空間，`frame` 找到暫存器保存狀態；`event_wait` 記錄 source generation/sequence、deadline 與完成結果。阻塞讀寫在原 process kernel stack 上恢復後重試，不把使用者 buffer 指標交給 scheduler poller。
 
-`ready_next` 是指向下一個 Ready PCB 的指標，不是另一份行程副本。核心堆疊每欄固定 16 KiB；使用者頁面則由 VM 按需要配置。
+`kernel/proc/gate.c` 的 owner-aware recursive Gate 由 PCB/PID 記錄持有者與深度，等待者以 event sequence 防止漏喚醒。FS、VM、各 OFD 與各 pipe 使用不同 scope；runtime caller 可在等待 Gate 時讓出核心 stack，scheduler/UI poll 不可睡眠。新 PCB 保留 `PROCESS_NEW` slot 等頁表/frame 初始化完成，`pcb` 對 null frame 顯示 initializing。
+
+`ready_next` 是指向下一個 Ready PCB 的指標，不是另一份行程副本。每個核心堆疊有 16 KiB 可用空間，下方另留一頁 4 KiB guard，從共用核心頁表取消映射；scheduler stack 亦採相同保護。初始化只清可用 stack，不碰未映射 guard。使用者頁面則由 VM 按需要配置。
 
 ## 核心函式如何暫停與恢復
 
 現在 PCB 另有 `KernelContext`（核心呼叫上下文），與 `TrapFrame`（使用者陷阱保存狀態）分開。前者保存核心的 ra（返回位置）、sp（堆疊位置）與 s0～s11（呼叫後必須保留的暫存器）；後者保存使用者暫存器與返回使用者模式所需的控制狀態。
 
-原始碼：[swtch.S](https://github.com/johnson931128/WUWAOS/blob/main/kernel/swtch.S)／[context.h](https://github.com/johnson931128/WUWAOS/blob/main/kernel/context.h)。RV64 使用 sd（儲存 64-bit）與 ld（載入 64-bit）；最後 ret 使用恢復後的返回位置。這是函式呼叫邊界的保存，不是任意指令位置的完整中斷保存。
+原始碼：[swtch.S](https://github.com/johnson931128/WUWAOS/blob/main/arch/riscv/swtch.S)／[context.h](https://github.com/johnson931128/WUWAOS/blob/main/arch/riscv/context.h)。RV64 使用 sd（儲存 64-bit）與 ld（載入 64-bit）；最後 ret 使用恢復後的返回位置。這是函式呼叫邊界的保存，不是任意指令位置的完整中斷保存。
 
 ```mermaid
 flowchart TD
@@ -43,6 +45,10 @@ Running／Ready／Waiting → exit／kill → Zombie → wait → Unused
 ```
 
 Zombie（已退出、待回收）仍保留結束結果與資源，讓父行程能透過 wait 取得結果。它已不再執行，也不在 Ready queue（就緒佇列）裡。
+
+`kill` 遇到仍在 syscall/fault/timer kernel call stack 上的目標時，先標記 `kill_pending`；可取消的 event、channel、child 或 sync wait 會喚醒原 stack 供其 unwind。cancel-defer 保護 cleanup、已提交 Block request 與 VM swap-out 的撤銷／回復範圍，須到裝置完成或確認 reset、釋放 Gate 並完成清理後，才在 trap return 邊界處理 kill。一般不持有 suspended kernel call stack 的目標仍可直接終止；這不是可隨時中斷 DMA 的任意取消機制。
+
+Guard page 命中且成功進入 C trap handler 時會印 PID／stack 範圍並停機；若 stack 已不足以讓 `trap.S` 保存 TrapFrame，仍可能再次 fault，尚未設 emergency trap stack。這項保護及本輪取消路徑只完成實作，runtime 驗證為 NOT_RUN。
 
 ## 建立、複製與替換
 
@@ -82,7 +88,7 @@ exit 關閉端點並留下 Zombie；wait 取得結果後釋放使用者頁、Swa
 
 WUWAOS 以自訂核心物件與 syscall 實作 Mutex（互斥鎖）及 Semaphore（計數號誌），不依賴 POSIX。Mutex 確保單一持有者；Semaphore 用計數管理資源。資源不足時行程阻塞，核心在條件改變時喚醒 FIFO 等待者。
 
-目前單核心、核心內不搶占，這是等待佇列操作不被同時改動的前提。持鎖行程終止或 exec 時，鎖標記為 poisoned（資料可能不一致）；後續取得會回報錯誤。Semaphore 名額不會因持有行程離開自動返還。詳細介面、例外與驗證狀態見 [Spec 22](../SPEC-22-synchronization.md)，[核心原始碼](https://github.com/johnson931128/WUWAOS/blob/main/kernel/sync.c)。
+目前單核心、核心內不搶占，這是等待佇列操作不被同時改動的前提。持鎖行程終止或 exec 時，鎖標記為 poisoned（資料可能不一致）；後續取得會回報錯誤。Semaphore 名額不會因持有行程離開自動返還。詳細介面、例外與驗證狀態見 [Spec 22](../SPEC-22-synchronization.md)，[核心原始碼](https://github.com/johnson931128/WUWAOS/blob/main/kernel/ipc/sync.c)。
 
 可以在 QEMU 使用 `sync sem create 0` 建立初始值為 0 的號誌，再以 `syncbg sem wait <id>` 啟動等待的子行程。使用 `ps` 看到 Waiting sync，之後以 `sync sem post <id>` 喚醒它，再用 `wait <pid>` 回收。`syncbg mutex hold <id>` 的子行程持鎖等待通道 7，`wakeup 7` 使其解鎖並離開；實際編號以畫面顯示為準。`wakeup 7` 同時喚醒其他等待此通道的行程。
 
@@ -90,4 +96,4 @@ WUWAOS 以自訂核心物件與 syscall 實作 Mutex（互斥鎖）及 Semaphore
 
 在 `wuwaos/>` 輸入 `demo sync`，shell 父行程會持有 Mutex，建立子行程並顯示 `ps`。子行程取得鎖並釋放後，再等待初始值為 0 的 Semaphore；父行程顯示第二次 `ps`，接著發出 post。最後子行程結束並由父行程回收。行程編號每次可能不同。
 
-此範例用終端輸出展示臨界區域，不是共享記憶體範例。兩次快照前各等待 200 ms，讓子行程有機會執行；快照反映真實狀態，忙碌時不保證剛好看到 Waiting。完成後回收同步物件；若行程欄位不足會顯示錯誤。詳細設計見 [Spec 23](../SPEC-23-sync-demo.md)，原始程式見 [GitHub](https://github.com/johnson931128/WUWAOS/blob/main/user/sync_demo.c)。
+此範例用終端輸出展示臨界區域，不是共享記憶體範例。兩次快照前各等待 200 ms，讓子行程有機會執行；快照反映真實狀態，忙碌時不保證剛好看到 Waiting。完成後回收同步物件；若行程欄位不足會顯示錯誤。詳細設計見 [Spec 23](../SPEC-23-sync-demo.md)，原始程式見 [GitHub](https://github.com/johnson931128/WUWAOS/blob/main/user/shell/sync_demo.c)。

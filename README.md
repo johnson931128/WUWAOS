@@ -8,7 +8,7 @@
 
 WUWAOS is a small operating system written in **C and RISC-V assembly** that boots on a QEMU-emulated RISC-V 64-bit machine. The project explores how processes, scheduling, memory, and file systems work together by implementing a kernel and user programs.
 
-[Documentation website](https://johnson931128.github.io/WUWAOS/) · [Windows portable guide](docs/portable-windows.md) · [Releases](https://github.com/johnson931128/WUWAOS/releases) · [Code and architecture guide](docs/CODE_GUIDE.md) · [Specifications and verification](docs/history.md)
+[Documentation website](https://johnson931128.github.io/WUWAOS/) · [Windows portable guide](docs/portable-windows.md) · [Releases](https://github.com/johnson931128/WUWAOS/releases) · [Code and architecture guide](docs/CODE_GUIDE.md) · [Spec 33: modules and UI/kernel boundary](docs/SPEC-33-module-architecture.md) · [Specifications and verification](docs/history.md)
 
 **Try WUWAOS on Windows:** [download the complete portable ZIP](https://github.com/johnson931128/WUWAOS/releases/download/portable-windows-v1/WUWAOS-portable-windows-x64.zip) (about 1.41 GiB), which includes the OS source and its build/run environment. Follow the [PowerShell setup commands](#windows-portable-release) below, then click the desktop's Terminal icon and try `help`, `demo sync`, or `workstate`.
 
@@ -16,14 +16,20 @@ WUWAOS is a small operating system written in **C and RISC-V assembly** that boo
 
 | Area | Current implementation |
 | --- | --- |
-| Platform | QEMU `virt`, RISC-V 64-bit, one CPU core, and 128 MiB RAM; OpenSBI starts the kernel |
+| Platform | QEMU `virt`, RISC-V 64-bit, one CPU core, and 128 MiB RAM; OpenSBI firmware with CLI disk boot |
 | Processes and scheduling | Up to 16 processes, process control blocks, fork, built-in and path-based exec, wait, exit, and timer-driven round-robin scheduling |
 | Synchronization and IPC | Custom mutexes and semaphores, sleep/wakeup, per-process file descriptors, and multi-stage pipes |
 | Virtual memory | Sv39 three-level page tables, demand paging, FIFO page replacement, and swap |
-| File system | VirtIO block device and the custom WUFS file system, with persistent files, shared open-file offsets, and shell redirection |
-| User interface | UART shell, `fan` text editor and `workstate` monitor; optional VirtIO GPU/tablet desktop with a fixed Terminal window and keyboard-operated shell |
+| File system | Event-waiting VirtIO block requests, WUFS redo journal, atomic file replacement, shared open-file offsets, and shell redirection |
+| User interface | UART shell, `fan` and `workstate`; optional VirtIO desktop with up to four independent Terminal windows, focus, dragging, and viewport resizing |
 
-WUWAOS focuses on fundamental operating system mechanisms and is not Linux-compatible. QEMU currently loads the kernel using `-kernel`. A restricted static RV64 ELF loader can run compatible WUWAOS programs from WUFS; general ELF/Linux compatibility, command-line arguments for external ELF programs, compiling C inside WUWAOS, networking, general window management, and a file manager are not supported. The graphical desktop provides one fixed-size Terminal window connected to the existing shell; `make run` remains the UART workflow. See the [documentation](https://johnson931128.github.io/WUWAOS/) and [Spec 21](docs/SPEC-21-native-compilation.md) for limitations and future plans.
+WUWAOS focuses on fundamental operating system mechanisms and is not Linux-compatible. `make run-disk` boots the UART shell from a WUFS disk. A restricted static RV64 ELF loader can run compatible WUWAOS programs from WUFS; general ELF/Linux compatibility, external ELF arguments, compiling C inside WUWAOS, networking, and a file manager are not supported. Window resizing changes the viewport of a fixed 100×30 terminal model; it does not resize the TTY or reflow text. See the [documentation](https://johnson931128.github.io/WUWAOS/) and [Spec 21](docs/SPEC-21-native-compilation.md) for limitations and future plans.
+
+## Current Development Status
+
+The 2026-11-08 implementation adds asynchronous Block requests and swap PTE rollback, nonblocking GPU presentation with bounded recovery, kernel stack guard pages, four independent Terminal windows, and atomic file replacement used by `fan`. Existing isolated TTY sessions, event waits, and owner-aware gates protect shared state. Kernel code can cooperatively sleep and resume its caller stack; timer preemption still applies only to user mode.
+
+These new paths have not been runtime-tested at the user's direction. Boot device setup still polls synchronously. Block reset acknowledgement permits isolating a failed disk; an unconfirmed reset still stops the kernel. GPU recovery can disable the GUI, and stack guards do not provide an emergency trap stack. See the [detailed implementation plan](plan.md) and [compact progress list](plan_current.md) for algorithms, build results, and limits. The existing portable v1 ZIP does not include these source changes.
 
 ## Demo Video
 
@@ -41,13 +47,13 @@ The video follows a live QEMU session through the shell, processes, synchronizat
 
 ## Graphical Desktop
 
-When QEMU has a VirtIO GPU, tablet, and keyboard, WUWAOS draws a 1280×720 desktop with a Terminal icon. Click the icon to open a fixed-size window connected to the existing WUWAOS shell. The guest kernel handles keyboard input, line editing, ANSI screen updates, and window rendering; closing the window hides the session, while `exit` ends the shell. The original UART shell remains available in `make run`.
+When QEMU has a VirtIO GPU, tablet, and keyboard, WUWAOS draws a 1280×720 desktop with a Terminal icon. Each click opens a new shell window, up to four. Click a window to focus and raise it, drag its title to move it, and drag its lower-right corner to resize its viewport. Closing a window closes its TTY session; `exit` ends the shell and leaves its last display until the window is closed. The original UART shell remains available in `make run`.
 
 ![WUWAOS guest-rendered desktop Terminal showing shell commands](docs/images/wuwaos-terminal.png)
 
-The current source removes the solid offset shadow along the window's right and bottom edges. The screenshot and portable v1 release show the earlier styling; acceptance checks for this source adjustment are pending.
+The screenshot and portable v1 show the earlier single-window implementation and styling. The current multi-window and asynchronous rendering paths have not undergone visual or runtime validation.
 
-The Terminal accepts US keyboard input including Shift, Enter, Backspace, Tab, Ctrl+D, and arrow keys. It supports a fixed 100×30 character area and a subset of ANSI cursor, erase, color, alternate-screen, and visibility controls. It is a small kernel TTY, not a POSIX PTY. It has no resize, drag, clipboard, job control, or Ctrl+C support. [Graphical Terminal design and QEMU evidence](docs/SPEC-30-graphical-terminal.md) · [workstate screenshot](docs/images/wuwaos-terminal-workstate.png).
+The Terminal accepts US keyboard input including Shift, Enter, Backspace, Tab, Ctrl+D, and arrow keys. Its model remains 100×30 with a subset of ANSI cursor, erase, color, alternate-screen, and visibility controls. Smaller viewports clip cells; larger ones do not add rows or columns. It is a small kernel TTY with no POSIX PTY, clipboard, job control, or Ctrl+C support. [Historical Terminal design and QEMU evidence](docs/SPEC-30-graphical-terminal.md) · [workstate screenshot](docs/images/wuwaos-terminal-workstate.png).
 
 With the Windows portable release, open the desktop from PowerShell using `./Start-WUWAOS.cmd gui`. QEMU runs natively on Windows; a VNC viewer is not needed. See the [portable guide](docs/portable-windows.md) for extraction and build instructions.
 
@@ -113,23 +119,24 @@ The release includes a package/version manifest and SHA-256 checksum. It exclude
 
 GitHub's automatically generated **Source code** archives and a normal `git clone` contain only project files; the toolchain is supplied separately in the portable release asset.
 
-### Existing WSL environment
+### Boot the CLI from a WUFS disk in WSL
 
 The following example uses Windows PowerShell, WSL Ubuntu, and a checkout at `C:\programing\WUWAOS`. WSL needs Clang, LLD, llvm-objcopy, Make, Python 3, QEMU for RISC-V, and OpenSBI.
 
-Run in PowerShell:
+Open PowerShell and run these commands.
 
 ```powershell
-wsl -d Ubuntu -- bash -lc 'cd /mnt/c/programing/WUWAOS && make run'
+cd C:\programing\WUWAOS
+wsl -d Ubuntu -- make run-disk
 ```
 
-`make run` uses Clang in WSL to cross-compile the RISC-V program and then starts QEMU. Once the `wuwaos/>` prompt appears, enter `help` to see the available commands. Try `demo sync` to observe a parent and child process using synchronization primitives.
+This cross-compiles WUWAOS and installs `/boot/kernel.elf` in `build/wuwaos-cli.img`. OpenSBI starts the WUWAOS loader from read-only flash. The loader reads the kernel from the VirtIO disk and starts it. When `wuwaos/>` appears in the same terminal, try `echo hello` or `ls /boot`. Press **Ctrl+A**, release the keys, and press **X** to quit QEMU. The `exit` command ends the shell.
 
-To exit QEMU, press **Ctrl+A**, release the keys, and then press **X**. The `exit` command ends only the shell. The WUFS disk image is stored at `build/wuwaos.img`; its files persist across restarts, and `make clean` does not delete the disk image.
+The CLI disk preserves its files across launches and `make clean`. Disk boot uses one WUFS0002 image with swap disabled. If the journal has a pending transaction, use the direct kernel launch in the [WUFS recovery procedure](docs/SPEC-32-wufs-redo-journal.md#新磁碟與-pending-recovery-操作). For everyday direct kernel boot with a dedicated swap disk, run `wsl -d Ubuntu -- make run` from the same directory. That target uses `build/wuwaos.img` and `build/wuwaos-swap.img`.
 
 ## Filesystem Initialization Checks
 
-The current source protects unknown nonblank disks in both the kernel and the host image tool: a missing `WUFS0001` signature permits automatic initialization only after the media is confirmed to contain all zero bytes. These changes and the test entry below postdate portable v1; the existing release ZIP does not include them. The user confirmed completion of this verification on 2026-11-05; per-case console logs and hashes have not been archived, and fault-injection coverage remains outstanding.
+The current source preserves legacy `WUFS0001` images read-only and formats confirmed blank media as `WUFS0002`. WUFS0002 uses a bounded full-sector redo journal with flush barriers and boot-time replay. Unknown nonblank images and images with a pending or invalid journal are never rewritten by the host image tool. These changes postdate portable v1; the existing release ZIP does not include WUFS0002 or the journal and is not rebuilt by this source update. Details, new-disk commands, recovery steps, and scratch QEMU fault-injection results are in [Spec 32](docs/SPEC-32-wufs-redo-journal.md); the older initialization guard is in [Spec 31](docs/SPEC-31-filesystem-initialization-guard.md).
 
 From a source checkout with the portable environment, run these fixed commands in PowerShell:
 
@@ -146,7 +153,7 @@ See [Spec 31](docs/SPEC-31-filesystem-initialization-guard.md) for the algorithm
 
 ## External Interrupt Foundation
 
-The current source adds a PLIC supervisor interrupt dispatcher, FDT-based disk IRQ routing, device acknowledgement, and counters in `ps`. This stage retains synchronous polling for disk completion and the existing non-preemptible kernel policy; it does not yet implement asynchronous I/O. Build and QEMU verification are pending for this stage.
+The current source adds a PLIC supervisor interrupt dispatcher, FDT-based disk IRQ routing, device acknowledgement, and counters in `ps`. The dispatcher is integrated with the asynchronous block driver: IRQ notification and scheduler polling share the same completion validator. Per-device gates, events, bounce buffers, cancellation deferral, and bounded reset/offline handling follow the upstream implementation. The kernel remains non-preemptible.
 
 Use fresh test disks with either attachment order:
 
@@ -157,17 +164,18 @@ Use fresh test disks with either attachment order:
 
 In the guest, run `ps`, `ls /`, then `ps`. Confirm `PLIC=enabled`, an increase in the WUFS `handled` counter, and zero `unhandled`, `invalid`, and `budget` counters. After Ctrl+A then X, the test tool separately checks disk hashes. See [Spec 32](docs/SPEC-32-plic-external-interrupts.md) for scope, expected behavior, and remaining validation.
 
-The next prerequisite, [per-device request ownership](docs/SPEC-33-block-request-ownership.md), is also implemented pending user verification. Requests now retain an explicit device pointer and share one completion validator between polling and IRQ notification. In `ps`, each disk should show `state=idle`, matching `submitted` / `completed`, and zero `io_errors` / `protocol_errors`. Disk waits remain synchronous. The PLIC tests above remain pending; continuing implementation does not mark them as passed.
+The local [per-device request ownership prototype](docs/SPEC-33-block-request-ownership.md) has been integrated into the upstream asynchronous implementation. Requests now retain an explicit device pointer and share one completion validator between polling and IRQ notification. In `ps`, each disk should show `state=idle`, matching `submitted` / `completed`, and zero `io_errors` / `protocol_errors`. Runtime waits suspend the caller; polling remains available at boot and in the scheduler. See the [merge record](docs/merge-2026-11-10.md) for integration decisions and verification scope.
 
 ## Running a WUFS ELF Program
 
-With QEMU stopped, build the existing shell ELF and install it into the WUFS image from WSL:
+With QEMU stopped, use PowerShell in the project root to install the existing shell ELF into the CLI disk.
 
 ```powershell
-wsl -d Ubuntu -- bash -lc 'cd /mnt/c/programing/WUWAOS && make build/kernel-disk.elf && python3 tools/make_disk.py --image build/wuwaos.img --kernel build/kernel-disk.elf --install build/user.elf /bin/shell.elf'
+wsl -d Ubuntu -- make build/kernel-disk.elf build/user.elf
+wsl -d Ubuntu -- python3 tools/make_disk.py --image build/wuwaos-cli.img --kernel build/kernel-disk.elf --install build/user.elf /bin/shell.elf
 ```
 
-Start WUWAOS with `make run`, then enter `run /bin/shell.elf`. This opens another WUWAOS shell as a child; `exit` returns to its parent. The installer refuses to overwrite existing files. Never modify the image from the host while QEMU is using it.
+Start WUWAOS with `wsl -d Ubuntu -- make run-disk`, then enter `run /bin/shell.elf` at the guest prompt. This opens a child shell. Enter `exit` to return to its parent. The installer refuses to overwrite existing files. Stop QEMU before editing the disk from the host.
 
 This first loader accepts a restricted static ELF64 RV64 layout and the WUWAOS syscall ABI; it has no arguments, dynamic linker, or Linux compatibility. See [Spec 26](docs/SPEC-26-elf-exec.md) for the supported layout and validation.
 
@@ -176,6 +184,7 @@ This first loader accepts a restricted static ELF64 RV64 layout and the WUWAOS s
 The documentation and course notes linked below are currently written in Traditional Chinese.
 
 - [Getting started and topic chapters](docs/index.md): boot, processes, scheduling, memory, I/O, file systems, and user programs.
+- Interactive teaching chapters: [Block Async I/O](docs/topics/block-async.md), [FD/OFD sharing](docs/topics/file-descriptors.md), [paging and swap](docs/topics/paging.md), and [journal/atomic replacement](docs/topics/journal.md). Step through explanatory models alongside parameter and function references; these are not live QEMU traces.
 - [Windows portable environment](docs/portable-windows.md): offline builds, native QEMU, packaging, checksums, and Release uploads.
 - [Synchronization demo](docs/SPEC-23-sync-demo.md): observing mutex and semaphore blocking and wakeup.
 - [Code and architecture guide](docs/CODE_GUIDE.md): the responsibilities and design of each source file.

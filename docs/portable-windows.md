@@ -63,9 +63,9 @@ README 的 [Windows portable release](https://github.com/johnson931128/WUWAOS#wi
 
 第二行先接 swap 再接 WUFS，用來檢查 IRQ 路由沒有寫死磁碟順序。在客體依序輸入 `ps`、`ls /`、`ps`，確認 `PLIC=enabled`、WUFS `handled` 增加，以及 `unhandled`／`invalid`／`budget` 維持零。退出方式與磁碟雜湊檢查同上；`PASS` 並不代替 IRQ 計數驗證。
 
-測試提醒保留：本階段尚未驗證，使用者已要求先繼續實作。[Spec 33](./SPEC-33-block-request-ownership.md) 另加入磁碟請求所有權與完成檢查；相同操作還要確認每個磁碟 `state=idle`、`submitted=completed`、`io_errors=0`、`protocol_errors=0`。仍為同步磁碟等待，完整待驗清單見該文件。
+2026-11-10 整合時已通過基本開機、磁碟順序互換與初始化保護檢查，故障注入仍待驗證，範圍見[合併紀錄](./merge-2026-11-10.md)。[請求所有權原型](./SPEC-33-block-request-ownership.md) 保留合併前的設計背景。正常閒置時應確認每個磁碟 `state=idle`、`submitted=completed`、`io_errors=0`、`protocol_errors=0`；合併後沿用非同步 gate/event/bounce 與 reset/offline。
 
-目前磁碟完成仍採同步輪詢，鍵盤與 GPU 也尚未接入中斷；本項驗證不能宣稱已完成非同步 I/O。流程、計數說明與限制見 [Spec 32](./SPEC-32-plic-external-interrupts.md)。這些後續原始碼變更不會自動更新既有 Release ZIP。
+磁碟 IRQ 與 scheduler polling 共用完成檢查，runtime caller 透過 event 睡眠。鍵盤與 GPU 尚未接入 PLIC。流程、計數說明與限制見 [Spec 32](./SPEC-32-plic-external-interrupts.md)。這些後續原始碼變更不會自動更新既有 Release ZIP。
 
 ## 授權與套件來源
 

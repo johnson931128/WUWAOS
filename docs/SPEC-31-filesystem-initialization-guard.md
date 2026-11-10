@@ -22,7 +22,7 @@
 
 這是開機期間的檢查，檢查與格式化之間不能有其他寫入者。工程註解記錄了此條件、回傳契約、完整掃描原因與容量截斷限制。
 
-原始碼：[kernel/fs.c](https://github.com/johnson931128/WUWAOS/blob/main/kernel/fs.c)。
+原始碼：[kernel/fs.c](https://github.com/johnson931128/WUWAOS/blob/800a805/kernel/fs.c)。
 
 ## 主機映像工具
 

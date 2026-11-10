@@ -1,5 +1,7 @@
 # Spec 06：WUWAOS 簡易檔案系統與磁碟 I/O
 
+> 本文保留最初的檔案系統實作與直接開機驗收。現行 CLI 也可由 WUFS 的 `/boot/kernel.elf` 啟動。 [現行開機流程](./topics/boot.md)
+
 ## 目標
 
 在 QEMU 上接入可持久保存的虛擬磁碟，並建立 WUWAOS 自有的簡易檔案系統。Linux 風格的 `/bin`、`/boot`、`/dev`、`/home/user` 只代表目錄命名慣例，不要求 Linux 格式相容。

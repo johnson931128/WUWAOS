@@ -22,13 +22,13 @@ Spec 01／02 以獨立文件保留；本文件為目前規格。保留前階段�
 | --- | --- |
 | help | 顯示指令與限制 |
 | ps | 列出有效 PCB 的 PID、父 PID、名稱、狀態、等待原因與可用欄位數 |
-| pcb <pid> | 顯示特定 PCB 的頁表、堆疊、保存指令位址、等待資料、結束碼、管道端點 |
+| `pcb <pid>` | 顯示特定 PCB 的頁表、堆疊、保存指令位址、等待資料、結束碼、管道端點 |
 | spawn worker | 背景建立工作程式：yield → sleep(7) → 喚醒後結束 |
 | spawn quick | 背景建立立即完成的子行程，便於觀察 Zombie（待回收） |
 | yield | shell 主動讓出 CPU |
-| wakeup <channel> | 通知事件通道，顯示喚醒人數 |
-| wait <pid> | 等待直接子行程並回收，顯示 PID 與結束碼 |
-| kill <pid> | 結束 shell 的直接子行程（不允許殺 PID 1／自己），關閉管道並留下可 wait 的結果 -9 |
+| `wakeup <channel>` | 通知事件通道，顯示喚醒人數 |
+| `wait <pid>` | 等待直接子行程並回收，顯示 PID 與結束碼 |
+| `kill <pid>` | 結束 shell 的直接子行程（不允許殺 PID 1／自己），關閉管道並留下可 wait 的結果 -9 |
 | trace on/off | 開關子行程狀態轉換紀錄；預設開啟。shell 自身不列追蹤，避免打斷提示字元，可用 pcb 1 查閱 |
 | writer \| reader | 前景建立兩個行程與一條真實 pipe，等待兩者結束並回收 |
 | exit | 結束 shell；Ctrl+A，再按 X 仍可離開 QEMU |

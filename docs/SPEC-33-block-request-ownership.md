@@ -1,5 +1,7 @@
 # Spec 33：磁碟請求所有權與完成檢查
 
+> 2026-11-10 合併註記：本文記錄本機分支的同步原型。現行程式已移植到遠端模組架構，磁碟使用 KernelGate、event、bounce buffer 與有界 reset/offline；IRQ 與 polling 共用 `poll_device`。FS／VM 使用遠端 KernelGate；本機 mutex 留在 `kernel/proc/kmutex.*` 與主機測試作為獨立原型，未接入 runtime。現況與驗證見[合併紀錄](./merge-2026-11-10.md)。
+
 狀態：已實作，核心編譯與 QEMU 驗證待使用者執行。使用者同意先繼續實作，Spec 32 的 PLIC 測試仍保留為待辦，沒有視為通過。
 
 ## 為什麼先處理這一層

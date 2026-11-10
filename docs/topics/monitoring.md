@@ -36,7 +36,7 @@ CPU task 是排程工作占用率：包含行程被派發期間的使用者程�
 
 workstate 是獨立內嵌 user image。Shell fork 後 exec 此 image，所以監測行程會占一個 PCB，表格中的 `workstate` 列包含畫面刷新開銷。它取得 raw console，檢查鍵盤後以 sleep_ms 休眠 50 ms，再檢查更新時間；不在使用者模式持續忙等一秒。按 q 正常返回 shell；若被 kill，核心也會釋放 raw ownership 並退出 alternate screen。16 個 PCB 額滿時命令顯示 fork 錯誤。
 
-目前定時等待仍由核心排程迴圈檢查 deadline。同步磁碟 I/O 或其他行程的時間片可能延後畫面更新與 q 的處理，不是即時期限保證。其他行程的終端輸出可能交錯，下次更新會重畫。
+`workstate_snapshot` 在 VM Gate 內讀取 PCB 與頁面用量，離開 Gate 後才複製結果到使用者記憶體；遇到其他 VM 操作時會在原 syscall stack 等待。定時等待仍由核心排程迴圈檢查 deadline；runtime 磁碟等待已會讓出 CPU，但 VM Gate 競爭、CPU 繪圖或其他行程的時間片仍可能延後畫面更新與 q 的處理，不是即時期限保證。同一終端的其他輸出可能交錯，下次更新會重畫。
 
 ## 操作與原始碼
 
@@ -48,4 +48,4 @@ workstate
 
 可以同時看到等待中的 worker 與待回收的 quick。按 q 回 shell 後，以實際 PID 執行 wakeup／wait／kill。既有 counter 會主動 yield，短工作可能在一秒取樣前就結束，不必然顯示高 CPU%。真正無 yield 的觀察驗收使用既有映像中的迴圈與 QEMU 偵錯介面，見 [Spec 17](../SPEC-17-workstate.md)，沒有新增測試程式。
 
-原始碼：[使用者畫面](https://github.com/johnson931128/WUWAOS/blob/main/user/workstate.c)、[核心快照與計時](https://github.com/johnson931128/WUWAOS/blob/main/kernel/workstate.c)、[共用資料格式](https://github.com/johnson931128/WUWAOS/blob/main/include/workstate_info.h)。概念參考 notes/ch3 Process.md、ch5 CPU schedueling.md 與 ch10 Virtual Momory.md。
+原始碼：[使用者畫面](https://github.com/johnson931128/WUWAOS/blob/main/user/apps/workstate/workstate.c)、[核心快照與計時](https://github.com/johnson931128/WUWAOS/blob/main/kernel/proc/workstate.c)、[共用資料格式](https://github.com/johnson931128/WUWAOS/blob/main/include/workstate_info.h)。概念參考 notes/ch3 Process.md、ch5 CPU schedueling.md 與 ch10 Virtual Momory.md。

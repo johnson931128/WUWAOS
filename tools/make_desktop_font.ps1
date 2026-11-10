@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$FontPath,
-    [string]$OutputPath = (Join-Path $PSScriptRoot '../kernel/font_terminal.h')
+    [string]$OutputPath = (Join-Path $PSScriptRoot '../ui/assets/font_terminal.h')
 )
 
 # Windows-only asset generation; normal OS builds use the checked-in header.

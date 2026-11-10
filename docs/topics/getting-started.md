@@ -14,7 +14,20 @@ QEMU 的 virt 機型提供的是指定的虛擬硬體。WUWAOS 仍須有對應�
 
 ## 建置與啟動
 
-### Windows 免安裝環境
+### 目前原始碼的 CLI 磁碟開機
+
+WSL Ubuntu 需備有 Clang、LLD、llvm-objcopy、Make、Python 3、QEMU RISC-V 與 OpenSBI。從 PowerShell 進入你的專案目錄，再啟動 QEMU。
+
+```powershell
+cd C:\programing\WUWAOS
+wsl -d Ubuntu -- make run-disk
+```
+
+這條指令在 WSL 交叉編譯，將核心安裝到 `build/wuwaos-cli.img`。QEMU 啟動 OpenSBI 後，flash 裡的載入器從磁碟讀取 `/boot/kernel.elf`，同一個 PowerShell 視窗最後會顯示 `wuwaos/>`。實際交接順序見[開機流程](./boot.md)。
+
+此路徑使用一顆 WUFS0002 磁碟，停用 swap，並要求 journal 無待重播紀錄。`make clean` 保留磁碟與裡面的檔案。需要用 QEMU 直接載入核心並附加獨立 swap 磁碟時，可執行 `wsl -d Ubuntu -- make run`，它使用 `build/wuwaos.img` 與 `build/wuwaos-swap.img`。若要重播待處理的 journal，請使用跳過主機映像更新的[復原流程](../SPEC-32-wufs-redo-journal.md#新磁碟與-pending-recovery-操作)。
+
+### Windows 免安裝版本
 
 下載 [Windows portable v1 Release](https://github.com/johnson931128/WUWAOS/releases/tag/portable-windows-v1) 的完整 ZIP 並解壓，環境就已準備完成。下載與校驗指令見 [Windows portable 指南](../portable-windows.md)。在專案根目錄的 PowerShell 執行：
 
@@ -26,18 +39,7 @@ QEMU 的 virt 機型提供的是指定的虛擬硬體。WUWAOS 仍須有對應�
 
 需要操作 Makefile 時，可先用 `.\Start-WUWAOS.cmd shell` 進入隨附環境，再輸入 `make`、`make run` 或 `make run-gui GUI_DISPLAY=gtk`。一般啟動不必手動設定 Bash 路徑或環境變數。
 
-### 既有 WSL 環境
-
-WSL Ubuntu 需備有 Clang、LLD、llvm-objcopy、Make、qemu-system-riscv64 及 OpenSBI。既有 OS 驗收環境為 Clang 18、QEMU 8.2.2、OpenSBI 1.3。
-
-在專案根目錄 `C:\programing\WUWAOS` 的 PowerShell 執行：
-
-```powershell
-wsl -d Ubuntu -- bash -lc 'cd /mnt/c/programing/WUWAOS && make'
-wsl -d Ubuntu -- bash -lc 'cd /mnt/c/programing/WUWAOS && make run'
-```
-
-Makefile 先建立核心、使用者映像及磁碟，再啟動 QEMU。WUFS 磁碟為 `build/wuwaos.img`，交換區為 `build/wuwaos-swap.img`。`make clean` 保留磁碟；不要為重新建置而手動刪除它們，裡面可能有你的檔案。
+此處的 v1 ZIP 使用該版本內的直接開機流程。`make run-disk` 適用於上方的目前原始碼與 WSL 流程。
 
 ### 最新原始碼的磁碟保護與檢查
 

@@ -1,0 +1,17 @@
+- 詳細步驟與方法：[plan.md](./plan.md)
+- CLI 磁碟開機已驗收。PowerShell 在專案根目錄執行 `wsl -d Ubuntu -- make run-disk`，由 OpenSBI 與 flash 載入器從一顆 WUFS 磁碟啟動至 `wuwaos/>`。已驗證新磁碟、重啟後讀回檔案及缺少磁碟時停止開機。詳見 [CLI 磁碟開機](./plan.md#cli-磁碟開機2026-11-09)。
+- CLI 文件已同步並通過 VitePress 建置。來源 `8b8ce26` 已推送至 `main`，`gh-pages` `4725bb6` 部署成功，已核對公開首頁、入門、開機、歷程與 journal 復原頁的更新內容。 [部署紀錄](https://github.com/johnson931128/WUWAOS/actions/runs/42569717948)
+- 整體進度：第 1 階段、2A、2B1 保留既有驗收；2026-11-08 的 2B2、2C 與第 3–6 階段已實作、整合編譯成功，runtime NOT_RUN。
+- 第 1 階段：多 TTY/session 已完成並有既有 QEMU/GDB 驗收；後續四視窗見第 5 階段。
+- 第 2 階段：已實作 Block gate/event/bounce 非同步請求、Swap PTE 撤銷／回復、GPU shadow/backing 與非阻塞 present；runtime NOT_RUN。
+- 第 3 階段：已實作 Block 安全 reset／offline 與 GPU 有界復原／降級；故障路徑 NOT_RUN。
+- 第 4 階段：已實作 process/scheduler 真實 guard page，生命週期靜態 review；尚無 emergency trap stack，runtime NOT_RUN。
+- 第 5 階段：已實作四視窗、焦點／z-order／拖曳／viewport resize／session close；VT 仍固定 100×30，GUI NOT_RUN。
+- 第 6 階段：已實作 fs_replace／Fan 安全替換、ERR_UNCERTAIN 與 UART 統一診斷；儲存／故障／重播 NOT_RUN。
+- 已完成：Spec 33 原始碼分層。
+- 依使用者指示分階段 agent 自行 commit，主代理整合 review／分批 push；未跑項目一律保留 NOT_RUN。
+- 2026-11-08：恢復剩餘 2B2、2C 與第 3–6 階段；實際演算法與依賴見 [plan.md](./plan.md#2026-11-08-剩餘階段執行規格與實際演算法)。
+- 2026-11-08 的 2B2、2C 與第 3–6 階段僅做必要整合編譯與文件部署建置，runtime 驗證標示 NOT_RUN。
+- 文件互動化第一輪：Block Async I/O、FD/OFD、換頁／Swap、WUFS journal 四章已分章 commit、建置部署；互動元件、參數／函式表與筆記引用已接入；互動／視覺 NOT_RUN，詳見 [plan.md](./plan.md#文件互動化第一輪2026-11-08)。
+- 全站改版：Phase 1 研究／設計規範已整理，Phase 2–5 待實作；首頁＋12 主章＋4 labs，詳細見 [plan.md](./plan.md#全站-visual-first-textbook-改版2026-11-08)。
+- 全站改版授權網站 build／視覺／互動／mobile 驗收，範圍限網站，不新增測試程式碼。

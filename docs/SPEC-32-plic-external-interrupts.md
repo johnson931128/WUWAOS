@@ -1,5 +1,7 @@
 # Spec 32：PLIC 外部中斷派發骨架
 
+> 2026-11-10 合併註記：本文記錄本機分支的同步原型。現行程式已移植到遠端模組架構，磁碟使用 KernelGate、event、bounce buffer 與有界 reset/offline；IRQ 與 polling 共用 `poll_device`。FS／VM 使用遠端 KernelGate；本機 mutex 留在 `kernel/proc/kmutex.*` 與主機測試作為獨立原型，未接入 runtime。現況與驗證見[合併紀錄](./merge-2026-11-10.md)。
+
 狀態：演算法已獲同意，第一階段程式碼已實作；編譯與 QEMU 驗證待使用者執行。
 
 ## 本階段範圍
@@ -77,7 +79,7 @@ IRQ: PLIC=enabled external=... claims=... unhandled=0 invalid=0 budget=0
 
 ## 程式碼與規格
 
-- [kernel/fdt.c](https://github.com/johnson931128/WUWAOS/blob/main/kernel/fdt.c)、[kernel/irq.c](https://github.com/johnson931128/WUWAOS/blob/main/kernel/irq.c)：FDT 及 PLIC 派發。
-- [kernel/trap.c](https://github.com/johnson931128/WUWAOS/blob/main/kernel/trap.c)、[kernel/block.c](https://github.com/johnson931128/WUWAOS/blob/main/kernel/block.c)：外部陷阱及裝置 ACK。
+- [arch/riscv/fdt.c](https://github.com/johnson931128/WUWAOS/blob/main/arch/riscv/fdt.c)、[arch/riscv/irq.c](https://github.com/johnson931128/WUWAOS/blob/main/arch/riscv/irq.c)：FDT 及 PLIC 派發。
+- [arch/riscv/trap.c](https://github.com/johnson931128/WUWAOS/blob/main/arch/riscv/trap.c)、[drivers/virtio/block.c](https://github.com/johnson931128/WUWAOS/blob/main/drivers/virtio/block.c)：外部陷阱及裝置 ACK。
 - [RISC-V PLIC claim](https://docs.riscv.org/reference/plic/v1.0.0/plic-claims.html)、[PLIC completion](https://docs.riscv.org/reference/plic/v1.0.0/plic-completion.html)。
 - [QEMU virt 平台](https://www.qemu.org/docs/master/system/riscv/virt.html)、[VirtIO 1.3](https://docs.oasis-open.org/virtio/virtio/v1.3/virtio-v1.3.html)。
