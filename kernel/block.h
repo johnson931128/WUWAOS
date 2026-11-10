@@ -7,6 +7,9 @@
 #define BLOCK_IO_TIMEOUT_MS 5000UL
 
 int block_init_from_fdt(const void *fdt);
+void block_register_irqs(void);
+/* Single-hart, SIE=0 diagnostic snapshot; same policy as request submission. */
+void block_print_stats(void);
 unsigned int block_mmio_count(void);
 uintptr_t block_mmio_base(unsigned int index);
 int block_read(uint32_t sector, void *buffer);

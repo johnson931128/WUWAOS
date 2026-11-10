@@ -1,6 +1,10 @@
 #include "scheduler.h"
 #include "console.h"
 #include "timer.h"
+#include "irq.h"
+#include "block.h"
+#include "fs.h"
+#include "vm.h"
 
 typedef struct {
     Process *head;
@@ -89,4 +93,8 @@ void scheduler_print_ready(void) {
         }
     }
     console_putc('\n');
+    irq_print_stats();
+    block_print_stats();
+    fs_print_lock_stats();
+    vm_print_lock_stats();
 }

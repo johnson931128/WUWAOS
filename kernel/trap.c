@@ -4,10 +4,12 @@
 #include "syscall.h"
 #include "vm.h"
 #include "timer.h"
+#include "irq.h"
 
 #define SSTATUS_SPP (1UL << 8)
 #define USER_ECALL 8
 #define SUPERVISOR_TIMER ((1UL << 63) | 5UL)
+#define SUPERVISOR_EXTERNAL ((1UL << 63) | 9UL)
 
 extern void trap_entry(void);
 
@@ -20,6 +22,11 @@ TrapFrame *trap_handler(TrapFrame *frame) {
     const int from_user = (frame->sstatus & SSTATUS_SPP) == 0;
     if (from_user) {
         process_current()->frame = frame;
+    }
+    if (frame->scause == SUPERVISOR_EXTERNAL) {
+        irq_dispatch();
+        /* An interrupt retries the interrupted PC. Kernel traps may have no current PCB. */
+        return from_user ? process_resume() : frame;
     }
     if (from_user && frame->scause == SUPERVISOR_TIMER) {
         timer_interrupt();

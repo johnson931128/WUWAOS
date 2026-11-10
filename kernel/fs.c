@@ -3,6 +3,7 @@
 #include "console.h"
 #include "process.h"
 #include "io.h"
+#include "kmutex.h"
 #include <stdint.h>
 
 #define FS_MAGIC "WUFS0001"
@@ -47,6 +48,13 @@ _Static_assert(sizeof(DirectoryEntry) == FS_NAME_SIZE + sizeof(uint32_t), "WUFS 
 
 static Superblock superblock;
 static int mounted;
+/* One lock spans the full metadata operation, including every sector I/O.
+ * It is never dropped around block_read/write: bitmap/inode updates are a unit.
+ * Internal helpers call other helpers, never public lock-taking entry points.
+ */
+static KernelMutex fs_mutex = KMUTEX_INITIALIZER("FS", KMUTEX_RANK_FS);
+static long fs_mkdir_locked(const char *path);
+static long fs_touch_locked(const char *path);
 
 static int read_sector(uint32_t sector, void *buffer) {
     return block_read(sector, buffer);
@@ -283,7 +291,7 @@ static int path_lookup(const char *path, uint32_t *number) {
     return 0;
 }
 
-long fs_is_directory(const char *path) {
+static long fs_is_directory_locked(const char *path) {
     uint32_t number;
     int result = path_lookup(path, &number);
     if (result < 0) return result;
@@ -400,7 +408,7 @@ static int format_filesystem(uint32_t sectors) {
     return 0;
 }
 
-int fs_init(void) {
+static int fs_init_locked(void) {
     /* A failed initialization must not retain a previous mounted state. */
     mounted = 0;
     uint8_t sector[FS_SECTOR_SIZE] = {0};
@@ -439,11 +447,11 @@ int fs_init(void) {
             return -1;
         }
         mounted = 1;
-        (void)fs_mkdir("/bin");
-        (void)fs_mkdir("/boot");
-        (void)fs_mkdir("/dev");
-        (void)fs_mkdir("/home");
-        (void)fs_mkdir("/home/user");
+        (void)fs_mkdir_locked("/bin");
+        (void)fs_mkdir_locked("/boot");
+        (void)fs_mkdir_locked("/dev");
+        (void)fs_mkdir_locked("/home");
+        (void)fs_mkdir_locked("/home/user");
         console_puts("[fs] Created /bin /boot /dev /home/user\n");
     } else {
         const uint32_t *fields = (const uint32_t *)sector;
@@ -464,7 +472,7 @@ int fs_init(void) {
     return 0;
 }
 
-long fs_list(const char *path, char *output, size_t capacity) {
+static long fs_list_locked(const char *path, char *output, size_t capacity) {
     uint32_t number;
     const int found = path_lookup(path, &number);
     if (found < 0) return found;
@@ -488,12 +496,12 @@ long fs_list(const char *path, char *output, size_t capacity) {
     return (long)used;
 }
 
-long fs_mkdir(const char *path) {
+static long fs_mkdir_locked(const char *path) {
     const long result = create_node(path, FS_TYPE_DIRECTORY);
     return result < 0 ? result : 0;
 }
 
-long fs_touch(const char *path) {
+static long fs_touch_locked(const char *path) {
     uint32_t number;
     const int result = path_lookup(path, &number);
     if (result == 0) {
@@ -560,7 +568,7 @@ static int inode_release(uint32_t number, Inode *inode) {
     return 0;
 }
 
-long fs_remove(const char *path) {
+static long fs_remove_locked(const char *path) {
     if (!mounted) return -22;
     uint32_t parent_number, index;
     char name[FS_NAME_SIZE] = {0};
@@ -590,7 +598,7 @@ long fs_remove(const char *path) {
 
 /* Validate the whole tree before deleting: no root, cycles or live CWDs.
    A bounded breadth-first list reversed for deletion gives child-before-parent. */
-long fs_remove_tree(const char *path) {
+static long fs_remove_tree_locked(const char *path) {
     if (!mounted) return -22;
     uint32_t parent_number, index;
     char name[FS_NAME_SIZE] = {0};
@@ -654,7 +662,7 @@ long fs_remove_tree(const char *path) {
     return 0;
 }
 
-long fs_copy(const char *source, const char *destination) {
+static long fs_copy_locked(const char *source, const char *destination) {
     if (!mounted) return -22;
     uint32_t source_number, parent_number, index = 0;
     int error = path_lookup(source, &source_number);
@@ -712,7 +720,7 @@ discard:
     return error;
 }
 
-long fs_size(const char *path) {
+static long fs_size_locked(const char *path) {
     uint32_t number;
     int error = path_lookup(path, &number);
     if (error < 0) return error;
@@ -721,7 +729,7 @@ long fs_size(const char *path) {
     return inode.type == FS_TYPE_FILE ? (long)inode.size : -21;
 }
 
-long fs_read(const char *path, size_t offset, void *buffer, size_t length) {
+static long fs_read_locked(const char *path, size_t offset, void *buffer, size_t length) {
     uint32_t number;
     const int found = path_lookup(path, &number);
     if (found < 0) return found;
@@ -745,7 +753,7 @@ long fs_read(const char *path, size_t offset, void *buffer, size_t length) {
     return (long)copied;
 }
 
-long fs_write(const char *path, const void *buffer, size_t length) {
+static long fs_write_locked(const char *path, const void *buffer, size_t length) {
     if (length > (FS_DIRECT + FS_INDIRECT * FS_POINTERS_PER_SECTOR) * FS_SECTOR_SIZE) return -27;
     uint32_t number;
     int found = path_lookup(path, &number);
@@ -777,12 +785,12 @@ long fs_write(const char *path, const void *buffer, size_t length) {
     return (long)length;
 }
 
-long fs_open_inode(const char *path, int create, uint32_t *number) {
+static long fs_open_inode_locked(const char *path, int create, uint32_t *number) {
     if (!mounted) return -22;
     uint32_t inode_number;
     int found = path_lookup(path, &inode_number);
     if (found == -2 && create) {
-        const long created = fs_touch(path);
+        const long created = fs_touch_locked(path);
         if (created < 0) return created;
         found = path_lookup(path, &inode_number);
     }
@@ -794,13 +802,13 @@ long fs_open_inode(const char *path, int create, uint32_t *number) {
     return 0;
 }
 
-long fs_inode_size(uint32_t number) {
+static long fs_inode_size_locked(uint32_t number) {
     Inode inode;
     if (inode_read(number, &inode) < 0) return -5;
     return inode.type == FS_TYPE_FILE ? (long)inode.size : -21;
 }
 
-long fs_read_inode(uint32_t number, size_t offset, void *buffer, size_t length) {
+static long fs_read_inode_locked(uint32_t number, size_t offset, void *buffer, size_t length) {
     Inode inode;
     if (inode_read(number, &inode) < 0) return -5;
     if (inode.type != FS_TYPE_FILE) return -21;
@@ -822,7 +830,7 @@ long fs_read_inode(uint32_t number, size_t offset, void *buffer, size_t length) 
     return (long)copied;
 }
 
-long fs_write_inode(uint32_t number, size_t offset, const void *buffer, size_t length) {
+static long fs_write_inode_locked(uint32_t number, size_t offset, const void *buffer, size_t length) {
     const size_t maximum = (FS_DIRECT + FS_INDIRECT * FS_POINTERS_PER_SECTOR) * FS_SECTOR_SIZE;
     if (offset > maximum || length > maximum - offset || offset + length > UINT32_MAX) return -27;
     Inode inode;
@@ -850,10 +858,109 @@ long fs_write_inode(uint32_t number, size_t offset, const void *buffer, size_t l
     return copied ? (long)copied : (length == 0 ? 0 : failure);
 }
 
-long fs_truncate_inode(uint32_t number) {
+static long fs_truncate_inode_locked(uint32_t number) {
     Inode inode;
     if (inode_read(number, &inode) < 0 || inode.type != FS_TYPE_FILE) return -21;
     if (inode_free_blocks(&inode) < 0) return -5;
     inode.size = 0;
     return inode_write(number, &inode) < 0 ? -5 : 0;
 }
+
+/* Keep release outside helpers, so all their early error returns release once. */
+int fs_init(void) {
+    kmutex_lock(&fs_mutex);
+    const int result = fs_init_locked();
+    kmutex_unlock(&fs_mutex);
+    return result;
+}
+long fs_is_directory(const char *path) {
+    kmutex_lock(&fs_mutex);
+    const long result = fs_is_directory_locked(path);
+    kmutex_unlock(&fs_mutex);
+    return result;
+}
+long fs_list(const char *path, char *output, size_t capacity) {
+    kmutex_lock(&fs_mutex);
+    const long result = fs_list_locked(path, output, capacity);
+    kmutex_unlock(&fs_mutex);
+    return result;
+}
+long fs_mkdir(const char *path) {
+    kmutex_lock(&fs_mutex);
+    const long result = fs_mkdir_locked(path);
+    kmutex_unlock(&fs_mutex);
+    return result;
+}
+long fs_touch(const char *path) {
+    kmutex_lock(&fs_mutex);
+    const long result = fs_touch_locked(path);
+    kmutex_unlock(&fs_mutex);
+    return result;
+}
+long fs_size(const char *path) {
+    kmutex_lock(&fs_mutex);
+    const long result = fs_size_locked(path);
+    kmutex_unlock(&fs_mutex);
+    return result;
+}
+long fs_read(const char *path, size_t offset, void *buffer, size_t length) {
+    kmutex_lock(&fs_mutex);
+    const long result = fs_read_locked(path, offset, buffer, length);
+    kmutex_unlock(&fs_mutex);
+    return result;
+}
+long fs_write(const char *path, const void *buffer, size_t length) {
+    kmutex_lock(&fs_mutex);
+    const long result = fs_write_locked(path, buffer, length);
+    kmutex_unlock(&fs_mutex);
+    return result;
+}
+long fs_remove(const char *path) {
+    kmutex_lock(&fs_mutex);
+    const long result = fs_remove_locked(path);
+    kmutex_unlock(&fs_mutex);
+    return result;
+}
+long fs_remove_tree(const char *path) {
+    kmutex_lock(&fs_mutex);
+    const long result = fs_remove_tree_locked(path);
+    kmutex_unlock(&fs_mutex);
+    return result;
+}
+long fs_copy(const char *source, const char *destination) {
+    kmutex_lock(&fs_mutex);
+    const long result = fs_copy_locked(source, destination);
+    kmutex_unlock(&fs_mutex);
+    return result;
+}
+long fs_open_inode(const char *path, int create, uint32_t *number) {
+    kmutex_lock(&fs_mutex);
+    const long result = fs_open_inode_locked(path, create, number);
+    kmutex_unlock(&fs_mutex);
+    return result;
+}
+long fs_inode_size(uint32_t number) {
+    kmutex_lock(&fs_mutex);
+    const long result = fs_inode_size_locked(number);
+    kmutex_unlock(&fs_mutex);
+    return result;
+}
+long fs_read_inode(uint32_t number, size_t offset, void *buffer, size_t length) {
+    kmutex_lock(&fs_mutex);
+    const long result = fs_read_inode_locked(number, offset, buffer, length);
+    kmutex_unlock(&fs_mutex);
+    return result;
+}
+long fs_write_inode(uint32_t number, size_t offset, const void *buffer, size_t length) {
+    kmutex_lock(&fs_mutex);
+    const long result = fs_write_inode_locked(number, offset, buffer, length);
+    kmutex_unlock(&fs_mutex);
+    return result;
+}
+long fs_truncate_inode(uint32_t number) {
+    kmutex_lock(&fs_mutex);
+    const long result = fs_truncate_inode_locked(number);
+    kmutex_unlock(&fs_mutex);
+    return result;
+}
+void fs_print_lock_stats(void) { kmutex_print(&fs_mutex); }

@@ -31,6 +31,9 @@ typedef struct ProcessControlBlock {
     uint64_t cpu_ticks, run_started, wake_at;
     struct ProcessControlBlock *sync_next;
     long sync_wait_handle;
+    /* Kernel lock queues must never reuse user synchronization queue links. */
+    struct KernelMutex *kernel_locks, *kernel_waiting;
+    struct ProcessControlBlock *kernel_wait_next;
     long exit_status;
     uintptr_t page_table;
     uintptr_t kernel_stack_top;

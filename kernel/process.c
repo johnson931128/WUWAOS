@@ -11,6 +11,7 @@
 #include "fs.h"
 #include "path.h"
 #include "sync.h"
+#include "kmutex.h"
 #include "elf.h"
 #include <limits.h>
 
@@ -416,6 +417,7 @@ long process_wait(long pid, uintptr_t status_address) {
 }
 
 static void terminate(Process *process, long status) {
+    kmutex_process_cleanup(process);
     const int gui_terminal = process->gui_terminal_leader;
     const int gui_console = process->fd_table[0] == IO_GUI_CONSOLE_IN &&
         process->fd_table[1] == IO_GUI_CONSOLE_OUT;
@@ -469,6 +471,8 @@ long process_kill(long pid) {
         target->parent_pid != process_current()->pid || target->state == PROCESS_ZOMBIE) {
         return ERR_INVALID;
     }
+    /* Kernel transactions cannot be abandoned or "unlocked" halfway through. */
+    if (kmutex_process_busy(target)) return ERR_BUSY;
     terminate(target, -9);
     return 0;
 }
@@ -529,7 +533,8 @@ static const char *waiting_for(const Process *process) {
         return "channel";
     }
     if (process->wait_reason == WAIT_TIMER) return "timer";
-    if (process->wait_reason == WAIT_SYNC) return "sync";
+    if (process->wait_reason == WAIT_SYNC)
+        return process->kernel_waiting ? process->kernel_waiting->name : "sync";
     return (process->io_operation == IO_CONSOLE_READ || process->io_operation == IO_CONSOLE_RAW ||
             process->io_operation == IO_GUI_CONSOLE_READ || process->io_operation == IO_GUI_CONSOLE_RAW) ? "console" :
            process->io_operation == IO_PIPE_READ ? "pipe-read" : "pipe-write";

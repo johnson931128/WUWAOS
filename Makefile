@@ -2,7 +2,7 @@ CC := clang
 QEMU := qemu-system-riscv64
 OBJCOPY := llvm-objcopy
 TARGET := build/kernel.elf
-KERNEL_SOURCES := main console trap sbi timer page swap vm process scheduler sync workstate syscall elf io splash block gpu desktop input fs path memory
+KERNEL_SOURCES := main console trap sbi timer page swap vm process scheduler sync workstate syscall elf io splash block gpu desktop input fs path memory fdt irq kmutex
 OBJECTS := build/entry.o build/trap_entry.o build/swtch.o build/user_image.o $(addprefix build/kernel_,$(addsuffix .o,$(KERNEL_SOURCES)))
 USER_OBJECTS := build/user_entry.o build/user_api.o build/user_print.o build/user_demo.o build/user_sync_demo.o build/user_shell.o build/user_shell_exec.o
 APP_OBJECTS := build/user_entry.o build/user_api.o build/user_print.o build/user_app.o
@@ -14,6 +14,13 @@ LDFLAGS := $(ARCH_FLAGS) -fuse-ld=lld -nostdlib -static -Wl,--build-id=none
 
 .PHONY: all run run-gui run-gui-vnc run-gui-vnc-session disk-image clean
 all: $(TARGET)
+
+# Native host test only; never uses ARCH_FLAGS or touches the guest disks/kernel.
+HOST_CC ?= clang
+.PHONY: test-kmutex
+test-kmutex: | build
+	$(HOST_CC) -std=c11 -O0 -g -Wall -Wextra -Werror -DWUWAOS_KMUTEX_TEST -Iinclude -Ikernel tests/kmutex_test.c kernel/kmutex.c -o build/kmutex-host-test.exe
+	./build/kmutex-host-test.exe
 
 build:
 	mkdir -p build

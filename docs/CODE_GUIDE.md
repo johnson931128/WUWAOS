@@ -44,6 +44,8 @@ CPU 執行記憶體中的機器碼，不知道來源檔名。OpenSBI 負責早�
 | kernel/clock.h | 共用 rdtime、QEMU 10 MHz 時基與毫秒換算 |
 | kernel/sbi.c / sbi.h | SBI BASE／TIME 呼叫，隔離韌體 ABI |
 | kernel/timer.c / timer.h | 中斷初始化、時間片到期事件、清除 pending 與計數 |
+| kernel/fdt.c / fdt.h | IRQ 探索使用的有界 DTB 讀取、phandle／reg／compatible 查詢 |
+| kernel/irq.c / irq.h | 啟動 hart 的 PLIC 探索、MMIO 頁、IRQ 註冊／派發／complete 與診斷計數 |
 | kernel/workstate.c / workstate.h | 派發時間累計、系統 busy 總計、安全唯讀監測快照 |
 | include/workstate_info.h | 固定容量、版本化的行程 CPU／記憶體快照 ABI |
 | user/workstate.c / workstate.h、user/workstate_entry.c | 獨立 workstate image、區間比率、定時休眠與 q 退出 |
@@ -103,7 +105,7 @@ la 是載入位址的偽指令；__ 開頭符號由 linker（連結器）決定�
 
 ## 4. main.c 與 console.c
 
-kernel_main 先 trap_init、boot_splash、輸出啟動文字與 block_init_from_fdt；再從 FDT 探測 GPU、tablet 與 keyboard，將找到的 VirtIO MMIO 頁登記給 vm_init。GPU 初始化後啟用 input queue，再畫桌面圖示，避免 keyboard 尚未 ready 時漏掉 Terminal icon。沒有三種圖形／輸入裝置時，原本的 UART shell 流程不變。timer_init 查詢 OpenSBI TIME、清除舊事件並開啟 STIE；首次派發設定 50 ms deadline，sret 返回使用者模式後允許搶占。
+kernel_main 先 trap_init、boot_splash、輸出啟動文字，探索啟動 hart 的 PLIC 與 block 裝置；再從 FDT 探測 GPU、tablet 與 keyboard，將所需 MMIO 頁登記給 vm_init。GPU 初始化後啟用 input queue，再畫桌面圖示，避免 keyboard 尚未 ready 時漏掉 Terminal icon。沒有三種圖形／輸入裝置時，原本的 UART shell 流程不變。timer_init 查詢 OpenSBI TIME、清除舊事件並開啟 STIE；process_init 後註冊磁碟 IRQ callback 並啟用 SEIE，保留 kernel 全域 SIE 關閉規則；首次派發設定 50 ms deadline，sret 返回使用者模式後允許中斷。
 UART 位址固定 0x10000000，LSR（線路狀態暫存器）offset 5：bit 5 可寫入字元，bit 0 有收到的字元。
 
 - console_putc 輪詢可寫狀態，再寫 offset 0；換行前補 CR（回車）。
@@ -296,7 +298,11 @@ kernel_main 從 OpenSBI 傳入 a1 的 FDT（硬體裝置樹），block_init_from
 
 swap.c 驗證 4 KiB slot 標頭與磁碟容量，以 bitmap 配置 1-based slot；0 表示不可用／已滿。每頁讀寫八個連續 512-byte 磁區。make_swap.py 預設建立 4095 slots／16 MiB，--slots 可調整，既有映像只驗證、不覆寫格式；slot bitmap 是本次開機的使用狀態，不保存重啟前行程。
 
-driver 協商 VERSION_1 feature，選 queue 0，建立一組 descriptor（描述項）鏈：request header → 512-byte data buffer → status byte。寫入 available ring，增加 index，敲 MMIO queue notify，輪詢 used index 等待完成。此版本一次只送一個請求，I/O 是同步輪詢；沒有中斷、佇列併發、DMA IOMMU 或 block cache。單筆正常操作 O(1)，檔案 N 個區塊則 O(N) 次同步讀寫。
+driver 協商 VERSION_1 feature，選 queue 0，建立一組 descriptor（描述項）鏈：request header → 512-byte data buffer → status byte。寫入 available ring，增加 index，敲 MMIO queue notify，輪詢 used index 等待完成。此版本一次只送一個請求，I/O 是同步輪詢；外部通知可由新 IRQ callback ACK，但完成索引仍只由 transfer 管理，尚無非同步等待、佇列併發、DMA IOMMU 或 block cache。單筆正常操作 O(1)，檔案 N 個區塊則 O(N) 次同步讀寫。
+
+PLIC 骨架見 [Spec 32](./SPEC-32-plic-external-interrupts.md)。它從 FDT 選取 boot hart 的 S-mode context，映射三個 supervisor-only 頁，依 VirtIO MMIO 位址及 interrupt-parent phandle 配對來源。callback 先 ACK 裝置，再 complete PLIC；未知來源先 complete 後 mask，無效 ID 或批次耗盡則關閉 SEIE，保留輪詢備援。`ps` 列出 IRQ 計數。本版核心編譯與 QEMU 操作待使用者驗證，鍵盤／GPU 與非同步 block I/O 尚未接入。
+
+[Spec 33](./SPEC-33-block-request-ownership.md) 將 block driver 改為明確傳遞 `BlockDevice *`，移除全域 `active` 與選擇裝置的巨集。每個裝置各自經過 IDLE → INFLIGHT → COMPLETE → IDLE；輪詢及 IRQ callback 共用完成檢查，只有同步呼叫端能釋放請求。異常 used index、descriptor ID、長度或 status 會保留 DMA 記憶體並停止核心。`ps` 同時列出每磁碟請求計數。本項與 PLIC 驗證均保留待辦，尚未加入磁碟睡眠／喚醒。
 
 單次請求以 `block.h` 的 BLOCK_IO_TIMEOUT_MS 設定門檻（預設 5000 ms），公布 available.index 前讀 rdtime（硬體時間計數器）保存 start。未完成時計算 unsigned 的 now-start，依 QEMU virt 10 MHz 時基比較門檻；到期再讀一次完成索引，仍未完成才印出裝置／角色／讀寫／磁區／經過時間與佇列計數。診斷後關閉監督模式中斷並停在 kernel_idle，不返回、不回收或重用尚可能被裝置 DMA 存取的緩衝區。這是單筆請求的 fail-stop，不是整檔／整頁總逾時，也沒有取消、重試或裝置 reset；初始化設定代數與 UART 等其他輪詢不在範圍。設計與操作紀錄見 [Spec 12](./SPEC-12-block-timeout.md)。
 

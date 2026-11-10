@@ -34,6 +34,8 @@ def digest(image):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('case', nargs='?', choices=tuple(EXPECTED), default='valid')
+    parser.add_argument('--reverse-disks', action='store_true',
+                        help='attach swap first to check discovery and IRQ routes without fixed disk slots')
     args = parser.parse_args()
     bash = PORTABLE / 'usr/bin/bash.exe'
     qemu = PORTABLE / 'ucrt64/bin/qemu-system-riscv64.exe'
@@ -73,15 +75,19 @@ def main():
 
     # Intentionally omit -snapshot: an overlay would hide unwanted guest writes
     # and could make a destructive formatter falsely pass the preservation check.
-    subprocess.run([
+    qemu_arguments = [
         str(qemu), '-machine', 'virt', '-smp', '1', '-m', '128M', '-nographic',
         '-bios', 'default', '-kernel', str(ROOT / 'build/kernel.elf'),
         '-global', 'virtio-mmio.force-legacy=false',
-        '-drive', f'file={image},if=none,format=raw,id=fs',
-        '-device', 'virtio-blk-device,drive=fs',
-        '-drive', f'file={swap},if=none,format=raw,id=swap',
-        '-device', 'virtio-blk-device,drive=swap',
-    ], cwd=ROOT, check=True)
+    ]
+    disks = [(image, 'fs'), (swap, 'swap')]
+    if args.reverse_disks:
+        disks.reverse()
+    # Keep the same disk contents while changing VirtIO attachment/IRQ order.
+    for disk, identifier in disks:
+        qemu_arguments.extend(['-drive', f'file={disk},if=none,format=raw,id={identifier}',
+                               '-device', f'virtio-blk-device,drive={identifier}'])
+    subprocess.run(qemu_arguments, cwd=ROOT, check=True)
 
     after = digest(image)
     print(f'SHA256 before: {before}')

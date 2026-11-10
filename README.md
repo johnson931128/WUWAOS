@@ -144,6 +144,21 @@ Each invocation automatically builds the kernel and creates fresh test disks. Co
 
 See [Spec 31](docs/SPEC-31-filesystem-initialization-guard.md) for the algorithm, exact expected messages, and remaining verification work.
 
+## External Interrupt Foundation
+
+The current source adds a PLIC supervisor interrupt dispatcher, FDT-based disk IRQ routing, device acknowledgement, and counters in `ps`. This stage retains synchronous polling for disk completion and the existing non-preemptible kernel policy; it does not yet implement asynchronous I/O. Build and QEMU verification are pending for this stage.
+
+Use fresh test disks with either attachment order:
+
+```powershell
+.\Test-FsDisk.cmd valid
+.\Test-FsDisk.cmd valid --reverse-disks
+```
+
+In the guest, run `ps`, `ls /`, then `ps`. Confirm `PLIC=enabled`, an increase in the WUFS `handled` counter, and zero `unhandled`, `invalid`, and `budget` counters. After Ctrl+A then X, the test tool separately checks disk hashes. See [Spec 32](docs/SPEC-32-plic-external-interrupts.md) for scope, expected behavior, and remaining validation.
+
+The next prerequisite, [per-device request ownership](docs/SPEC-33-block-request-ownership.md), is also implemented pending user verification. Requests now retain an explicit device pointer and share one completion validator between polling and IRQ notification. In `ps`, each disk should show `state=idle`, matching `submitted` / `completed`, and zero `io_errors` / `protocol_errors`. Disk waits remain synchronous. The PLIC tests above remain pending; continuing implementation does not mark them as passed.
+
 ## Running a WUFS ELF Program
 
 With QEMU stopped, build the existing shell ELF and install it into the WUFS image from WSL:

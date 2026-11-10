@@ -35,6 +35,8 @@
 | 29 | [Windows 單指令桌面啟動器](./SPEC-29-desktop-launcher.md)，背景 QEMU、原生 VNC viewer、QMP 關閉與 Snapshot 磁碟隔離 |
 | 30 | [桌面 Terminal 與圖形 shell](./SPEC-30-graphical-terminal.md)，VirtIO keyboard/tablet、獨立 GUI TTY、ANSI 終端與 QEMU 驗收 |
 | 31 | [WUFS 非空白磁碟保護與固定驗證入口](./SPEC-31-filesystem-initialization-guard.md)，kernel／主機映像工具的格式化條件、獨立磁碟與 SHA-256 檢查；使用者已確認本項驗證 |
+| 32 | [PLIC 外部中斷派發骨架](./SPEC-32-plic-external-interrupts.md)，FDT 路由、裝置 ACK／PLIC complete、`ps` 計數；第一階段已實作，核心驗證待使用者執行 |
+| 33 | [磁碟請求所有權與完成檢查](./SPEC-33-block-request-ownership.md)，移除全域裝置選擇器、請求狀態、共用完成檢查與 `ps` 計數；核心驗證待使用者執行 |
 
 ## 如何判斷是否驗證過
 

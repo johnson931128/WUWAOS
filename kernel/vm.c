@@ -3,6 +3,7 @@
 #include "syscall_numbers.h"
 #include "process_limits.h"
 #include "swap.h"
+#include "kmutex.h"
 
 #define PTE_V (1UL << 0)
 #define PTE_R (1UL << 1)
@@ -43,6 +44,12 @@ static struct {
     size_t faults, soft_loads, images, zeroes, ins, outs, drops, invalid, io_errors, copies;
 } stats;
 static unsigned char clone_buffer[PAGE_SIZE] __attribute__((aligned(PAGE_SIZE)));
+/* Protect global FIFO, all VmSpace metadata, clone_buffer and swap allocation.
+ * Keep this lock through swap I/O; internal paths must not reacquire it.
+ * FS rank 10 precedes VM rank 20; VM must never call FS while holding this lock.
+ */
+static KernelMutex vm_mutex = KMUTEX_INITIALIZER("VM", KMUTEX_RANK_VM);
+static void vm_destroy_locked(uintptr_t root);
 extern unsigned char __text_end[], __rodata_end[];
 extern const unsigned char __user_image_start[], __user_image_end[];
 extern const unsigned char __app_image_start[], __app_image_end[];
@@ -228,7 +235,7 @@ static int resident_page(VmSpace *space, size_t index, int write, uintptr_t *phy
     return 0;
 }
 
-int vm_handle_fault(uintptr_t root, uintptr_t address, unsigned long cause, uintptr_t pc) {
+static int vm_handle_fault_locked(uintptr_t root, uintptr_t address, unsigned long cause, uintptr_t pc) {
     ++stats.faults;
     VmSpace *space = find_space(root);
     const int index = page_index(space, address);
@@ -258,7 +265,7 @@ int vm_handle_fault(uintptr_t root, uintptr_t address, unsigned long cause, uint
 void vm_map_mmio(uintptr_t base) {
     if (base == 0 || base == UART_BASE) return;
     for (size_t i = 0; i < mmio_count; ++i) if (mmio[i] == base) return;
-    if (mmio_count == sizeof(mmio) / sizeof(mmio[0])) vm_panic("Too many VirtIO MMIO pages");
+    if (mmio_count == sizeof(mmio) / sizeof(mmio[0])) vm_panic("Too many MMIO pages");
     mmio[mmio_count++] = base;
 }
 
@@ -287,7 +294,7 @@ void vm_init(const void *fdt) {
     }
     if (vm_map(kernel_root, UART_BASE, UART_BASE, PTE_R | PTE_W) < 0) vm_panic("Cannot map UART");
     for (size_t i = 0; i < mmio_count; ++i) {
-        if (vm_map(kernel_root, mmio[i], mmio[i], PTE_R | PTE_W) < 0) vm_panic("Cannot map VirtIO MMIO");
+        if (vm_map(kernel_root, mmio[i], mmio[i], PTE_R | PTE_W) < 0) vm_panic("Cannot map MMIO");
     }
     vm_use_kernel();
     swap_init();
@@ -326,7 +333,7 @@ static void free_table(uintptr_t address, uintptr_t shared, int level) {
     page_free(address);
 }
 
-void vm_destroy(uintptr_t root) {
+static void vm_destroy_locked(uintptr_t root) {
     if (root == 0) return;
     uintptr_t satp;
     __asm__ volatile("csrr %0, satp" : "=r"(satp));
@@ -338,7 +345,7 @@ void vm_destroy(uintptr_t root) {
     space->root = 0;
 }
 
-uintptr_t vm_create(long program) {
+static uintptr_t vm_create_locked(long program) {
     VmSpace *space = 0;
     for (size_t i = 0; i < PROCESS_LIMIT + 1; ++i) if (spaces[i].root == 0) { space = &spaces[i]; break; }
     if (space == 0) return 0;
@@ -354,14 +361,14 @@ uintptr_t vm_create(long program) {
     for (size_t i = 0; i < 512; ++i) table[i] = common[i];
     table[0] = 0;
     const uintptr_t low = table_alloc();
-    if (low == 0) { vm_destroy(root); return 0; }
+    if (low == 0) { vm_destroy_locked(root); return 0; }
     const uint64_t *shared_low = (const uint64_t *)entry_address(common[0]);
     for (size_t i = 0; i < 512; ++i) ((uint64_t *)low)[i] = shared_low[i];
     table[0] = table_entry(low);
     return root;
 }
 
-int vm_clone(uintptr_t destination, uintptr_t source) {
+static int vm_clone_locked(uintptr_t destination, uintptr_t source) {
     VmSpace *to = find_space(destination), *from = find_space(source);
     if (to == 0 || from == 0) return ERR_ADDRESS;
     to->heap_end = from->heap_end;
@@ -393,7 +400,7 @@ int vm_clone(uintptr_t destination, uintptr_t source) {
 
 /* Install only validated ELF pages; private bytes are marked dirty so eviction
    preserves them in swap even if the original file is changed or removed. */
-int vm_elf_allow(uintptr_t root, uintptr_t address, size_t length) {
+static int vm_elf_allow_locked(uintptr_t root, uintptr_t address, size_t length) {
     VmSpace *space = find_space(root);
     if (!space || space->program != PROGRAM_ELF || !length || address < USER_ENTRY ||
         address >= USER_DATA + PAGE_SIZE || length > USER_DATA + PAGE_SIZE - address) return ERR_ADDRESS;
@@ -406,7 +413,7 @@ int vm_elf_allow(uintptr_t root, uintptr_t address, size_t length) {
     return 0;
 }
 
-int vm_elf_write(uintptr_t root, uintptr_t address, const void *buffer, size_t length) {
+static int vm_elf_write_locked(uintptr_t root, uintptr_t address, const void *buffer, size_t length) {
     VmSpace *space = find_space(root);
     if (!space || space->program != PROGRAM_ELF) return ERR_ADDRESS;
     size_t copied = 0;
@@ -426,7 +433,7 @@ int vm_elf_write(uintptr_t root, uintptr_t address, const void *buffer, size_t l
     return 0;
 }
 
-long vm_sbrk(uintptr_t root, long increment) {
+static long vm_sbrk_locked(uintptr_t root, long increment) {
     VmSpace *space = find_space(root);
     if (space == 0) return ERR_ADDRESS;
     const uintptr_t old = space->heap_end;
@@ -460,8 +467,6 @@ static int accessible(uintptr_t root, uintptr_t address, size_t length, uint64_t
         address = (address & ~(PAGE_SIZE - 1)) + PAGE_SIZE;
     }
 }
-int user_readable(uintptr_t root, uintptr_t address, size_t length) { return accessible(root, address, length, PTE_R); }
-int user_writable(uintptr_t root, uintptr_t address, size_t length) { return accessible(root, address, length, PTE_R | PTE_W); }
 
 static int copy_user(uintptr_t root, uintptr_t user, void *buffer, size_t length, int write) {
     if (!accessible(root, user, length, write ? PTE_R | PTE_W : PTE_R)) return ERR_ADDRESS;
@@ -485,13 +490,11 @@ static int copy_user(uintptr_t root, uintptr_t user, void *buffer, size_t length
     }
     return 0;
 }
-int user_copy_from(uintptr_t root, void *to, uintptr_t from, size_t length) { return copy_user(root, from, to, length, 0); }
-int user_copy_to(uintptr_t root, uintptr_t to, const void *from, size_t length) { return copy_user(root, to, (void *)from, length, 1); }
 int user_read_byte(uintptr_t root, uintptr_t address, unsigned char *result) { return user_copy_from(root, result, address, 1); }
 int user_write_byte(uintptr_t root, uintptr_t address, unsigned char value) { return user_copy_to(root, address, &value, 1); }
 int user_write_long(uintptr_t root, uintptr_t address, long value) { return user_copy_to(root, address, &value, sizeof(value)); }
 
-long vm_control(long limit) {
+static long vm_control_locked(long limit) {
     if (limit != 0) {
         if (limit < (long)VM_MIN_FRAMES || limit > (long)(RAM_END - RAM_BASE) / (long)PAGE_SIZE) return ERR_INVALID;
         while (resident > (size_t)limit) {
@@ -516,7 +519,7 @@ long vm_control(long limit) {
     return 0;
 }
 
-void vm_print_space(uintptr_t root) {
+static void vm_print_space_locked(uintptr_t root) {
     VmSpace *space = find_space(root);
     if (space == 0) return;
     size_t in_ram = 0, on_disk = 0;
@@ -530,7 +533,7 @@ void vm_print_space(uintptr_t root) {
     console_puts(" faults="); console_number((long)space->faults); console_putc('\n');
 }
 
-void vm_get_usage(uintptr_t root, VmUsage *usage) {
+static void vm_get_usage_locked(uintptr_t root, VmUsage *usage) {
     *usage = (VmUsage){0};
     const VmSpace *space = find_space(root);
     if (space == 0) return;
@@ -540,3 +543,90 @@ void vm_get_usage(uintptr_t root, VmUsage *usage) {
     }
     usage->heap_bytes = space->heap_end - USER_HEAP_BASE;
 }
+
+/* Lock-taking public boundary: helpers above keep every early return local.
+ * vm_enable/use_kernel only switch SATP and must stay usable by the scheduler
+ * while another process owns vm_mutex. Boot-only vm_init/map_mmio are exclusive.
+ */
+uintptr_t vm_create(long program) {
+    kmutex_lock(&vm_mutex);
+    const uintptr_t result = vm_create_locked(program);
+    kmutex_unlock(&vm_mutex);
+    return result;
+}
+void vm_destroy(uintptr_t root) {
+    kmutex_lock(&vm_mutex);
+    vm_destroy_locked(root);
+    kmutex_unlock(&vm_mutex);
+}
+int vm_clone(uintptr_t destination, uintptr_t source) {
+    kmutex_lock(&vm_mutex);
+    const int result = vm_clone_locked(destination, source);
+    kmutex_unlock(&vm_mutex);
+    return result;
+}
+int vm_elf_allow(uintptr_t root, uintptr_t address, size_t length) {
+    kmutex_lock(&vm_mutex);
+    const int result = vm_elf_allow_locked(root, address, length);
+    kmutex_unlock(&vm_mutex);
+    return result;
+}
+int vm_elf_write(uintptr_t root, uintptr_t address, const void *buffer, size_t length) {
+    kmutex_lock(&vm_mutex);
+    const int result = vm_elf_write_locked(root, address, buffer, length);
+    kmutex_unlock(&vm_mutex);
+    return result;
+}
+int vm_handle_fault(uintptr_t root, uintptr_t address, unsigned long cause, uintptr_t pc) {
+    kmutex_lock(&vm_mutex);
+    const int result = vm_handle_fault_locked(root, address, cause, pc);
+    kmutex_unlock(&vm_mutex);
+    return result;
+}
+long vm_sbrk(uintptr_t root, long increment) {
+    kmutex_lock(&vm_mutex);
+    const long result = vm_sbrk_locked(root, increment);
+    kmutex_unlock(&vm_mutex);
+    return result;
+}
+int user_readable(uintptr_t root, uintptr_t address, size_t length) {
+    kmutex_lock(&vm_mutex);
+    const int result = accessible(root, address, length, PTE_R);
+    kmutex_unlock(&vm_mutex);
+    return result;
+}
+int user_writable(uintptr_t root, uintptr_t address, size_t length) {
+    kmutex_lock(&vm_mutex);
+    const int result = accessible(root, address, length, PTE_R | PTE_W);
+    kmutex_unlock(&vm_mutex);
+    return result;
+}
+int user_copy_from(uintptr_t root, void *to, uintptr_t from, size_t length) {
+    kmutex_lock(&vm_mutex);
+    const int result = copy_user(root, from, to, length, 0);
+    kmutex_unlock(&vm_mutex);
+    return result;
+}
+int user_copy_to(uintptr_t root, uintptr_t to, const void *from, size_t length) {
+    kmutex_lock(&vm_mutex);
+    const int result = copy_user(root, to, (void *)from, length, 1);
+    kmutex_unlock(&vm_mutex);
+    return result;
+}
+long vm_control(long limit) {
+    kmutex_lock(&vm_mutex);
+    const long result = vm_control_locked(limit);
+    kmutex_unlock(&vm_mutex);
+    return result;
+}
+void vm_print_space(uintptr_t root) {
+    kmutex_lock(&vm_mutex);
+    vm_print_space_locked(root);
+    kmutex_unlock(&vm_mutex);
+}
+void vm_get_usage(uintptr_t root, VmUsage *usage) {
+    kmutex_lock(&vm_mutex);
+    vm_get_usage_locked(root, usage);
+    kmutex_unlock(&vm_mutex);
+}
+void vm_print_lock_stats(void) { kmutex_print(&vm_mutex); }

@@ -45,6 +45,8 @@ raw console 同時只能有一個持有者；行程退出、被終止或成功 e
 
 `kernel/block.c` 從 FDT 探索現代 VirtIO-MMIO 裝置，每顆磁碟有自己的請求與佇列狀態。以磁碟標頭辨識 WUFS 與 Swap，不依賴裝置順序。目前磁碟請求同步輪詢完成；尚無磁碟排程、非同步請求或快取。
 
+最新原始碼增加 PLIC 外部通知骨架，正常與反轉磁碟順序的驗證方式、待驗收狀態見 [Spec 32](../SPEC-32-plic-external-interrupts.md)。後續 [Spec 33](../SPEC-33-block-request-ownership.md) 移除全域裝置選擇器，將完成索引與 DMA status 檢查集中到 collector，輪詢與 IRQ callback 共用；緩衝區仍由同步 transfer 持有到完成。`ps` 顯示 IRQ 與每磁碟請求計數，`ls /` 後可比較是否增加。兩項都尚待核心驗證，尚未加入磁碟睡眠／喚醒。
+
 每個已提交的 512-byte 請求以硬體時間計數器計時，預設超過 5 秒且仍未完成，就印出裝置、角色、操作、磁區與等待時間，然後停止核心。逾時不是取消成功，因此不返回上層、不回收或重用請求緩衝區。門檻在 `kernel/block.h` 調整；一次頁面交換含八筆磁區請求，不共用一個 5 秒總預算。這是目前 WUWAOS 的停止策略，尚無裝置重設與恢復。見 [Spec 12](../SPEC-12-block-timeout.md)。
 
 ## 在 QEMU 觀察

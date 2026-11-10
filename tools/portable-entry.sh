@@ -18,5 +18,6 @@ case "${1:-run}" in
     test -f /ucrt64/share/qemu/opensbi-riscv64-generic-fw_dynamic.bin
     ;;
   shell) exec bash --noprofile --norc ;;
-  *) echo 'Usage: Start-WUWAOS.cmd [run|gui|build|check|shell]' >&2; exit 2 ;;
+  test-kmutex) exec make test-kmutex ;;
+  *) echo 'Usage: Start-WUWAOS.cmd [run|gui|build|check|shell|test-kmutex]' >&2; exit 2 ;;
 esac

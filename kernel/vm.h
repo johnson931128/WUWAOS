@@ -36,5 +36,6 @@ typedef struct {
     size_t resident_pages, swapped_pages, heap_bytes;
 } VmUsage;
 void vm_get_usage(uintptr_t root, VmUsage *usage);
+void vm_print_lock_stats(void);
 
 #endif

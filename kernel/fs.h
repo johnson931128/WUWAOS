@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 int fs_init(void);
+void fs_print_lock_stats(void);
 long fs_is_directory(const char *path);
 long fs_list(const char *path, char *output, size_t capacity);
 long fs_mkdir(const char *path);

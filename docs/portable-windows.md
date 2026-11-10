@@ -52,6 +52,21 @@ README 的 [Windows portable release](https://github.com/johnson931128/WUWAOS#wi
 
 `PASS` 回報的是磁碟內容檢查，開機訊息仍需人工確認。測試映像會保留下來供檢查；每次都是新磁碟，因此空白案例可以重複執行。這個入口需要含上述工具的原始碼版本，舊的 portable v1 發行包沒有這個後續新增的命令。使用者已於 2026-11-05 確認本項驗證完成；演算法、證據範圍及仍待故障注入的項目見 [Spec 31](./SPEC-31-filesystem-initialization-guard.md)。
 
+## 外部中斷骨架驗證
+
+最新原始碼增加 PLIC／磁碟 IRQ 通知骨架，尚待本階段核心編譯與 QEMU 驗收。可沿用獨立磁碟入口：
+
+```powershell
+.\Test-FsDisk.cmd valid
+.\Test-FsDisk.cmd valid --reverse-disks
+```
+
+第二行先接 swap 再接 WUFS，用來檢查 IRQ 路由沒有寫死磁碟順序。在客體依序輸入 `ps`、`ls /`、`ps`，確認 `PLIC=enabled`、WUFS `handled` 增加，以及 `unhandled`／`invalid`／`budget` 維持零。退出方式與磁碟雜湊檢查同上；`PASS` 並不代替 IRQ 計數驗證。
+
+測試提醒保留：本階段尚未驗證，使用者已要求先繼續實作。[Spec 33](./SPEC-33-block-request-ownership.md) 另加入磁碟請求所有權與完成檢查；相同操作還要確認每個磁碟 `state=idle`、`submitted=completed`、`io_errors=0`、`protocol_errors=0`。仍為同步磁碟等待，完整待驗清單見該文件。
+
+目前磁碟完成仍採同步輪詢，鍵盤與 GPU 也尚未接入中斷；本項驗證不能宣稱已完成非同步 I/O。流程、計數說明與限制見 [Spec 32](./SPEC-32-plic-external-interrupts.md)。這些後續原始碼變更不會自動更新既有 Release ZIP。
+
 ## 授權與套件來源
 
 WUWAOS 原創程式碼使用 MIT 授權；桌面字型使用 SIL OFL 1.1。隨附的 MSYS2 與開發工具各自依其原有授權散布，不能把整個發行包一概視為 MIT 授權。
