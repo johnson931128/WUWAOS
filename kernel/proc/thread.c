@@ -25,19 +25,38 @@ void thread_init(void) {
     }
 }
 
-Thread *thread_allocate(Process *process) {
-    /* Phase A: a PCB owns exactly one initial TCB; no extra-thread entry point. */
-    if (!process || process->thread || next_tid == LONG_MAX) return 0;
+int thread_process_slot_count(Process *process) {
+    int count = 0;
+    for (int i = 0; i < THREAD_LIMIT; ++i)
+        if (threads[i].state != THREAD_UNUSED && threads[i].process == process) ++count;
+    return count;
+}
+
+static Thread *allocate_thread(Process *process, int stack_slot) {
+    if (!process || thread_process_slot_count(process) >= PROCESS_THREAD_LIMIT ||
+        next_tid == LONG_MAX) return 0;
     for (int i = 0; i < THREAD_LIMIT; ++i) {
         Thread *thread = &threads[i];
         if (thread->state != THREAD_UNUSED) continue;
-        *thread = (Thread){ .tid = next_tid++, .process = process, .state = THREAD_NEW };
+        *thread = (Thread){ .tid = next_tid++, .process = process, .state = THREAD_NEW,
+                            .user_stack_slot = stack_slot };
         unsigned char *stack = kernel_stacks[i] + PAGE_SIZE;
         for (size_t j = 0; j < THREAD_KERNEL_STACK_SIZE; ++j) stack[j] = 0;
         thread->kernel_stack_top = (uintptr_t)(stack + THREAD_KERNEL_STACK_SIZE);
+        if (!process->thread) process->thread = thread;
         return thread;
     }
     return 0;
+}
+
+Thread *thread_allocate(Process *process) {
+    if (!process || thread_process_slot_count(process) != 0) return 0;
+    return allocate_thread(process, -1);
+}
+
+Thread *thread_allocate_extra(Process *process, int stack_slot) {
+    if (stack_slot < 0 || stack_slot >= (int)THREAD_EXTRA_STACK_SLOTS) return 0;
+    return allocate_thread(process, stack_slot);
 }
 
 void thread_release(Thread *thread) {
@@ -45,8 +64,21 @@ void thread_release(Thread *thread) {
         (thread->state != THREAD_NEW && thread->state != THREAD_ZOMBIE) ||
         thread->internal_gate_depth || thread->cancel_defer_depth ||
         thread->sync_wait_handle || thread->kernel_locks || thread->kernel_waiting ||
-        thread->event_wait.active)
+        thread->event_wait.active || thread->join_claimed || thread->joiner_tid)
         thread_panic("Unsafe TCB release");
+    Process *process = thread->process;
+    if (process) process->retired_cpu_ticks += thread->cpu_ticks;
+    if (process && process->thread == thread) {
+        process->thread = 0;
+        for (int i = 0; i < THREAD_LIMIT; ++i)
+            if (&threads[i] != thread && threads[i].state != THREAD_UNUSED &&
+                threads[i].process == process && threads[i].state != THREAD_ZOMBIE) {
+                process->thread = &threads[i]; break;
+            }
+        for (int i = 0; i < THREAD_LIMIT; ++i)
+            if (!process->thread && &threads[i] != thread && threads[i].state != THREAD_UNUSED &&
+                threads[i].process == process) { process->thread = &threads[i]; break; }
+    }
     *thread = (Thread){0};
 }
 

@@ -112,8 +112,11 @@ static int trace_enabled = 1;
 static unsigned char scheduler_stack[KERNEL_STACK_REGION_SIZE] __attribute__((aligned(PAGE_SIZE)));
 static KernelContext scheduler_context, boot_context;
 static void thread_cancel_wait(Thread *thread);
+static void request_group_exit(Process *process, long status, Thread *exiting);
 
 static _Noreturn void first_run(void) {
+    if (thread_current()->kill_pending || thread_current()->process->state != PROCESS_LIVE)
+        thread_exit(-9);
     user_enter(thread_current()->frame);
 }
 
@@ -168,6 +171,210 @@ static void thread_transition(Thread *thread, ThreadState next, const char *reas
     console_puts(")\n");
 }
 
+static Thread *find_tid(long tid) {
+    for (int i = 0; i < THREAD_LIMIT; ++i) {
+        Thread *thread = thread_slot(i);
+        if (thread->state != THREAD_UNUSED && thread->tid == tid) return thread;
+    }
+    return 0;
+}
+
+static void wake_joiner(Thread *target) {
+    Thread *joiner = find_tid(target->joiner_tid);
+    if (joiner && joiner->state == THREAD_WAITING && joiner->wait_reason == WAIT_JOIN &&
+        joiner->joining_tid == target->tid) {
+        joiner->wait_reason = WAIT_NONE;
+        thread_transition(joiner, THREAD_READY, "joined thread exited");
+    }
+}
+
+static void mark_thread_zombie(Thread *thread, long status) {
+    sync_thread_cleanup(thread);
+    tty_release_raw_owner(thread->tid);
+    thread->exit_status = status;
+    thread->event_wait = (KernelEventWait){0};
+    thread->wait_reason = WAIT_NONE;
+    thread->channel = thread->wait_pid = 0;
+    thread->wait_status = 0;
+    thread->kernel_call_active = 0;
+    thread_transition(thread, THREAD_ZOMBIE, "thread exit");
+    if (thread->process->thread == thread) {
+        Process *process = thread->process;
+        process->thread = 0;
+        for (int i = 0; i < THREAD_LIMIT; ++i) {
+            Thread *candidate = thread_slot(i);
+            if (candidate != thread && candidate->state != THREAD_UNUSED && candidate->state != THREAD_ZOMBIE &&
+                candidate->process == process) { process->thread = candidate; break; }
+        }
+        if (!process->thread) process->thread = thread;
+    }
+    wake_joiner(thread);
+}
+
+static int release_thread_stack(Process *process, int slot) {
+    int error = thread_cancel_defer_enter();
+    if (error < 0) return error;
+    error = vm_thread_stack_release(process->page_table, slot);
+    const int leave = thread_cancel_defer_leave();
+    return error < 0 ? error : leave;
+}
+
+long thread_create(uintptr_t entry, uintptr_t argument, uintptr_t trampoline) {
+    Process *process = process_current();
+    Thread *caller = thread_current();
+    if (process->state != PROCESS_LIVE || process->image_changing) return ERR_BUSY;
+    if (thread_process_slot_count(process) >= PROCESS_THREAD_LIMIT) return ERR_NO_SLOT;
+    int slot = -1;
+    for (int candidate = 0; candidate < (int)THREAD_EXTRA_STACK_SLOTS; ++candidate) {
+        int used = 0;
+        for (int i = 0; i < THREAD_LIMIT; ++i) {
+            Thread *thread = thread_slot(i);
+            if (thread->state != THREAD_UNUSED && thread->process == process &&
+                thread->user_stack_slot == candidate) { used = 1; break; }
+        }
+        if (!used) { slot = candidate; break; }
+    }
+    if (slot < 0) return ERR_NO_SLOT;
+    Thread *thread = thread_allocate_extra(process, slot);
+    if (!thread) return ERR_NO_SLOT;
+    if (!vm_user_executable(process->page_table, entry, 2) ||
+        !vm_user_executable(process->page_table, trampoline, 2)) {
+        thread_release(thread); return ERR_ADDRESS;
+    }
+    if (caller->kill_pending || process->state != PROCESS_LIVE || process->image_changing) {
+        thread_release(thread); return ERR_INTERRUPTED;
+    }
+    int error = vm_thread_stack_reserve(process->page_table, slot);
+    if (error < 0) { thread_release(thread); return error; }
+    if (caller->kill_pending || process->state != PROCESS_LIVE || process->image_changing) {
+        error = release_thread_stack(process, slot);
+        if (error < 0) {
+            thread->state = THREAD_ZOMBIE;
+            thread->exit_status = error;
+            request_group_exit(process, error, caller);
+            caller->kill_pending = 1;
+            return error;
+        }
+        thread_release(thread);
+        return ERR_INTERRUPTED;
+    }
+    error = vm_thread_stack_prepare(process->page_table, slot);
+    if (error < 0 || caller->kill_pending || process->state != PROCESS_LIVE) {
+        const int cleanup_error = release_thread_stack(process, slot);
+        if (cleanup_error < 0) {
+            /* Keep the reserved NEW TCB alive so Process teardown owns the root. */
+            thread->kill_pending = 1;
+            thread->state = THREAD_ZOMBIE;
+            thread->exit_status = error < 0 ? error : ERR_INTERRUPTED;
+            wake_joiner(thread);
+            request_group_exit(process, cleanup_error, caller);
+            caller->kill_pending = 1;
+            return cleanup_error;
+        }
+        thread_release(thread);
+        return error < 0 ? error : ERR_INTERRUPTED;
+    }
+    thread->user_stack_top = USER_THREAD_STACK_BASE + (uintptr_t)slot * USER_THREAD_STACK_STRIDE + USER_THREAD_STACK_STRIDE;
+    thread->frame = (TrapFrame *)(thread->kernel_stack_top - TF_SIZE);
+    thread->context.ra = (uintptr_t)first_run;
+    thread->context.sp = (uintptr_t)thread->frame;
+    thread->frame->registers[2] = thread->user_stack_top;
+    thread->frame->registers[3] = caller->frame->registers[3];
+    thread->frame->registers[10] = entry;
+    thread->frame->registers[11] = argument;
+    thread->frame->sepc = trampoline;
+    uintptr_t status;
+    __asm__ volatile("csrr %0, sstatus" : "=r"(status));
+    thread->frame->sstatus = (status &
+        ~((1UL << 8) | (1UL << 5) | (1UL << 1) | (1UL << 18) | (1UL << 19) | (3UL << 13) | (3UL << 9))) |
+        (1UL << 5);
+    __asm__ volatile("fence rw, rw" : : : "memory");
+    thread_transition(thread, THREAD_READY, "created");
+    return thread->tid;
+}
+
+long thread_gettid(void) { return thread_current()->tid; }
+
+static int join_status_hits_stack(Thread *target, uintptr_t address) {
+    if (target->user_stack_slot < 0 || address > UINTPTR_MAX - sizeof(long)) return 0;
+    const uintptr_t low = USER_THREAD_STACK_BASE + (uintptr_t)target->user_stack_slot * USER_THREAD_STACK_STRIDE + PAGE_SIZE;
+    const uintptr_t high = low + USER_THREAD_STACK_BYTES;
+    return address < high && address + sizeof(long) > low;
+}
+
+long thread_join(long tid, uintptr_t status_address) {
+    Thread *caller = thread_current();
+    Process *process = caller->process;
+    if (process->state != PROCESS_LIVE || caller->kill_pending) return ERR_INTERRUPTED;
+    if (tid == caller->tid) return ERR_INVALID;
+    Thread *target = find_tid(tid);
+    if (!target || target->process != process) return ERR_INVALID;
+    if (target->state == THREAD_NEW) return ERR_BUSY; /* Reserved builders are not joinable yet. */
+    if (target->join_claimed) return ERR_BUSY;
+    long chain = tid;
+    for (int depth = 0; depth < THREAD_LIMIT; ++depth) {
+        if (chain == caller->tid) return ERR_BUSY;
+        Thread *node = find_tid(chain);
+        if (!node || !node->joining_tid) break;
+        chain = node->joining_tid;
+        if (depth == THREAD_LIMIT - 1) return ERR_BUSY;
+    }
+    target->join_claimed = 1; target->joiner_tid = caller->tid; caller->joining_tid = tid;
+    while (target->state != THREAD_ZOMBIE && process->state == PROCESS_LIVE) {
+        caller->wait_reason = WAIT_JOIN;
+        thread_transition(caller, THREAD_WAITING, "join thread");
+        suspend_current();
+        if (caller->kill_pending || process->state != PROCESS_LIVE) {
+            if (target->joiner_tid == caller->tid) { target->join_claimed = 0; target->joiner_tid = 0; }
+            caller->joining_tid = 0;
+            caller->wait_reason = WAIT_NONE; return ERR_INTERRUPTED;
+        }
+    }
+    if (target->state != THREAD_ZOMBIE) {
+        if (target->joiner_tid == caller->tid) { target->join_claimed = 0; target->joiner_tid = 0; }
+        caller->joining_tid = 0; return ERR_INTERRUPTED;
+    }
+    if (status_address) {
+        if (join_status_hits_stack(target, status_address) || !user_writable(process->page_table, status_address, sizeof(long))) {
+            if (target->joiner_tid == caller->tid) { target->join_claimed = 0; target->joiner_tid = 0; }
+            caller->joining_tid = 0; return ERR_ADDRESS;
+        }
+        int error = user_write_long(process->page_table, status_address, target->exit_status);
+        if (error < 0) {
+            if (target->joiner_tid == caller->tid) { target->join_claimed = 0; target->joiner_tid = 0; }
+            caller->joining_tid = 0; return error;
+        }
+    }
+    if (target->user_stack_slot >= 0) {
+        int error = release_thread_stack(process, target->user_stack_slot);
+        if (error < 0) {
+            if (target->joiner_tid == caller->tid) { target->join_claimed = 0; target->joiner_tid = 0; }
+            caller->joining_tid = 0; return error;
+        }
+    }
+    caller->joining_tid = 0; target->join_claimed = 0; target->joiner_tid = 0;
+    thread_release(target);
+    __asm__ volatile("fence rw, rw" : : : "memory");
+    return tid;
+}
+
+_Noreturn void thread_exit(long status) {
+    Thread *thread = thread_current();
+    Process *process = thread->process;
+    mark_thread_zombie(thread, status);
+    if (process->state == PROCESS_LIVE) {
+        int others = 0;
+        for (int i = 0; i < THREAD_LIMIT; ++i) {
+            Thread *candidate = thread_slot(i);
+            if (candidate != thread && candidate->state != THREAD_UNUSED && candidate->process == process &&
+                candidate->state != THREAD_ZOMBIE) { others = 1; break; }
+        }
+        if (!others) { process->state = PROCESS_DYING; process->exit_status = status; }
+    }
+    suspend_current();
+    kernel_idle();
+}
+
 Process *process_current(void) {
     return thread_current()->process;
 }
@@ -207,20 +414,32 @@ static Process *find_pid(long pid) {
 
 long process_chdir(const char *path) {
     Process *process = process_current();
-    char absolute[WUWA_PATH_MAX], canonical[WUWA_PATH_MAX];
+    char snapshot[WUWA_PATH_MAX];
+    char previous[WUWA_PATH_MAX];
+    for (size_t i = 0; i < sizeof(snapshot); ++i) snapshot[i] = process->cwd[i];
+    for (size_t i = 0; i < sizeof(previous); ++i) previous[i] = process->previous_cwd[i];
     if (path[0] == '-' && path[1] == 0) {
-        if (!process->previous_cwd[0]) return -2;
-        path = process->previous_cwd;
+        if (!previous[0]) return -2;
+        path = previous;
     }
-    int result = path_absolute(process->cwd, path, absolute);
-    if (result < 0) return result;
+    return process_chdir_from(path, snapshot);
+}
+
+long process_chdir_from(const char *path, const char *cwd_snapshot) {
+    Process *process = process_current();
+    if (process->cwd_changing) return ERR_BUSY;
+    process->cwd_changing = 1;
+    char absolute[WUWA_PATH_MAX], canonical[WUWA_PATH_MAX];
+    int result = path_absolute(cwd_snapshot, path, absolute);
+    if (result < 0) { process->cwd_changing = 0; return result; }
     result = (int)fs_is_directory(absolute);
-    if (result < 0) return result;
+    if (result < 0) { process->cwd_changing = 0; return result; }
     path_canonical(absolute, canonical);
     size_t i = 0;
     do { process->previous_cwd[i] = process->cwd[i]; } while (process->cwd[i++]);
     i = 0;
     do { process->cwd[i] = canonical[i]; } while (canonical[i++]);
+    process->cwd_changing = 0;
     return 0;
 }
 
@@ -358,13 +577,26 @@ long process_spawn(long program) {
 
 long process_fork(void) {
     Process *parent = process_current();
+    Thread *caller = thread_current();
+    if (parent->state != PROCESS_LIVE || parent->image_changing || thread_process_slot_count(parent) != 1)
+        return ERR_BUSY;
+    parent->image_changing = 1;
     const long pid = create_process(parent->program, parent->pid, 0);
     if (pid < 0) {
+        parent->image_changing = 0;
         return pid;
     }
     Process *child = find_pid(pid);
+    if (parent->state != PROCESS_LIVE || caller->kill_pending || !parent->image_changing) {
+        if (vm_destroy(child->page_table) == 0) {
+            child->page_table = 0; discard_initial_thread(child);
+        } else { child->parent_pid = 0; mark_zombie(child, "fork cancellation cleanup deferred"); }
+        parent->image_changing = 0;
+        return ERR_INTERRUPTED;
+    }
     const int copy_error = vm_clone(child->page_table, parent->page_table);
     if (copy_error < 0) {
+        parent->image_changing = 0;
         if (vm_destroy(child->page_table) == 0) {
             child->page_table = 0;
             discard_initial_thread(child);
@@ -374,14 +606,24 @@ long process_fork(void) {
         }
         return copy_error;
     }
+    if (parent->state != PROCESS_LIVE || caller->kill_pending) {
+        if (vm_destroy(child->page_table) == 0) {
+            child->page_table = 0; discard_initial_thread(child);
+        } else { child->parent_pid = 0; mark_zombie(child, "fork cancellation cleanup deferred"); }
+        parent->image_changing = 0;
+        return ERR_INTERRUPTED;
+    }
     volatile unsigned char *to = (volatile unsigned char *)child->thread->frame;
-    const unsigned char *from = (const unsigned char *)parent->thread->frame;
+    const unsigned char *from = (const unsigned char *)caller->frame;
     for (size_t i = 0; i < sizeof(TrapFrame); ++i) {
         to[i] = from[i];
     }
     child->thread->frame->registers[10] = 0;
+    child->thread->user_stack_slot = caller->user_stack_slot;
+    child->thread->user_stack_top = caller->user_stack_top;
     io_inherit(child, parent);
     publish_process(child, "fork copied user state");
+    parent->image_changing = 0;
     return pid;
 }
 
@@ -393,53 +635,77 @@ long process_exec(long program, const char *argument) {
         return ERR_INVALID; /* Preserve the current image on failure. */
     }
     Process *process = process_current();
+    if (process->state != PROCESS_LIVE || process->image_changing || thread_process_slot_count(process) != 1)
+        return ERR_BUSY;
+    process->image_changing = 1;
     const uintptr_t root = vm_create(program);
-    if (root == 0) return ERR_NO_MEMORY;
+    if (root == 0) { process->image_changing = 0; return ERR_NO_MEMORY; }
     uintptr_t stack = USER_STACK_TOP;
     if (program == PROGRAM_FAN) {
         stack -= 128; /* Keep the path above the downward-growing call stack. */
         size_t length = 0;
         while (argument[length]) ++length;
         const int error = user_copy_to(root, stack, argument, length + 1);
-        if (error < 0) { (void)vm_destroy(root); return error; }
+        if (error < 0) { (void)vm_destroy(root); process->image_changing = 0; return error; }
+    }
+    if (process->state != PROCESS_LIVE || thread_current()->kill_pending) {
+        (void)vm_destroy(root); process->image_changing = 0; return ERR_INTERRUPTED;
     }
     return process_install_image(process, root, program, USER_ENTRY, stack);
 }
 
 long process_exec_path(const char *path) {
+    Process *process = process_current();
+    if (process->state != PROCESS_LIVE || process->image_changing || thread_process_slot_count(process) != 1)
+        return ERR_BUSY;
+    process->image_changing = 1;
     uintptr_t root, entry;
     long result = elf_load(path, &root, &entry);
-    if (result < 0) return result;
+    if (result < 0) { process->image_changing = 0; return result; }
+    if (process->state != PROCESS_LIVE || thread_current()->kill_pending) {
+        (void)vm_destroy(root); process->image_changing = 0; return ERR_INTERRUPTED;
+    }
     return process_install_image(process_current(), root, PROGRAM_ELF, entry, USER_STACK_TOP);
 }
 
 static long process_install_image(Process *process, uintptr_t root, long program, uintptr_t entry, uintptr_t stack) {
     int error = thread_cancel_defer_enter();
-    if (error < 0) { (void)vm_destroy(root); return error; }
+    if (error < 0) { (void)vm_destroy(root); process->image_changing = 0; return error; }
     error = vm_scope_enter();
     if (error < 0) {
         (void)vm_destroy(root);
         (void)thread_cancel_defer_leave();
+        process->image_changing = 0;
         return error;
     }
-    sync_thread_cleanup(process->thread); /* New image must not inherit held mutexes. */
+    if (process->state != PROCESS_LIVE || thread_current()->kill_pending) {
+        (void)vm_scope_leave();
+        (void)vm_destroy(root);
+        (void)thread_cancel_defer_leave();
+        process->image_changing = 0;
+        return ERR_INTERRUPTED;
+    }
+    sync_thread_cleanup(thread_current()); /* New image must not inherit held mutexes. */
     (void)io_console_mode(0); /* Successful exec resets raw input ownership. */
     const uintptr_t old_root = process->page_table;
-    const uint64_t status = process->thread->frame->sstatus;
-    volatile unsigned char *bytes = (volatile unsigned char *)process->thread->frame;
+    Thread *caller = thread_current();
+    const uint64_t status = caller->frame->sstatus;
+    volatile unsigned char *bytes = (volatile unsigned char *)caller->frame;
     for (size_t i = 0; i < sizeof(TrapFrame); ++i) {
         bytes[i] = 0;
     }
-    process->thread->frame->registers[2] = stack;
-    process->thread->frame->registers[10] = program == PROGRAM_ELF ? 0 : (uint64_t)program;
-    process->thread->frame->registers[11] = program == PROGRAM_FAN ? stack : 0;
-    process->thread->frame->sepc = entry;
-    process->thread->frame->sstatus = status;
+    caller->frame->registers[2] = stack;
+    caller->frame->registers[10] = program == PROGRAM_ELF ? 0 : (uint64_t)program;
+    caller->frame->registers[11] = program == PROGRAM_FAN ? stack : 0;
+    caller->frame->sepc = entry;
+    caller->frame->sstatus = status;
+    caller->user_stack_slot = -1;
+    caller->user_stack_top = USER_STACK_TOP;
     process->program = program;
     process->page_table = root;
-    process->thread->wait_reason = WAIT_NONE;
-    process->thread->channel = process->thread->wait_pid = 0;
-    process->thread->wait_status = 0;
+    caller->wait_reason = WAIT_NONE;
+    caller->channel = caller->wait_pid = 0;
+    caller->wait_status = 0;
     vm_enable(root);
     (void)vm_destroy(old_root);
     console_puts("[exec] PID=");
@@ -450,6 +716,7 @@ static long process_install_image(Process *process, uintptr_t root, long program
     console_putc('\n');
     error = vm_scope_leave();
     const int defer_error = thread_cancel_defer_leave();
+    process->image_changing = 0;
     return error < 0 ? error : defer_error;
 }
 
@@ -504,10 +771,17 @@ long thread_wakeup(long channel) {
 
 static int reap(Process *process, int may_wait) {
     /* The caller must be on another root; kernel stacks remain static. */
-    const int error = may_wait ? vm_destroy(process->page_table) : vm_try_destroy(process->page_table);
-    if (error < 0) return error;
-    process->page_table = 0;
-    discard_initial_thread(process);
+    if (process->page_table) {
+        const int error = may_wait ? vm_destroy(process->page_table) : vm_try_destroy(process->page_table);
+        if (error < 0) return error;
+        process->page_table = 0;
+    }
+    for (int i = 0; i < THREAD_LIMIT; ++i) {
+        Thread *thread = thread_slot(i);
+        if (thread->state == THREAD_ZOMBIE && thread->process == process) thread_release(thread);
+    }
+    volatile unsigned char *bytes = (volatile unsigned char *)process;
+    for (size_t i = 0; i < sizeof(*process); ++i) bytes[i] = 0;
     return 0;
 }
 
@@ -533,53 +807,73 @@ static long collect_child(Process *parent, Process *child, uintptr_t status) {
 
 long process_wait(long pid, uintptr_t status_address) {
     Process *parent = process_current();
+    Thread *caller = thread_current();
     Process *child = find_pid(pid);
     if (child == 0 || child->parent_pid != parent->pid) {
         return ERR_NO_CHILD;
     }
+    if (child->wait_claimed) return ERR_BUSY;
+    child->wait_claimed = 1; child->wait_claim_tid = caller->tid;
     if (status_address != 0 &&
         !user_writable(parent->page_table, status_address, sizeof(long))) {
+        if (child->pid == pid && child->wait_claim_tid == caller->tid) {
+            child->wait_claimed = 0; child->wait_claim_tid = 0;
+        }
         return ERR_ADDRESS;
     }
-    if (child->state == PROCESS_ZOMBIE) {
-        return collect_child(parent, child, status_address);
+    if (caller->kill_pending || parent->state != PROCESS_LIVE || find_pid(pid) != child ||
+        child->parent_pid != parent->pid) {
+        if (child->pid == pid && child->wait_claim_tid == caller->tid) {
+            child->wait_claimed = 0; child->wait_claim_tid = 0;
+        }
+        return caller->kill_pending || parent->state != PROCESS_LIVE ? ERR_INTERRUPTED : ERR_NO_CHILD;
     }
-    parent->thread->wait_reason = WAIT_CHILD;
-    parent->thread->wait_pid = pid;
-    parent->thread->wait_status = status_address;
-    thread_transition(parent->thread, THREAD_WAITING, "wait child");
-    suspend_current();
-    /* Resume inside wait, on this parent's original kernel stack. */
-    if (parent->thread->kill_pending) return ERR_INTERRUPTED;
-    parent->thread->wait_reason = WAIT_NONE;
-    parent->thread->wait_pid = 0;
-    parent->thread->wait_status = 0;
+    if (child->state != PROCESS_ZOMBIE) {
+        caller->wait_reason = WAIT_CHILD;
+        caller->wait_pid = pid;
+        caller->wait_status = status_address;
+        thread_transition(caller, THREAD_WAITING, "wait child");
+        suspend_current();
+        if (caller->kill_pending || parent->state != PROCESS_LIVE) {
+            Process *claimed = find_pid(pid);
+            if (claimed && claimed->wait_claim_tid == caller->tid) {
+                claimed->wait_claimed = 0; claimed->wait_claim_tid = 0;
+            }
+            caller->wait_reason = WAIT_NONE; caller->wait_pid = 0; caller->wait_status = 0;
+            return ERR_INTERRUPTED;
+        }
+    }
+    caller->wait_reason = WAIT_NONE;
+    caller->wait_pid = 0;
+    caller->wait_status = 0;
     child = find_pid(pid);
-    return child != 0 && child->parent_pid == parent->pid && child->state == PROCESS_ZOMBIE
-        ? collect_child(parent, child, status_address) : ERR_NO_CHILD;
+    if (child == 0 || child->parent_pid != parent->pid || child->state != PROCESS_ZOMBIE) {
+        if (child) { child->wait_claimed = 0; child->wait_claim_tid = 0; }
+        return ERR_NO_CHILD;
+    }
+    const long result = collect_child(parent, child, status_address);
+    /* A successful reap zeroes the child slot. Otherwise the result remains retryable. */
+    if (child->pid == pid && child->state != PROCESS_UNUSED && child->wait_claim_tid == caller->tid) {
+        child->wait_claimed = 0; child->wait_claim_tid = 0;
+    }
+    return result;
 }
 
-static void terminate(Process *process, long status) {
-    const TtyId session = process->terminal_session;
-    process->state = PROCESS_DYING;
-    sync_thread_cleanup(process->thread);
-    tty_release_raw_owner(process->thread->tid);
-    io_cleanup_process_terminal(process, process->program == PROGRAM_FAN || process->program == PROGRAM_WORKSTATE,
-                                session);
-    process->terminal_session = TTY_ID_INVALID;
-    process->thread->event_wait = (KernelEventWait){0};
-    process->thread->wait_reason = WAIT_NONE;
-    process->thread->channel = 0;
-    process->thread->wait_pid = 0;
-    process->thread->wait_status = 0;
-    process->exit_status = status;
-    mark_zombie(process, "exit");
-    console_puts("[exit] PID=");
-    console_number(process->pid);
-    console_puts(" status=");
-    console_number(status);
-    console_putc('\n');
+static void request_group_exit(Process *process, long status, Thread *exiting) {
+    if (process->state == PROCESS_LIVE) {
+        process->state = PROCESS_DYING;
+        process->exit_status = status;
+    }
+    for (int i = 0; i < THREAD_LIMIT; ++i) {
+        Thread *thread = thread_slot(i);
+        if (thread->state == THREAD_UNUSED || thread->process != process || thread == exiting ||
+            thread->state == THREAD_ZOMBIE) continue;
+        thread->kill_pending = 1;
+        if (!thread->cancel_defer_depth) thread_cancel_wait(thread);
+    }
+}
 
+static void notify_process_exit(Process *process) {
     Process *init = find_pid(1);
     const long adopter = init != 0 && init != process &&
         init->state != PROCESS_ZOMBIE ? 1 : 0;
@@ -589,18 +883,19 @@ static void terminate(Process *process, long status) {
             child->parent_pid = adopter;
         }
     }
-    Process *parent = find_pid(process->parent_pid);
-    if (parent != 0 && parent->thread->state == THREAD_WAITING &&
-        parent->thread->wait_reason == WAIT_CHILD && parent->thread->wait_pid == process->pid) {
-        thread_transition(parent->thread, THREAD_READY, "child exited");
+    for (int i = 0; i < THREAD_LIMIT; ++i) {
+        Thread *waiter = thread_slot(i);
+        if (waiter->state != THREAD_WAITING || waiter->process != find_pid(process->parent_pid) ||
+            waiter->wait_reason != WAIT_CHILD || waiter->wait_pid != process->pid) continue;
+        thread_transition(waiter, THREAD_READY, "child exited");
     }
 }
 
 _Noreturn void process_exit(long status) {
-    terminate(process_current(), status);
-    suspend_current();
-    console_puts("[context] Zombie was dispatched\n");
-    kernel_idle();
+    Thread *thread = thread_current();
+    Process *process = thread->process;
+    request_group_exit(process, status, thread);
+    thread_exit(status);
 }
 
 long process_kill(long pid) {
@@ -610,12 +905,7 @@ long process_kill(long pid) {
         target->state == PROCESS_ZOMBIE) {
         return ERR_INVALID;
     }
-    if (target->thread->kernel_call_active || target->thread->event_wait.active) {
-        target->thread->kill_pending = 1;
-        if (!target->thread->cancel_defer_depth) thread_cancel_wait(target->thread);
-        return 0;
-    }
-    terminate(target, -9);
+    request_group_exit(target, -9, 0);
     return 0;
 }
 
@@ -631,16 +921,65 @@ static void thread_cancel_wait(Thread *thread) {
         if (thread->state == THREAD_WAITING) thread_transition(thread, THREAD_READY, "wait cancelled");
         break;
     case WAIT_CHILD:
+        if (thread->wait_pid) {
+            Process *child = find_pid(thread->wait_pid);
+            if (child && child->wait_claim_tid == thread->tid) {
+                child->wait_claimed = 0; child->wait_claim_tid = 0;
+            }
+        }
         thread->wait_pid = 0;
         thread->wait_status = 0;
         thread->wait_reason = WAIT_NONE;
         if (thread->state == THREAD_WAITING) thread_transition(thread, THREAD_READY, "wait cancelled");
         break;
+    case WAIT_JOIN: {
+        thread->wait_reason = WAIT_NONE; /* Join retains its TID claim until its stack unwinds. */
+        if (thread->state == THREAD_WAITING) thread_transition(thread, THREAD_READY, "join cancelled");
+        break;
+    }
     case WAIT_SYNC:
         sync_thread_cancel_wait(thread);
         break;
     default:
         break;
+    }
+}
+
+static void finalize_dying_processes(void) {
+    for (int p = 0; p < PROCESS_LIMIT; ++p) {
+        Process *process = &processes[p];
+        if (process->state != PROCESS_DYING) continue;
+        int ready = 1;
+        for (int i = 0; i < THREAD_LIMIT; ++i) {
+            Thread *thread = thread_slot(i);
+            if (thread->state != THREAD_UNUSED && thread->process == process && thread->state != THREAD_ZOMBIE) {
+                ready = 0; break;
+            }
+        }
+        if (!ready) continue;
+        if (process->page_table) {
+            if (vm_try_destroy(process->page_table) < 0) continue;
+            process->page_table = 0;
+        }
+        const TtyId session = process->terminal_session;
+        for (int i = 0; i < THREAD_LIMIT; ++i) {
+            Thread *thread = thread_slot(i);
+            if (thread->state == THREAD_ZOMBIE && thread->process == process) {
+                sync_thread_cleanup(thread);
+                tty_release_raw_owner(thread->tid);
+            }
+        }
+        io_cleanup_process_terminal(process,
+            process->program == PROGRAM_FAN || process->program == PROGRAM_WORKSTATE, session);
+        process->terminal_session = TTY_ID_INVALID;
+        for (int i = 0; i < THREAD_LIMIT; ++i) {
+            Thread *thread = thread_slot(i);
+            if (thread->state == THREAD_ZOMBIE && thread->process == process) thread_release(thread);
+        }
+        process->state = PROCESS_ZOMBIE;
+        console_puts("[exit] PID="); console_number(process->pid);
+        console_puts(" status="); console_number(process->exit_status); console_putc('\n');
+        notify_process_exit(process);
     }
 }
 
@@ -789,11 +1128,11 @@ long process_list(void) {
         console_putc(' ');
         console_puts(program_name(process->program));
         console_putc(' ');
-        console_puts(thread_state_name(process->thread->state));
+        console_puts(process->thread ? thread_state_name(process->thread->state) : process_state_name(process->state));
         console_putc(' ');
-        console_puts(waiting_for(process->thread));
+        console_puts(process->thread ? waiting_for(process->thread) : "-");
         console_putc(' ');
-        console_number(process->thread->tid);
+        console_number(process->thread ? process->thread->tid : 0);
         console_putc('\n');
     }
     console_puts("Free PCB slots: ");
@@ -822,6 +1161,15 @@ long process_inspect(long pid) {
     console_number(process->parent_pid);
     console_puts(" name=");
     console_puts(program_name(process->program));
+    if (!process->thread) {
+        console_puts(" state=Zombie process_state=");
+        console_puts(process_state_name(process->state));
+        console_puts("\n(no occupied Thread slots)\nexit_status=");
+        console_number(process->exit_status); console_putc('\n');
+        vm_print_space(process->page_table);
+        const int leave_error = vm_scope_leave();
+        return leave_error < 0 ? leave_error : 0;
+    }
     console_puts(" state=");
     console_puts(thread_state_name(process->thread->state));
     console_puts(" process_state=");
@@ -916,6 +1264,7 @@ static _Noreturn void scheduler_loop(void) {
     for (;;) {
         vm_use_kernel();
         thread_set_current(0); /* Scheduler must not impersonate the last TCB. */
+        finalize_dying_processes();
         thread_event_poll_timeouts();
         process_poll_sources();
         thread_event_poll_timeouts();

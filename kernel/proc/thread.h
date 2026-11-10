@@ -13,7 +13,7 @@ typedef enum {
     THREAD_UNUSED, THREAD_NEW, THREAD_READY, THREAD_RUNNING,
     THREAD_WAITING, THREAD_ZOMBIE
 } ThreadState;
-typedef enum { WAIT_NONE, WAIT_CHANNEL, WAIT_CHILD, WAIT_SYNC, WAIT_EVENT } WaitReason;
+typedef enum { WAIT_NONE, WAIT_CHANNEL, WAIT_CHILD, WAIT_SYNC, WAIT_EVENT, WAIT_JOIN } WaitReason;
 
 typedef struct ThreadControlBlock {
     long tid;
@@ -28,6 +28,7 @@ typedef struct ThreadControlBlock {
     struct KernelMutex *kernel_locks, *kernel_waiting;
     struct ThreadControlBlock *kernel_wait_next;
     uintptr_t kernel_stack_top, user_stack_top;
+    int user_stack_slot; /* -1 for the original process stack. */
     TrapFrame *frame;
     KernelContext context;
     WaitReason wait_reason;
@@ -36,6 +37,10 @@ typedef struct ThreadControlBlock {
     KernelEventWait event_wait;
     unsigned kernel_call_active : 1;
     unsigned kill_pending : 1;
+    unsigned join_claimed : 1;
+    long joiner_tid;
+    long joining_tid;
+    long exit_status;
     unsigned cancel_defer_depth, internal_gate_depth;
     TtyId console_route_tty;
 } Thread;
@@ -43,6 +48,7 @@ typedef struct ThreadControlBlock {
 /* Internal lifecycle only: no user thread_create/join/exit ABI in stage A. */
 void thread_init(void);
 Thread *thread_allocate(struct ProcessControlBlock *process);
+Thread *thread_allocate_extra(struct ProcessControlBlock *process, int stack_slot);
 void thread_release(Thread *thread);
 Thread *thread_slot(int slot);
 Thread *thread_current(void);
@@ -72,5 +78,10 @@ void thread_gate_acquired(Thread *thread);
 void thread_gate_released(Thread *thread);
 int thread_cancel_defer_enter(void);
 int thread_cancel_defer_leave(void);
+long thread_create(uintptr_t entry, uintptr_t argument, uintptr_t trampoline);
+long thread_join(long tid, uintptr_t status_address);
+_Noreturn void thread_exit(long status);
+long thread_gettid(void);
+int thread_process_slot_count(struct ProcessControlBlock *process);
 
 #endif

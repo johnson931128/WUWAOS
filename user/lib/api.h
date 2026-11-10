@@ -4,6 +4,12 @@
 
 long write(long fd, const char *buffer, unsigned long length);
 long getpid(void);
+typedef long thread_id_t;
+typedef long (*thread_entry_t)(void *argument);
+long thread_create(thread_entry_t entry, void *argument);
+long thread_join(thread_id_t tid, long *status);
+_Noreturn void thread_exit(long status);
+long gettid(void);
 /* WUWAOS synchronization handles; not POSIX pthread/sem APIs. */
 long mutex_create(void);
 long mutex_lock(long handle);

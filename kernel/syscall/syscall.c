@@ -26,10 +26,18 @@ static int copy_path(uintptr_t root, uintptr_t address, char path[FS_PATH_MAX]) 
     return ERR_ADDRESS;
 }
 
-static int copy_fs_path(uintptr_t root, uintptr_t address, char output[FS_PATH_MAX]) {
+static int copy_fs_path_from(uintptr_t root, uintptr_t address, const char cwd[FS_PATH_MAX],
+                             char output[FS_PATH_MAX]) {
     char input[FS_PATH_MAX];
     int result = copy_path(root, address, input);
-    return result < 0 ? result : path_absolute(process_current()->cwd, input, output);
+    return result < 0 ? result : path_absolute(cwd, input, output);
+}
+
+static int copy_fs_path(uintptr_t root, uintptr_t address, char output[FS_PATH_MAX]) {
+    char cwd[FS_PATH_MAX];
+    Process *process = process_current();
+    for (size_t i = 0; i < sizeof(cwd); ++i) cwd[i] = process->cwd[i];
+    return copy_fs_path_from(root, address, cwd, output);
 }
 
 void syscall_dispatch(TrapFrame *frame) {
@@ -46,6 +54,18 @@ void syscall_dispatch(TrapFrame *frame) {
     case SYS_GETPID:
         result = process_current()->pid;
         break;
+    case SYS_GETTID:
+        result = thread_gettid();
+        break;
+    case SYS_THREAD_CREATE:
+        result = thread_create(frame->registers[10], frame->registers[11], frame->registers[12]);
+        break;
+    case SYS_THREAD_JOIN:
+        result = thread_join((long)frame->registers[10], frame->registers[11]);
+        break;
+    case SYS_THREAD_EXIT:
+        thread_exit((long)frame->registers[10]);
+        return;
     case SYS_EXIT:
         process_exit((long)frame->registers[10]);
         return;
@@ -153,17 +173,29 @@ void syscall_dispatch(TrapFrame *frame) {
         break;
     case SYS_CHDIR: {
         char path[FS_PATH_MAX];
+        char cwd[FS_PATH_MAX];
+        char previous[FS_PATH_MAX];
+        Process *process = process_current();
+        for (size_t i = 0; i < sizeof(cwd); ++i) cwd[i] = process->cwd[i];
+        for (size_t i = 0; i < sizeof(previous); ++i) previous[i] = process->previous_cwd[i];
         result = copy_path(process_current()->page_table, frame->registers[10], path);
-        if (result == 0) result = process_chdir(path);
+        if (result == 0) {
+            if (path[0] == '-' && path[1] == 0) {
+                if (!previous[0]) result = -2;
+                else result = process_chdir_from(previous, cwd);
+            } else result = process_chdir_from(path, cwd);
+        }
         break;
     }
     case SYS_GETCWD: {
         Process *process = process_current();
+        char cwd[FS_PATH_MAX];
+        for (size_t i = 0; i < sizeof(cwd); ++i) cwd[i] = process->cwd[i];
         size_t length = 0;
-        while (process->cwd[length]) ++length;
+        while (cwd[length]) ++length;
         ++length;
         if (frame->registers[11] < length) result = -34;
-        else result = user_copy_to(process->page_table, frame->registers[10], process->cwd, length);
+        else result = user_copy_to(process->page_table, frame->registers[10], cwd, length);
         break;
     }
     case SYS_FS_LIST: {
@@ -207,8 +239,11 @@ void syscall_dispatch(TrapFrame *frame) {
     }
     case SYS_FS_COPY: {
         char source[FS_PATH_MAX], destination[FS_PATH_MAX];
-        result = copy_fs_path(process_current()->page_table, frame->registers[10], source);
-        if (result == 0) result = copy_fs_path(process_current()->page_table, frame->registers[11], destination);
+        char cwd[FS_PATH_MAX];
+        Process *process = process_current();
+        for (size_t i = 0; i < sizeof(cwd); ++i) cwd[i] = process->cwd[i];
+        result = copy_fs_path_from(process->page_table, frame->registers[10], cwd, source);
+        if (result == 0) result = copy_fs_path_from(process->page_table, frame->registers[11], cwd, destination);
         if (result == 0) result = fs_copy(source, destination);
         break;
     }

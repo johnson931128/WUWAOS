@@ -11,6 +11,19 @@ static long syscall3(long number, long first, long second, long third) {
     return a0;
 }
 
+extern void __thread_trampoline(void);
+long thread_create(thread_entry_t entry, void *argument) {
+    return syscall3(SYS_THREAD_CREATE, (long)entry, (long)argument, (long)__thread_trampoline);
+}
+long thread_join(thread_id_t tid, long *status) {
+    return syscall3(SYS_THREAD_JOIN, tid, (long)status, 0);
+}
+_Noreturn void thread_exit(long status) {
+    syscall3(SYS_THREAD_EXIT, status, 0, 0);
+    for (;;) { }
+}
+long gettid(void) { return syscall3(SYS_GETTID, 0, 0, 0); }
+
 long write(long fd, const char *buffer, unsigned long length) {
     return syscall3(SYS_WRITE, fd, (long)buffer, (long)length);
 }

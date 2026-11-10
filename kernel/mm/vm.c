@@ -20,7 +20,10 @@
 #define UART_BASE 0x10000000UL
 #define USER_LIMIT (1UL << 38)
 #define FIXED_PAGES (USER_CODE_SIZE / PAGE_SIZE + 2)
-#define SPACE_PAGES (FIXED_PAGES + USER_HEAP_PAGES)
+#define EXTRA_STACK_PAGES (THREAD_EXTRA_STACK_SLOTS * 8UL)
+#define STACK_FIRST_PAGE FIXED_PAGES
+#define HEAP_FIRST_PAGE (FIXED_PAGES + EXTRA_STACK_PAGES)
+#define SPACE_PAGES (HEAP_FIRST_PAGE + USER_HEAP_PAGES)
 
 typedef uint64_t PageTable[512];
 _Static_assert(sizeof(PageTable) == PAGE_SIZE, "Sv39 table occupies one page");
@@ -35,6 +38,7 @@ typedef struct {
     long program;
     size_t faults;
     unsigned int elf_pages;
+    unsigned int stack_slots;
     VmPage pages[SPACE_PAGES];
 } VmSpace;
 
@@ -103,7 +107,13 @@ static VmSpace *find_space(uintptr_t root) {
 static uintptr_t page_address(size_t index) {
     if (index < FIXED_PAGES - 1) return USER_ENTRY + index * PAGE_SIZE;
     if (index == FIXED_PAGES - 1) return USER_STACK;
-    return USER_HEAP_BASE + (index - FIXED_PAGES) * PAGE_SIZE;
+    if (index < HEAP_FIRST_PAGE) {
+        const size_t relative = index - STACK_FIRST_PAGE;
+        const size_t slot = relative / 8;
+        const size_t page = relative % 8;
+        return USER_THREAD_STACK_BASE + slot * USER_THREAD_STACK_STRIDE + PAGE_SIZE + page * PAGE_SIZE;
+    }
+    return USER_HEAP_BASE + (index - HEAP_FIRST_PAGE) * PAGE_SIZE;
 }
 
 static int page_index(const VmSpace *space, uintptr_t address) {
@@ -114,10 +124,18 @@ static int page_index(const VmSpace *space, uintptr_t address) {
         return index;
     }
     if (address >= USER_STACK && address < USER_STACK_TOP) return FIXED_PAGES - 1;
+    if (address >= USER_THREAD_STACK_BASE) {
+        const uintptr_t relative = address - USER_THREAD_STACK_BASE;
+        const size_t slot = relative / USER_THREAD_STACK_STRIDE;
+        const uintptr_t within = relative % USER_THREAD_STACK_STRIDE;
+        if (slot < THREAD_EXTRA_STACK_SLOTS && within >= PAGE_SIZE &&
+            within < USER_THREAD_STACK_STRIDE && (space->stack_slots & (1U << slot)))
+            return (int)(STACK_FIRST_PAGE + slot * 8 + (within - PAGE_SIZE) / PAGE_SIZE);
+    }
     /* Hardware mappings expose the rounded last page, as with a conventional brk. */
     const uintptr_t heap_top = (space->heap_end + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
     if (address >= USER_HEAP_BASE && address < heap_top) {
-        return (int)(FIXED_PAGES + (address - USER_HEAP_BASE) / PAGE_SIZE);
+        return (int)(HEAP_FIRST_PAGE + (address - USER_HEAP_BASE) / PAGE_SIZE);
     }
     return -1;
 }
@@ -437,6 +455,7 @@ static int vm_clone_impl(uintptr_t destination, uintptr_t source) {
     if (to == 0 || from == 0) return ERR_ADDRESS;
     to->heap_end = from->heap_end;
     to->elf_pages = from->elf_pages;
+    to->stack_slots = from->stack_slots;
     for (size_t i = 0; i < SPACE_PAGES; ++i) {
         VmPage *page = &from->pages[i];
         if (page->physical) {
@@ -512,7 +531,7 @@ static long vm_sbrk_impl(uintptr_t root, long increment) {
     }
     if (next < old) {
         for (uintptr_t at = (next + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1); at < old; at += PAGE_SIZE) {
-            release_page(space, FIXED_PAGES + (at - USER_HEAP_BASE) / PAGE_SIZE);
+            release_page(space, HEAP_FIRST_PAGE + (at - USER_HEAP_BASE) / PAGE_SIZE);
         }
     }
     space->heap_end = next;
@@ -672,6 +691,58 @@ int vm_elf_write(uintptr_t root, uintptr_t address, const void *buffer, size_t l
     const int result = vm_elf_write_impl(root, address, buffer, length);
     const int leave_error = vm_scope_leave();
     return leave_error < 0 ? leave_error : result;
+}
+
+static int vm_thread_stack_reserve_impl(uintptr_t root, int slot) {
+    VmSpace *space = find_space(root);
+    if (!space || slot < 0 || slot >= (int)THREAD_EXTRA_STACK_SLOTS) return ERR_INVALID;
+    const unsigned int bit = 1U << slot;
+    if (space->stack_slots & bit) return ERR_BUSY;
+    space->stack_slots |= bit;
+    return 0;
+}
+
+static int vm_thread_stack_prepare_impl(uintptr_t root, int slot) {
+    VmSpace *space = find_space(root);
+    if (!space || slot < 0 || slot >= (int)THREAD_EXTRA_STACK_SLOTS ||
+        !(space->stack_slots & (1U << slot))) return ERR_INVALID;
+    uintptr_t physical;
+    return resident_page(space, STACK_FIRST_PAGE + (size_t)slot * 8 + 7, 1, &physical);
+}
+
+static int vm_thread_stack_release_impl(uintptr_t root, int slot) {
+    VmSpace *space = find_space(root);
+    if (!space || slot < 0 || slot >= (int)THREAD_EXTRA_STACK_SLOTS ||
+        !(space->stack_slots & (1U << slot))) return ERR_INVALID;
+    const size_t first = STACK_FIRST_PAGE + (size_t)slot * 8;
+    for (size_t i = first; i < first + 8; ++i) release_page(space, i);
+    space->stack_slots &= ~(1U << slot);
+    return 0;
+}
+
+static int vm_user_executable_impl(uintptr_t root, uintptr_t address, size_t length) {
+    return length && !(address & 1U) && accessible(root, address, length, PTE_X);
+}
+
+int vm_thread_stack_reserve(uintptr_t root, int slot) {
+    int error = vm_scope_enter(); if (error < 0) return error;
+    int result = vm_thread_stack_reserve_impl(root, slot);
+    int leave = vm_scope_leave(); return leave < 0 ? leave : result;
+}
+int vm_thread_stack_prepare(uintptr_t root, int slot) {
+    int error = vm_scope_enter(); if (error < 0) return error;
+    int result = vm_thread_stack_prepare_impl(root, slot);
+    int leave = vm_scope_leave(); return leave < 0 ? leave : result;
+}
+int vm_thread_stack_release(uintptr_t root, int slot) {
+    int error = vm_scope_enter(); if (error < 0) return error;
+    int result = vm_thread_stack_release_impl(root, slot);
+    int leave = vm_scope_leave(); return leave < 0 ? leave : result;
+}
+int vm_user_executable(uintptr_t root, uintptr_t address, size_t length) {
+    int error = vm_scope_enter(); if (error < 0) return 0;
+    int result = vm_user_executable_impl(root, address, length);
+    return vm_scope_leave() < 0 ? 0 : result;
 }
 
 long vm_sbrk(uintptr_t root, long increment) {

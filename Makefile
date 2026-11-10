@@ -17,12 +17,13 @@ KERNEL_OBJECTS := $(patsubst %.S,build/obj/%.asm.o,$(KERNEL_ASM_SOURCES)) $(pats
 BOOT_OBJECTS := build/obj/bootloader/entry.asm.o build/obj/bootloader/boot.o build/obj/drivers/uart/uart.o
 
 USER_COMMON_SOURCES := user/lib/api.c user/lib/print.c
-USER_OBJECTS := build/obj/user/lib/entry.asm.o $(patsubst %.c,build/obj/%.o,$(USER_COMMON_SOURCES)) \
+USER_COMMON_ASM := build/obj/user/lib/thread.asm.o
+USER_OBJECTS := build/obj/user/lib/entry.asm.o $(USER_COMMON_ASM) $(patsubst %.c,build/obj/%.o,$(USER_COMMON_SOURCES)) \
 	build/obj/user/shell/main.o build/obj/user/shell/sync_demo.o \
 	build/obj/user/shell/shell.o build/obj/user/shell/shell_exec.o
-APP_OBJECTS := build/obj/user/lib/entry.asm.o $(patsubst %.c,build/obj/%.o,$(USER_COMMON_SOURCES)) build/obj/user/apps/demo/main.o
-FAN_OBJECTS := build/obj/user/lib/entry.asm.o $(patsubst %.c,build/obj/%.o,$(USER_COMMON_SOURCES)) build/obj/user/apps/fan/main.o
-WORKSTATE_OBJECTS := build/obj/user/lib/entry.asm.o $(patsubst %.c,build/obj/%.o,$(USER_COMMON_SOURCES)) \
+APP_OBJECTS := build/obj/user/lib/entry.asm.o $(USER_COMMON_ASM) $(patsubst %.c,build/obj/%.o,$(USER_COMMON_SOURCES)) build/obj/user/apps/demo/main.o
+FAN_OBJECTS := build/obj/user/lib/entry.asm.o $(USER_COMMON_ASM) $(patsubst %.c,build/obj/%.o,$(USER_COMMON_SOURCES)) build/obj/user/apps/fan/main.o
+WORKSTATE_OBJECTS := build/obj/user/lib/entry.asm.o $(USER_COMMON_ASM) $(patsubst %.c,build/obj/%.o,$(USER_COMMON_SOURCES)) \
 	build/obj/user/apps/workstate/main.o build/obj/user/apps/workstate/workstate.o
 
 ARCH_FLAGS := --target=riscv64-unknown-elf -march=rv64imac_zicsr_zifencei -mabi=lp64 -mcmodel=medany -msmall-data-limit=0 -mno-relax
@@ -90,7 +91,7 @@ build/obj/tests/thread_stage_a_probe.o: tests/thread_stage_a_probe.c
 	mkdir -p $(@D)
 	$(CC) $(CFLAGS) -Oz -c $< -o $@
 
-build/thread-stage-a-probe.elf: build/obj/user/lib/entry.asm.o build/obj/user/lib/api.o build/obj/user/lib/print.o build/obj/tests/thread_stage_a_probe.o user/linker.ld
+build/thread-stage-a-probe.elf: build/obj/user/lib/entry.asm.o $(USER_COMMON_ASM) build/obj/user/lib/api.o build/obj/user/lib/print.o build/obj/tests/thread_stage_a_probe.o user/linker.ld
 	$(CC) $(LDFLAGS) -Wl,-T,user/linker.ld $(filter %.o,$^) -o $@
 
 build/user.bin: build/user.elf

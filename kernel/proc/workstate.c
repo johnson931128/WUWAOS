@@ -47,12 +47,18 @@ long workstate_snapshot(uintptr_t address, size_t length) {
         row->pid = process->pid;
         row->parent_pid = process->parent_pid;
         copy_label(row->name, process_name(process), sizeof(row->name));
-        copy_label(row->state, thread_state_name(process->thread->state), sizeof(row->state));
-        row->cpu_ticks = process->thread->cpu_ticks;
-        if (process == caller) {
-            const uint64_t pending = snapshot.ticks - process->thread->run_started;
-            row->cpu_ticks += pending;
-            snapshot.busy_ticks += pending;
+        copy_label(row->state, process->thread ? thread_state_name(process->thread->state) :
+                   process_state_name(process->state), sizeof(row->state));
+        row->cpu_ticks = process->retired_cpu_ticks;
+        for (int t = 0; t < THREAD_LIMIT; ++t) {
+            const Thread *thread = thread_slot(t);
+            if (thread->state == THREAD_UNUSED || thread->process != process) continue;
+            row->cpu_ticks += thread->cpu_ticks;
+            if (thread == thread_current_or_null() && process == caller) {
+                const uint64_t pending = snapshot.ticks - thread->run_started;
+                row->cpu_ticks += pending;
+                snapshot.busy_ticks += pending;
+            }
         }
         VmUsage usage;
         const int usage_error = vm_get_usage(process->page_table, &usage);

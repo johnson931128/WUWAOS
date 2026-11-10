@@ -43,6 +43,10 @@
 #define SYS_DUP 39
 #define SYS_IS_CONSOLE 40
 #define SYS_FS_REPLACE 41
+#define SYS_THREAD_CREATE 42
+#define SYS_THREAD_JOIN 43
+#define SYS_THREAD_EXIT 44
+#define SYS_GETTID 45
 
 #define FD_O_RDONLY 0x01
 #define FD_O_WRONLY 0x02

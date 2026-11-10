@@ -18,12 +18,17 @@ typedef struct ProcessControlBlock {
     char cwd[WUWA_PATH_MAX];
     char previous_cwd[WUWA_PATH_MAX];
     ProcessState state;
-    Thread *thread; /* Stage A: exactly one initial thread; owned until reap. */
+    Thread *thread; /* Representative live/occupied TCB; may change after join. */
     long exit_status;
+    uint64_t retired_cpu_ticks;
     uintptr_t page_table;
     long program;
     int fd_table[PROCESS_FD_LIMIT];
     TtyId terminal_session;
+    unsigned image_changing : 1;
+    unsigned cwd_changing : 1;
+    unsigned wait_claimed : 1;
+    long wait_claim_tid;
 } Process;
 
 Process *process_current(void);
@@ -33,6 +38,7 @@ void process_init(void);
 int process_runtime_started(void);
 _Noreturn void process_start(void);
 long process_chdir(const char *path);
+long process_chdir_from(const char *path, const char *cwd_snapshot);
 long process_spawn(long program);
 long process_fork(void);
 long process_exec(long program, const char *argument);

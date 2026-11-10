@@ -11,6 +11,9 @@
 #define USER_DATA (USER_ENTRY + USER_CODE_SIZE)
 #define USER_STACK 0x800000UL
 #define USER_STACK_TOP (USER_STACK + PAGE_SIZE)
+#define USER_THREAD_STACK_BASE 0x900000UL
+#define USER_THREAD_STACK_STRIDE 0x9000UL
+#define USER_THREAD_STACK_BYTES (8UL * PAGE_SIZE)
 
 void vm_init(const void *fdt);
 /* Remove one page from the shared identity-mapped kernel RAM range. Call for
@@ -43,5 +46,9 @@ typedef struct {
     size_t resident_pages, swapped_pages, heap_bytes;
 } VmUsage;
 int vm_get_usage(uintptr_t root, VmUsage *usage);
+int vm_thread_stack_reserve(uintptr_t root, int slot);
+int vm_thread_stack_prepare(uintptr_t root, int slot);
+int vm_thread_stack_release(uintptr_t root, int slot);
+int vm_user_executable(uintptr_t root, uintptr_t address, size_t length);
 
 #endif

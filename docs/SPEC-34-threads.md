@@ -1,6 +1,6 @@
 # Spec 34：Thread 與共用行程資源
 
-狀態：**階段 A 已實作並完成基本回歸；多 Thread 使用者 API 仍為設計草案**。本文最初於 2026-11-10 依 `c7de7e0` 的核心結構撰寫，定義完整第一版的行為與驗收條件。現已完成 PCB／TCB、排程與等待的拆分，每 Process 仍只有一條 Thread；下列額外 stack、create／join／thread_exit／gettid 等設計尚未實作。[階段 A 變更與驗證](./thread-stage-a.md) · [教學背景](./topics/threads.md)。
+狀態：**多 Thread 核心/API 與共享資源生命週期已實作；僅完成編譯與程式碼檢視，runtime 驗收 NOT_RUN**。本文件於 2026-11-10 起草，階段 A 的回歸記錄見[階段 A](./thread-stage-a.md)，本次實作範圍與證據見[階段 B/C 記錄](./thread-stage-b.md)。QEMU、使用者 Thread 交錯、取消與 I/O 故障情境尚未驗證，不得標示為 runtime 通過。[教學背景](./topics/threads.md)。
 
 ## 目標與執行環境
 
@@ -12,7 +12,7 @@
 
 ## 設計基底與需要修改的邊界
 
-下表保留起草時的基底對照；階段 A 已將執行、等待、gate／sync owner、raw TTY owner 移至 TCB，尚未完成多 Thread 的 FD table pin／額外 user stacks／join 與群組退出。
+下表保留起草時的基底對照；階段 A 已將執行、等待、gate／sync owner、raw TTY owner 移至 TCB；多 Thread 的 FD pin、額外 user stacks、join 與群組退出已接入，尚待 runtime 驗收。
 
 | 現行位置 | 現行行為 | Thread 版必須完成的變更 |
 | --- | --- | --- |
@@ -56,11 +56,11 @@ Process (PID)
 
 PID 與 TID 為不同命名空間；`getpid()` 對同 Process 的所有 Thread 相同，`gettid()` 各自不同。TID 使用正值單調遞增，不重用；到 `LONG_MAX` 前拒絕新增，避免舊 TID 指向重用的 TCB。Boot／scheduler 無目前 Thread 時，`thread_current_or_null()` 回傳 null，不能借用剛才執行者的身分。
 
-Process 狀態改為 `NEW -> LIVE -> DYING -> ZOMBIE -> UNUSED`；Ready／Running／Waiting 屬於 Thread。`process_current()` 可暫作相容 accessor，回傳 `thread_current()->process`；有執行狀態的呼叫點必須逐一改用 Thread，不能只改 accessor 就算完成拆分。
+Process 狀態改為 `NEW -> LIVE -> DYING -> ZOMBIE -> UNUSED`；Ready／Running／Waiting 屬於 Thread。`process_current()` 回傳 `thread_current()->process`。`Process.thread` 是仍占用 Thread 中的代表指標，Thread 退出／join 時更新；群組清理回收所有 TCB 後為 null。此時 Process Zombie 的 `ps` 顯示 `TID=0` 與 Process lifecycle state，`pcb` 顯示沒有占用 Thread slots；PID／exit status 保留到 parent wait 回收。
 
 ## 使用者 API 與 syscall ABI
 
-預定放在 `user/lib/api.h` 與對應實作。以下為 WUWAOS 自訂 ABI，不保證 pthread 相容。
+放在 `user/lib/api.h`、`user/lib/api.c` 與 `user/lib/thread.S`。以下為 WUWAOS 自訂 ABI，不保證 pthread 相容。
 
 ```c
 typedef long thread_id_t;
@@ -194,7 +194,7 @@ Cwd／previous_cwd 屬 Process，共用更新受保護；相對路徑在 syscall
 | C：共享資源生命週期 | FD pin、cwd snapshot、group exit、child wait claim、fork/exec 排他 | 阻塞中 close/reopen、Process exit、DMA 等待取消與雙重 join／wait |
 | D：示範與觀測 | 預定 `demo threads`、`threads`，`ps`／workstate 以 Process 聚合並可看 Thread | CPU accounting 不重複；教學例與真實 QEMU trace 分開記錄 |
 
-預定 `kernel/proc/thread.h`、`thread.c` 與 `user/lib/thread.S` 保存新增實作；實作前不得在網站建立指向尚不存在 source 的連結。`include/thread_limits.h` 管理容量。既有 syscall／shell 在階段 A 先維持相容；每階段只在相應驗收完成後標示通過。
+Thread 執行狀態由 `kernel/proc/thread.h`／`thread.c` 管理；使用者入口位於 `user/lib/api.h`／`api.c`／`thread.S`，容量定義在 `include/thread_limits.h`。本次沒有新增 `demo threads` 或獨立 Thread 列表命令；既有 `ps` 顯示代表 TID，`pcb` 顯示代表 TCB。
 
 最低驗收清單：
 
@@ -217,7 +217,9 @@ Cwd／previous_cwd 屬 Process，共用更新受保護；相對路徑在 syscall
 | --- | --- |
 | 規格與現行欄位／呼叫點比對 | 已完成文件層級調查 |
 | 階段 A：單 Thread／Process 的 TCB runtime | 已實作，主機與 QEMU 基本回歸通過；見[紀錄](./thread-stage-a.md) |
-| 多 Thread syscall、額外 user stack／join／群組生命週期 | NOT_IMPLEMENTED |
+| 多 Thread syscall、額外 user stack／join／群組生命週期 | CODE_PRESENT；編譯通過，runtime NOT_RUN |
+| 共享 FD pin、cwd snapshot、child wait claim、fork／exec 限制 | CODE_PRESENT；編譯通過，runtime NOT_RUN |
+| `demo threads`／專用 Thread 列表介面 | NOT_IMPLEMENTED |
 | 多 Thread QEMU／新增故障注入／效能測量 | NOT_RUN |
 | 網站文件建置 | 2026-11-10 VitePress 建置通過；不代表 Thread 驗收 |
 

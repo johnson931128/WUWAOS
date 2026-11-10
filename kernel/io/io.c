@@ -11,6 +11,7 @@
 #define PIPE_LIMIT 8
 #define PIPE_CAPACITY 256
 #define IO_PENDING LONG_MIN
+#define FD_RESERVED (-98)
 #define CONSOLE_IN (-1)
 #define CONSOLE_OUT (-2)
 #define CONSOLE_ERR (-3)
@@ -39,11 +40,28 @@ static OpenFile open_files[OFD_LIMIT];
 static Pipe pipes[PIPE_LIMIT];
 static KernelGate ofd_gates[OFD_LIMIT];
 static KernelGate pipe_gates[PIPE_LIMIT];
+static OpenFile *get_ofd(int value);
+static void ofd_release(int index);
 
 static int fd_value(Process *process, long fd) {
     if (fd < 0 || fd >= PROCESS_FD_LIMIT) return -99;
+    if (process->fd_table[fd] == FD_RESERVED) return -99;
     return process->fd_table[fd];
 }
+
+/* Called with SIE=0 in syscall context; the pin survives close/reuse while an
+   operation sleeps, and keeps the exact OFD selected at syscall entry alive. */
+static int fd_pin(Process *process, long fd) {
+    const int value = fd_value(process, fd);
+    if (value >= 0) {
+        OpenFile *ofd = get_ofd(value);
+        if (!ofd || ofd->refs == UINT_MAX) return -99;
+        ++ofd->refs;
+    }
+    return value;
+}
+
+static void fd_unpin(int value) { if (value >= 0) ofd_release(value); }
 
 static OpenFile *get_ofd(int value) {
     return value >= 0 && value < OFD_LIMIT && open_files[value].used ? &open_files[value] : 0;
@@ -113,7 +131,10 @@ static void close_slot(Process *process, int fd) {
     const int value = process->fd_table[fd];
     process->fd_table[fd] = -99;
     if (value >= 0) ofd_release(value);
-    if (fd == 0) tty_release_raw_owner(process->thread->tid);
+    if (fd == 0) {
+        Thread *thread = thread_current_or_null();
+        if (thread && thread->process == process) tty_release_raw_owner(thread->tid);
+    }
 }
 
 int io_inode_is_open(uint32_t inode) {
@@ -124,14 +145,17 @@ int io_inode_is_open(uint32_t inode) {
 
 void io_inherit(Process *child, const Process *parent) {
     for (int fd = 0; fd < PROCESS_FD_LIMIT; ++fd) {
-        const int value = parent->fd_table[fd];
+        const int value = parent->fd_table[fd] == FD_RESERVED ? -99 : parent->fd_table[fd];
         child->fd_table[fd] = value;
         if (value >= 0 && value < OFD_LIMIT && open_files[value].used) ++open_files[value].refs;
     }
 }
 
 void io_close_process(Process *process) {
-    tty_release_raw_owner(process->thread->tid);
+    for (int i = 0; i < THREAD_LIMIT; ++i) {
+        Thread *thread = thread_slot(i);
+        if (thread->state != THREAD_UNUSED && thread->process == process) tty_release_raw_owner(thread->tid);
+    }
     for (int fd = 0; fd < PROCESS_FD_LIMIT; ++fd) close_slot(process, fd);
 }
 
@@ -201,11 +225,17 @@ long io_pipe(uintptr_t descriptors) {
     if (write_fd < 0) return ERR_NO_SLOT;
     int read_ofd, write_ofd;
     if (reserve_pipe(&read_ofd, &write_ofd) < 0) return ERR_NO_SLOT;
-    process->fd_table[read_fd] = read_ofd;
-    process->fd_table[write_fd] = write_ofd;
+    process->fd_table[read_fd] = FD_RESERVED;
+    process->fd_table[write_fd] = FD_RESERVED;
     const long result[2] = { read_fd, write_fd };
     const int error = user_copy_to(process->page_table, descriptors, result, sizeof(result));
-    if (error < 0) { close_slot(process, read_fd); close_slot(process, write_fd); return error; }
+    if (error < 0) {
+        process->fd_table[read_fd] = read_ofd;
+        process->fd_table[write_fd] = write_ofd;
+        close_slot(process, read_fd); close_slot(process, write_fd); return error;
+    }
+    process->fd_table[read_fd] = read_ofd;
+    process->fd_table[write_fd] = write_ofd;
     return 0;
 }
 
@@ -220,8 +250,9 @@ long io_open(const char *path, long flags) {
     if (fd < 0) return ERR_NO_SLOT;
     const int index = allocate_ofd(OFD_RESERVED);
     if (index < 0) return ERR_NO_SLOT;
+    process->fd_table[fd] = FD_RESERVED;
     int scope_error = fs_scope_enter();
-    if (scope_error < 0) { ofd_release(index); return scope_error; }
+    if (scope_error < 0) { process->fd_table[fd] = -99; ofd_release(index); return scope_error; }
     uint32_t inode;
     long result = fs_open_inode(path, !!(flags & FD_O_CREAT), &inode);
     if (result < 0) goto open_failed;
@@ -248,23 +279,24 @@ long io_open(const char *path, long flags) {
 
 open_failed:
     (void)fs_scope_leave();
+    process->fd_table[fd] = -99;
     ofd_release(index);
     return result;
 }
 
 long io_close(long fd) {
     Process *process = process_current();
-    if (fd < 0 || fd >= PROCESS_FD_LIMIT || process->fd_table[fd] == -99) return ERR_BAD_FD;
+    if (fd_value(process, fd) == -99) return ERR_BAD_FD;
     close_slot(process, (int)fd);
     return 0;
 }
 
 long io_dup2(long oldfd, long newfd) {
     Process *process = process_current();
-    if (oldfd < 0 || oldfd >= PROCESS_FD_LIMIT || newfd < 0 || newfd >= PROCESS_FD_LIMIT ||
-        process->fd_table[oldfd] == -99) return ERR_BAD_FD;
+    if (newfd < 0 || newfd >= PROCESS_FD_LIMIT || fd_value(process, oldfd) == -99) return ERR_BAD_FD;
+    if (process->fd_table[newfd] == FD_RESERVED) return ERR_BUSY;
     if (oldfd == newfd) return newfd;
-    const int value = process->fd_table[oldfd];
+    const int value = fd_value(process, oldfd);
     if (value >= 0) {
         if (!get_ofd(value)) return ERR_BAD_FD;
         ++open_files[value].refs;
@@ -276,7 +308,7 @@ long io_dup2(long oldfd, long newfd) {
 
 long io_dup(long oldfd) {
     Process *process = process_current();
-    if (oldfd < 0 || oldfd >= PROCESS_FD_LIMIT || process->fd_table[oldfd] == -99) return ERR_BAD_FD;
+    if (fd_value(process, oldfd) == -99) return ERR_BAD_FD;
     const int fd = find_free_fd(process, 0);
     return fd < 0 ? ERR_NO_SLOT : io_dup2(oldfd, fd);
 }
@@ -292,7 +324,7 @@ long io_console_poll(void) {
     const int input = fd_value(process, 0);
     const TtyId id = fd_tty_id(input);
     if (!fd_tty_readable(input) || !tty_session_active(id)) return ERR_BAD_FD;
-    if (tty_raw_owner(id) != process->pid) return ERR_BUSY;
+    if (tty_raw_owner(id) != thread_current()->tid) return ERR_BUSY;
     int character;
     while ((character = tty_input_read_byte(id)) >= 0) {
         if (tty_filter_crlf(id, character, 1)) continue;
@@ -306,7 +338,7 @@ long io_console_mode(long raw) {
     if (raw != 0 && raw != 1) return ERR_INVALID;
     const int input = fd_value(process, 0);
     if (!fd_tty_readable(input)) return raw ? ERR_INVALID : 0;
-    return tty_set_raw_owner(fd_tty_id(input), process->thread->tid, (int)raw);
+    return tty_set_raw_owner(fd_tty_id(input), thread_current()->tid, (int)raw);
 }
 
 TtyId io_console_route_tty(void) {
@@ -347,9 +379,8 @@ static long pipe_write(Process *process, Pipe *pipe, uintptr_t buffer, size_t le
     return (long)amount;
 }
 
-static long pipe_read_wait(Process *process, int fd, uintptr_t buffer, size_t length) {
+static long pipe_read_wait(Process *process, int value, uintptr_t buffer, size_t length) {
     for (;;) {
-        const int value = fd_value(process, fd);
         OpenFile *ofd = get_ofd(value);
         if (!ofd || ofd->type != OFD_PIPE_READ || ofd->pipe < 0 || ofd->pipe >= PIPE_LIMIT)
             return ERR_BAD_FD;
@@ -373,9 +404,8 @@ static long pipe_read_wait(Process *process, int fd, uintptr_t buffer, size_t le
     }
 }
 
-static long pipe_write_wait(Process *process, int fd, uintptr_t buffer, size_t length) {
+static long pipe_write_wait(Process *process, int value, uintptr_t buffer, size_t length) {
     for (;;) {
-        const int value = fd_value(process, fd);
         OpenFile *ofd = get_ofd(value);
         if (!ofd || ofd->type != OFD_PIPE_WRITE || ofd->pipe < 0 || ofd->pipe >= PIPE_LIMIT)
             return ERR_BAD_FD;
@@ -399,12 +429,12 @@ static long pipe_write_wait(Process *process, int fd, uintptr_t buffer, size_t l
     }
 }
 
-static long tty_wait_byte(Process *process, TtyId id, int raw, int *character) {
+static long tty_wait_byte(TtyId id, int raw, int *character) {
     for (;;) {
         if (!tty_session_active(id)) return ERR_IO;
         const long owner = tty_raw_owner(id);
         if (owner < 0) return owner;
-        if ((raw && owner != process->thread->tid) || (!raw && owner != 0)) return ERR_BUSY;
+        if ((raw && owner != thread_current()->tid) || (!raw && owner != 0)) return ERR_BUSY;
         uint32_t generation;
         uint64_t sequence;
         KernelEventSource *source = tty_input_event(id, &generation);
@@ -419,9 +449,7 @@ static long tty_wait_byte(Process *process, TtyId id, int raw, int *character) {
 static long console_read_line(Process *process, TtyId id, uintptr_t buffer, size_t length);
 static long console_read_raw(Process *process, TtyId id, uintptr_t buffer);
 
-long io_read(long fd, uintptr_t buffer, size_t length) {
-    Process *process = process_current();
-    const int value = fd_value(process, fd);
+static long io_read_pinned(Process *process, int value, uintptr_t buffer, size_t length) {
     OpenFile *ofd = get_ofd(value);
     if (value == -99 || fd_tty_writable(value) || (ofd && !ofd->readable) ||
         length > LONG_MAX) return ERR_BAD_FD;
@@ -433,7 +461,7 @@ long io_read(long fd, uintptr_t buffer, size_t length) {
         const long owner = tty_raw_owner(id);
         if (owner < 0) return owner;
         if (owner != 0) {
-            if (owner != process->thread->tid) return ERR_BUSY;
+            if (owner != thread_current()->tid) return ERR_BUSY;
             if (length > 128) return ERR_INVALID;
             return console_read_raw(process, id, buffer);
         }
@@ -441,7 +469,7 @@ long io_read(long fd, uintptr_t buffer, size_t length) {
         return console_read_line(process, id, buffer, length);
     }
     if (ofd && ofd->type == OFD_PIPE_READ) {
-        return pipe_read_wait(process, (int)fd, buffer, length);
+        return pipe_read_wait(process, value, buffer, length);
     }
     if (ofd && ofd->type == OFD_FILE) {
         const int gate_error = kernel_gate_enter(&ofd_gates[value]);
@@ -461,9 +489,16 @@ long io_read(long fd, uintptr_t buffer, size_t length) {
     return ERR_INVALID;
 }
 
-long io_write(long fd, uintptr_t buffer, size_t length) {
+long io_read(long fd, uintptr_t buffer, size_t length) {
     Process *process = process_current();
-    const int value = fd_value(process, fd);
+    const int value = fd_pin(process, fd);
+    if (value == -99) return ERR_BAD_FD;
+    const long result = io_read_pinned(process, value, buffer, length);
+    fd_unpin(value);
+    return result;
+}
+
+static long io_write_pinned(Process *process, int value, uintptr_t buffer, size_t length) {
     OpenFile *ofd = get_ofd(value);
     if (value == -99 || fd_tty_readable(value) ||
         (ofd && !ofd->writable) || length > LONG_MAX) return ERR_BAD_FD;
@@ -478,7 +513,7 @@ long io_write(long fd, uintptr_t buffer, size_t length) {
         return tty_output_write(id, staging, length);
     }
     if (ofd && ofd->type == OFD_PIPE_WRITE) {
-        return pipe_write_wait(process, (int)fd, buffer, length);
+        return pipe_write_wait(process, value, buffer, length);
     }
     if (ofd && ofd->type == OFD_FILE) {
         unsigned char staging[512];
@@ -518,6 +553,15 @@ long io_write(long fd, uintptr_t buffer, size_t length) {
     return ERR_INVALID;
 }
 
+long io_write(long fd, uintptr_t buffer, size_t length) {
+    Process *process = process_current();
+    const int value = fd_pin(process, fd);
+    if (value == -99) return ERR_BAD_FD;
+    const long result = io_write_pinned(process, value, buffer, length);
+    fd_unpin(value);
+    return result;
+}
+
 static void console_echo(TtyId id, unsigned char byte) {
     (void)tty_output_write(id, &byte, 1);
 }
@@ -528,7 +572,7 @@ static long console_read_line(Process *process, TtyId id, uintptr_t buffer, size
     int overflow = 0;
     for (;;) {
         int character;
-        const long input = tty_wait_byte(process, id, 0, &character);
+        const long input = tty_wait_byte(id, 0, &character);
         if (input < 0) return input;
         if (tty_filter_crlf(id, character, 0)) continue;
         if (character == 4) {
@@ -562,7 +606,7 @@ static long console_read_line(Process *process, TtyId id, uintptr_t buffer, size
 static long console_read_raw(Process *process, TtyId id, uintptr_t buffer) {
     for (;;) {
         int character;
-        const long input = tty_wait_byte(process, id, 1, &character);
+        const long input = tty_wait_byte(id, 1, &character);
         if (input < 0) return input;
         if (tty_filter_crlf(id, character, 1)) continue;
         const int error = user_write_byte(process->page_table, buffer, (unsigned char)character);
