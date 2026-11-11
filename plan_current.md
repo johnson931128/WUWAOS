@@ -1,5 +1,5 @@
 - 詳細步驟與方法：[plan.md](./plan.md)
-- 網站總覽與〈開始使用〉已更新，Chrome 通過桌機、窄螢幕與鍵盤導覽檢查，GitHub Pages 發布待確認。詳見 [本輪網站改版](./plan.md#網站總覽與開始使用2026-11-11)。
+- 網站總覽與〈開始使用〉已發布至 GitHub Pages（`55585cc`）。公開頁通過桌機、320px 窄螢幕與鍵盤導覽檢查，本機通過 Chrome 200% 縮放檢查。詳見 [本輪網站改版](./plan.md#網站總覽與開始使用2026-11-11)。
 - 2026-11-10 Thread 階段 A：完成 PCB／TCB 拆分，Ready／sync／event 及 owner 改用 Thread，每 Process 仍一條。主機、QEMU、flash boot 與 GUI TTY 基本回歸通過；create／join／多 Thread user stacks 尚未實作。詳見 [階段 A 紀錄](docs/thread-stage-a.md) 與 [Spec 34](docs/SPEC-34-threads.md)。
 - CLI 磁碟開機已驗收。PowerShell 在專案根目錄執行 `wsl -d Ubuntu -- make run-disk`，由 OpenSBI 與 flash 載入器從一顆 WUFS 磁碟啟動至 `wuwaos/>`。已驗證新磁碟、重啟後讀回檔案及缺少磁碟時停止開機。詳見 [CLI 磁碟開機](./plan.md#cli-磁碟開機2026-11-09)。
 - CLI 文件已同步並通過 VitePress 建置。來源 `8b8ce26` 已推送至 `main`，`gh-pages` `4725bb6` 部署成功，已核對公開首頁、入門、開機、歷程與 journal 復原頁的更新內容。 [部署紀錄](https://github.com/johnson931128/WUWAOS/actions/runs/42569717948)
@@ -15,5 +15,5 @@
 - 2026-11-08：恢復剩餘 2B2、2C 與第 3–6 階段；實際演算法與依賴見 [plan.md](./plan.md#2026-11-08-剩餘階段執行規格與實際演算法)。
 - 2026-11-08 的 2B2、2C 與第 3–6 階段僅做必要整合編譯與文件部署建置，runtime 驗證標示 NOT_RUN。
 - 文件互動化第一輪：Block Async I/O、FD/OFD、換頁／Swap、WUFS journal 四章已分章 commit、建置部署；互動元件、參數／函式表與筆記引用已接入；互動／視覺 NOT_RUN，詳見 [plan.md](./plan.md#文件互動化第一輪2026-11-08)。
-- 全站改版：Phase 1 研究／設計規範已整理，Phase 2–5 待實作；首頁＋12 主章＋4 labs，詳細見 [plan.md](./plan.md#全站-visual-first-textbook-改版2026-11-08)。
+- 全站改版：Phase 1 研究／設計規範已整理。首頁與〈開始使用〉的可讀性更新已部署，其餘階段依實際進度驗收。詳見 [全站改版規劃](./plan.md#全站-visual-first-textbook-改版2026-11-08)。
 - 全站改版授權網站 build／視覺／互動／mobile 驗收，範圍限網站，不新增測試程式碼。
