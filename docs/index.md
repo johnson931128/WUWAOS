@@ -4,20 +4,25 @@ aside: false
 
 <script setup lang="ts">
 import SystemOverview from './.vitepress/theme/components/SystemOverview.vue'
+import HomeTerminal from './.vitepress/theme/components/HomeTerminal.vue'
 </script>
 
-<div class="home-textbook">
-
-<section class="editorial-hero">
-<div class="eyebrow">WUWAOS · A SOURCE-BASED OS TEXTBOOK</div>
-
-<h1>從第一條指令，到一個真正啟動的作業系統</h1>
-
-<p>WUWAOS 以 C 與 RISC-V 組合語言實作，透過 QEMU 在 RV64 虛擬電腦上啟動。這份教材沿著硬體、核心與使用者程式的邊界，連接作業系統觀念、目前原始碼與可觀察操作。</p>
-
-<div class="hero-meta"><span>QEMU virt</span><span>RV64 · single hart</span><span>S-mode kernel / U-mode apps</span></div>
+<section class="wuwa-home-hero" aria-label="WUWAOS 作業系統介紹">
+  <div class="wuwa-hero-copy">
+    <p class="wuwa-hero-overline"><span class="wuwa-live-dot" aria-hidden="true"></span> WUWAOS <span class="wuwa-hero-sep">/</span> RISC-V 64 EXPERIMENTAL OS</p>
+    <h1>從一行指令，<span>看見整個作業系統。</span></h1>
+    <p class="wuwa-hero-lead">從 <code>echo hello</code> 到 Trap、System Call、排程與記憶體管理，沿著真實的 C / RISC-V 原始碼理解一套可以在 QEMU 啟動的作業系統。</p>
+    <div class="wuwa-hero-actions">
+      <a class="wuwa-hero-primary" href="./topics/getting-started.html">開始探索 <span aria-hidden="true">↗</span></a>
+      <a class="wuwa-hero-secondary" href="https://github.com/johnson931128/WUWAOS">探索原始碼 <span aria-hidden="true">↗</span></a>
+    </div>
+    <div class="wuwa-hero-facts" aria-label="平台簡介">
+      <span>RV64</span><span>1 HART</span><span>QEMU VIRT</span><span>C + ASSEMBLY</span>
+    </div>
+  </div>
+  <HomeTerminal />
 </section>
-</div>
+<p class="wuwa-page-note">以實際 WUWAOS 原始碼為依據 · 圖示為教學示意，非 QEMU 即時追蹤</p>
 
 <div class="spec-strip" aria-label="WUWAOS 平台規格">
   <div><strong>RV64</strong><span>RISC-V 64-bit · QEMU virt</span></div>

@@ -100,3 +100,130 @@ body:has(.system-overview) .vp-doc h1, body:has(.system-overview) .vp-doc h2, bo
   .roadmap-grid a:hover, .home-link-card:hover { transform: none; }
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
 }
+
+
+/* WUWAOS design experiment: stronger editorial hierarchy without altering OS teaching models. */
+body:has(.wuwa-home-hero) .VPDoc .container,
+body:has(.wuwa-home-hero) .VPDoc .content,
+body:has(.wuwa-home-hero) .VPDoc .content-container { max-width: 1440px; }
+body:has(.wuwa-home-hero) .vp-doc { color: var(--os-ink); }
+.wuwa-home-hero {
+  background: #071825;
+  color: #f1f8f8;
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
+  align-items: center;
+  gap: clamp(1.3rem, 4vw, 4rem);
+  overflow: hidden;
+  border-radius: 1.1rem;
+  padding: clamp(1.5rem, 5vw, 4rem);
+  min-height: 470px;
+  border: 1px solid #204a55;
+}
+.wuwa-home-hero::before {
+  content: ""; position: absolute; inset: 0; pointer-events: none; z-index: -1;
+  background:
+    radial-gradient(circle at 75% 25%,rgba(36,117,123,.32),transparent 47%),
+    linear-gradient(rgba(126,226,206,.045) 1px, transparent 1px),
+    linear-gradient(90deg,rgba(126,226,206,.045) 1px,transparent 1px);
+  background-size: auto, 40px 40px, 40px 40px;
+}
+.wuwa-hero-copy { min-width: 0; }
+.wuwa-home-hero .wuwa-hero-overline {
+  margin: 0 0 1.4rem; color: #b1d1cf;
+  font: 650 .75rem/1.5 var(--vp-font-family-mono);
+  letter-spacing: .045em;
+}
+.wuwa-live-dot { display:inline-block;width:.48rem;height:.48rem;margin-right:.4rem;border-radius:50%;background:#6be4bd;box-shadow:0 0 0 3px rgba(107,228,189,.12); }
+.wuwa-hero-sep { padding: 0 .35rem; color:#5b8d94; }
+.wuwa-home-hero h1 {
+  color: #fff !important; letter-spacing: -.046em;
+  font-size: clamp(2.1rem,4.15vw,4.25rem); line-height: 1.14;
+  max-width: 16ch; margin: 0 0 1.2rem;
+}
+.wuwa-home-hero h1 span { color: #72dcc1; display: block; }
+.wuwa-home-hero .wuwa-hero-lead { color:#b3cbd0; line-height:1.85; max-width:56ch; font-size:clamp(.98rem,1.3vw,1.06rem);margin: 0; }
+.wuwa-hero-lead code { color: #bdf0cc; background:rgba(109,226,188,.12);border-radius:.3rem;padding:.1rem .35rem; }
+.wuwa-hero-actions { display:flex;gap:.8rem;flex-wrap:wrap;align-items:center;margin:2rem 0 1.9rem; }
+.wuwa-hero-actions a { text-decoration:none;display:inline-flex;align-items:center;justify-content:space-between;gap:1.5rem;font-weight:700;padding:.76rem 1.1rem;border-radius:.45rem;min-height:2.9rem;transition: background-color .3s, color .3s, transform .3s; }
+.wuwa-hero-primary { background:#6de2bc;color:#071b1f !important; }
+.wuwa-hero-primary:hover { background:#9cffe0; transform:translateY(-2px); }
+.wuwa-hero-secondary { color:#e5f6f3 !important; border: 1px solid #4b727b; }
+.wuwa-hero-secondary:hover { border-color:#bde9e0; }
+.wuwa-hero-actions a:focus-visible { outline:2px solid #9cffe0;outline-offset:3px; }
+.wuwa-hero-facts { display:flex;gap:.7rem 1.1rem;flex-wrap:wrap;color:#93b8be;font:600 .68rem/1.5 var(--vp-font-family-mono);letter-spacing:.06em; }
+.wuwa-hero-facts span:not(:first-child)::before { content:"/";margin-right:1rem;color:#3d6874; }
+.wuwa-page-note { margin:.55rem 0 1.9rem;text-align:right;color:var(--os-muted);font-size:.76rem; }
+body:has(.wuwa-home-hero) .vp-doc h2 { padding-bottom:.55rem;border-bottom:1px solid var(--os-line);font-size:clamp(1.5rem,2.4vw,2.05rem);letter-spacing:-.025em; }
+body:has(.wuwa-home-hero) .vp-doc h2::before {content:"";display:inline-block;width:.45rem;height:.45rem;background:var(--os-memory);border-radius:50%;margin:0 .7rem .18rem 0; }
+body:has(.wuwa-home-hero) .spec-strip {gap:0;border-top:1px solid var(--os-line);border-bottom:1px solid var(--os-line);margin:1.8rem 0 2.6rem; }
+body:has(.wuwa-home-hero) .spec-strip div { border:0;border-radius:0;border-right:1px solid var(--os-line);background:transparent;padding:1.2rem 1.5rem; }
+body:has(.wuwa-home-hero) .spec-strip div:last-child { border-right:0; }
+body:has(.wuwa-home-hero) .spec-strip strong {font:750 1.35rem/1.4 var(--vp-font-family-mono);letter-spacing:-.03em; }
+body:has(.wuwa-home-hero) .roadmap-grid {grid-template-columns:repeat(3,minmax(0,1fr));gap:0;border-top:1px solid var(--os-line);}
+body:has(.wuwa-home-hero) .roadmap-grid a {
+  border:0;border-bottom:1px solid var(--os-line);border-right:1px solid var(--os-line);
+  border-radius:0;background:transparent;padding:1.4rem 1.3rem;
+  transition:background-color .3s,color .3s;
+}
+body:has(.wuwa-home-hero) .roadmap-grid a:nth-child(3n) {border-right:0;}
+body:has(.wuwa-home-hero) .roadmap-grid a:hover {transform:none;background:var(--os-soft);}
+body:has(.wuwa-home-hero) .roadmap-grid strong {font-size:1.04rem;letter-spacing:-.01em;}
+body:has(.wuwa-home-hero) .roadmap-grid small {font-size:.7rem;letter-spacing:.05em;}
+
+/* Motion Prompt #081 · MIT License (c) 2026 Shohei Ohtaki · https://showheyohtaki.github.io/motion-prompt/#081
+   Hover lift: 10px / 0.3s ease-out; applies only to homepage lab links. */
+body:has(.wuwa-home-hero) .lab-grid .home-link-card {
+  border-radius:.8rem;min-height:7.7rem;padding:1.3rem 1.4rem;
+  background:var(--os-panel);
+  transition:transform .3s cubic-bezier(.22,1,.36,1),box-shadow .3s cubic-bezier(.22,1,.36,1),border-color .3s;
+}
+body:has(.wuwa-home-hero) .lab-grid .home-link-card:hover {
+  transform:translateY(-10px);box-shadow:0 12px 22px rgba(20,37,51,.22);border-color:var(--os-memory);
+}
+body:has(.wuwa-home-hero) .lab-grid .home-link-card:focus-visible {outline:2px solid var(--os-memory);outline-offset:3px;}
+/* Motion Prompt #086 · MIT License (c) 2026 Shohei Ohtaki · https://showheyohtaki.github.io/motion-prompt/#086
+   Underline expands in 0.3s on hover/focus and exits toward the right. */
+body:has(.wuwa-home-hero) .roadmap-grid a strong {position:relative;display:table;width:fit-content;}
+body:has(.wuwa-home-hero) .roadmap-grid a strong::after {
+  content:"";position:absolute;left:0;right:0;bottom:-3px;height:3px;background:var(--os-memory);
+  transform:scaleX(0);transform-origin:right center;transition:transform .3s cubic-bezier(.22,1,.36,1);
+}
+body:has(.wuwa-home-hero) .roadmap-grid a:hover strong::after,
+body:has(.wuwa-home-hero) .roadmap-grid a:focus-visible strong::after {transform:scaleX(1);transform-origin:left center;}
+/* Motion Prompt #079 · MIT License (c) 2026 Shohei Ohtaki · https://showheyohtaki.github.io/motion-prompt/#079
+   Progressive enhancement: scroll-linked reading progress on supported browsers. */
+@supports (animation-timeline: scroll()) {
+  body::after {
+    content:"";position:fixed;left:0;top:0;width:100%;height:3px;z-index:9999;
+    background:var(--vp-c-brand-1);transform:scaleX(0);transform-origin:left center;
+    pointer-events:none;animation:wuwa-reading-progress linear both;animation-timeline:scroll(root block);
+  }
+}
+@keyframes wuwa-reading-progress {to{transform:scaleX(1);}}
+@media (max-width:950px) {
+  .wuwa-home-hero{grid-template-columns:1fr;gap:2rem;}
+  .wuwa-home-hero h1 {max-width:20ch;}
+}
+@media (max-width:700px) {
+  body:has(.wuwa-home-hero) .roadmap-grid {grid-template-columns:repeat(2,minmax(0,1fr));}
+  body:has(.wuwa-home-hero) .roadmap-grid a:nth-child(3n){border-right:1px solid var(--os-line);}
+  body:has(.wuwa-home-hero) .roadmap-grid a:nth-child(2n){border-right:0;}
+  body:has(.wuwa-home-hero) .spec-strip div:nth-child(2){border-right:0;}
+}
+@media (max-width:420px) {
+  .wuwa-home-hero {padding:1.3rem;border-radius:.8rem;}
+  .wuwa-hero-facts span:not(:first-child)::before{margin-right:.4rem;}
+  body:has(.wuwa-home-hero) .roadmap-grid {grid-template-columns:1fr;}
+  body:has(.wuwa-home-hero) .roadmap-grid a {border-right:0!important;}
+  body:has(.wuwa-home-hero) .spec-strip div {padding:.8rem;}
+}
+@media (prefers-reduced-motion: reduce) {
+ .wuwa-hero-actions a, body:has(.wuwa-home-hero) .roadmap-grid a,
+ body:has(.wuwa-home-hero) .roadmap-grid a strong::after,
+ body:has(.wuwa-home-hero) .lab-grid .home-link-card {transition:none!important;}
+ body:has(.wuwa-home-hero) .lab-grid .home-link-card:hover, .wuwa-hero-primary:hover {transform:none;}
+ body::after {animation:none!important;display:none;}
+}
