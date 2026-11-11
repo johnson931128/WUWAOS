@@ -34,7 +34,65 @@ body { background: var(--os-canvas); color: var(--os-ink); }
 .vp-doc h2 { margin-top: 2.75rem; }
 .vp-doc p,.vp-doc li { overflow-wrap: anywhere; }
 .vp-doc pre code { overflow-wrap: normal; }
-.VPSidebarItem.level-1 .text { font-size: 13px; }
+.VPSidebarItem.level-1 .text { font-size: .875rem; }
+.VPDocAsideOutline .outline-link { font-size: .875rem; }
+.VPLocalNav .menu,
+.VPLocalNavOutlineDropdown button { font-size: .875rem; }
+
+.vp-doc:has(.start-routes) {
+  --vp-code-font-size: .875rem;
+  line-height: 1.7;
+}
+
+.vp-doc:has(.start-routes) div[class*="language-"] > span.lang {
+  font-size: .875rem;
+}
+
+.start-routes,
+.vp-doc .start-flow {
+  display: grid;
+  gap: .75rem;
+  margin: 1.25rem 0;
+  padding: 0;
+}
+
+.start-routes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.vp-doc .start-flow { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+.start-routes a,
+.start-flow li {
+  min-width: 0;
+  padding: .85rem 1rem;
+  border: 1px solid var(--os-line);
+  border-radius: var(--os-radius-panel);
+  background: var(--os-panel);
+  line-height: 1.7;
+}
+
+.start-routes a { text-decoration: none; }
+.start-routes a:is(:hover, :focus-visible) { background: var(--os-accent-soft); }
+.start-routes strong { text-decoration: underline; text-underline-offset: .2em; }
+.start-routes span,
+.start-flow span {
+  display: block;
+  margin-top: .2rem;
+  color: var(--os-muted);
+  font-size: .9375rem;
+}
+
+.vp-doc .start-flow { counter-reset: launch-step; }
+.vp-doc .start-flow li { list-style: none; margin: 0; counter-increment: launch-step; }
+.start-flow li::before {
+  content: counter(launch-step) ".";
+  margin-inline-end: .35em;
+  color: var(--os-accent);
+  font-weight: 650;
+}
+
+@media (max-width: 640px) {
+  .start-routes,
+  .vp-doc .start-flow { grid-template-columns: 1fr; }
+}
 .VPNavBarTitle .title { font-weight: 700; letter-spacing: .01em; }
 :where(button,input,select,textarea,a,[tabindex]):focus-visible { outline: 3px solid var(--os-focus); outline-offset: 2px; }
 button,select,input { font: inherit; }

@@ -1,4 +1,5 @@
 - 詳細步驟與方法：[plan.md](./plan.md)
+- 網站總覽與〈開始使用〉已更新，Chrome 通過桌機、窄螢幕與鍵盤導覽檢查，GitHub Pages 發布待確認。詳見 [本輪網站改版](./plan.md#網站總覽與開始使用2026-11-11)。
 - 2026-11-10 Thread 階段 A：完成 PCB／TCB 拆分，Ready／sync／event 及 owner 改用 Thread，每 Process 仍一條。主機、QEMU、flash boot 與 GUI TTY 基本回歸通過；create／join／多 Thread user stacks 尚未實作。詳見 [階段 A 紀錄](docs/thread-stage-a.md) 與 [Spec 34](docs/SPEC-34-threads.md)。
 - CLI 磁碟開機已驗收。PowerShell 在專案根目錄執行 `wsl -d Ubuntu -- make run-disk`，由 OpenSBI 與 flash 載入器從一顆 WUFS 磁碟啟動至 `wuwaos/>`。已驗證新磁碟、重啟後讀回檔案及缺少磁碟時停止開機。詳見 [CLI 磁碟開機](./plan.md#cli-磁碟開機2026-11-09)。
 - CLI 文件已同步並通過 VitePress 建置。來源 `8b8ce26` 已推送至 `main`，`gh-pages` `4725bb6` 部署成功，已核對公開首頁、入門、開機、歷程與 journal 復原頁的更新內容。 [部署紀錄](https://github.com/johnson931128/WUWAOS/actions/runs/42569717948)
