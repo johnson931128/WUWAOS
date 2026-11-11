@@ -1,28 +1,69 @@
+/* =========================================================================
+   WUWAOS — documentation & interactive learning platform
+   Design system: "OS lab schematic"
+   - Neutral engineering base (light + dark)
+   - Six semantic role colors as the palette spine (see visual-system.md)
+   - Monospace framing for the technical layer, hairline rules, coordinates
+   ========================================================================= */
+
 :root {
-  --os-cpu: #8a5200;
-  --os-memory: #006d68;
-  --os-kernel: #5144a3;
-  --os-process: #8b3ca5;
-  --os-io: #075da8;
-  --os-storage: #865500;
-  --os-fault: #b83232;
-  --os-ink: #18232b;
-  --os-muted: #53636d;
-  --os-canvas: #f5f7f6;
-  --os-panel: #ffffff;
-  --os-line: #d5dddc;
-  --os-soft: #eaf0ee;
-  --os-text: var(--os-ink);
-  --os-surface: var(--os-panel);
-  --os-border: var(--os-line);
-  --os-accent: var(--vp-c-brand-1);
-  --vp-c-brand-1: #28674e;
-  --vp-c-brand-2: #358660;
-  --vp-c-brand-3: #246348;
-  --vp-c-brand-soft: rgba(53, 134, 96, .12);
-  --vp-font-family-base: 'Segoe UI', 'Microsoft JhengHei', system-ui, sans-serif;
-  --vp-font-family-mono: Consolas, 'Cascadia Code', monospace;
+  /* ---- Role colors (meaning is fixed; light variants are inks on light) ---- */
+  --os-cpu: #8a5200;        /* CPU / scheduling — amber          */
+  --os-memory: #006d68;     /* memory / frame — teal             */
+  --os-kernel: #5144a3;     /* kernel / privilege — indigo       */
+  --os-process: #8b3ca5;    /* process / context — violet        */
+  --os-io: #075da8;         /* I/O — blue                        */
+  --os-storage: #865500;    /* storage / persistence — ochre     */
+  --os-fault: #b83232;      /* error — coral                     */
+
+  /* ---- Neutral engineering base (light) ---- */
+  --os-surface-0: #f5f6f4;  /* page background            */
+  --os-surface-1: #ffffff;  /* raised surface             */
+  --os-surface-2: #ecefee;  /* inset / recessed surface    */
+  --os-surface-3: #e2e7e4;  /* deeper inset               */
+  --os-ink-0: #161b19;      /* primary text               */
+  --os-ink-1: #454f4b;      /* secondary text             */
+  --os-ink-2: #737f7a;      /* muted text                 */
+  --os-line-0: #d7ded9;     /* hairline rule              */
+  --os-line-1: #bcc5bf;     /* stronger rule              */
+
+  /* ---- Brand = the teal spine (memory role) ---- */
+  --os-accent: var(--os-memory);
+  --os-accent-ink: #ffffff;
+
+  /* ---- Legacy aliases (keep existing components working) ---- */
+  --os-ink: var(--os-ink-0);
+  --os-muted: var(--os-ink-1);
+  --os-canvas: var(--os-surface-0);
+  --os-panel: var(--os-surface-1);
+  --os-line: var(--os-line-0);
+  --os-soft: var(--os-surface-2);
+  --os-text: var(--os-ink-0);
+  --os-surface: var(--os-surface-1);
+  --os-border: var(--os-line-0);
+
+  /* ---- VitePress brand mapping ---- */
+  --vp-c-brand-1: var(--os-memory);
+  --vp-c-brand-2: #0a837c;
+  --vp-c-brand-3: #005a55;
+  --vp-c-brand-soft: color-mix(in srgb, var(--os-memory) 12%, transparent);
+
+  /* ---- Typography ---- */
+  --vp-font-family-base: 'Segoe UI', 'Microsoft JhengHei', 'Noto Sans TC', system-ui, -apple-system, sans-serif;
+  --vp-font-family-mono: 'Cascadia Code', Consolas, 'SFMono-Regular', 'Noto Sans Mono CJK TC', monospace;
+
+  /* ---- Motion tokens (values carried from Motion Prompt #074 / #081 / kit) ---- */
+  --wuwa-ease-out: cubic-bezier(0.22, 1, 0.36, 1);   /* kit eOut */
+  --wuwa-ease-io: cubic-bezier(0.65, 0, 0.35, 1);    /* kit eIO  */
+  --wuwa-dur-reveal: 0.7s;   /* #074 fade-in duration */
+  --wuwa-dur-hover: 0.3s;    /* #081 hover            */
+
+  /* ---- Layout ---- */
+  --wuwa-radius: 0.5rem;
+  --wuwa-radius-sm: 0.3rem;
+  --wuwa-focus: 2px solid var(--os-memory);
 }
+
 .dark {
   --os-cpu: #ffc766;
   --os-memory: #72ded3;
@@ -31,199 +72,456 @@
   --os-io: #8cc8ff;
   --os-storage: #f2c66e;
   --os-fault: #ff9995;
-  --os-ink: #e8eeec;
-  --os-muted: #b4c0bf;
-  --os-canvas: #151a1d;
-  --os-panel: #1e2629;
-  --os-line: #3b4848;
-  --os-soft: #283333;
-  --os-text: var(--os-ink);
-  --os-surface: var(--os-panel);
-  --os-border: var(--os-line);
-  --os-accent: var(--vp-c-brand-1);
-  --vp-c-brand-1: #8ed7ac;
-  --vp-c-brand-2: #69bc90;
-  --vp-c-brand-3: #408a64;
+
+  --os-surface-0: #0d1312;
+  --os-surface-1: #141c1a;
+  --os-surface-2: #1c2624;
+  --os-surface-3: #25322f;
+  --os-ink-0: #e7edea;
+  --os-ink-1: #a4b1ab;
+  --os-ink-2: #6c7a74;
+  --os-line-0: #29332f;
+  --os-line-1: #3c4945;
+
+  --os-accent: var(--os-memory);
+  --os-accent-ink: #04211d;
+
+  --vp-c-brand-1: var(--os-memory);
+  --vp-c-brand-2: #4fc9bd;
+  --vp-c-brand-3: #2fa39a;
+  --vp-c-brand-soft: color-mix(in srgb, var(--os-memory) 16%, transparent);
 }
-.vp-doc { line-height: 1.85; }
-.vp-doc h1 { line-height: 1.4; letter-spacing: -.025em; }
-.vp-doc h2 { margin-top: 44px; }
+
+/* =========================================================================
+   Base
+   ========================================================================= */
+html { scroll-behavior: smooth; }
+body { background: var(--os-surface-0); }
+.vp-doc { line-height: 1.85; color: var(--os-ink-0); }
+.vp-doc h1, .vp-doc h2, .vp-doc h3, .vp-doc h4 { color: var(--os-ink-0); }
 .vp-doc p, .vp-doc li { overflow-wrap: anywhere; }
 .vp-doc pre code { overflow-wrap: normal; }
-.VPSidebarItem.level-1 .text { font-size: 13px; }
-.VPNavBarTitle .title { font-weight: 700; letter-spacing: .02em; }
-
-/* Homepage has a wider canvas for diagrams; chapter prose keeps the default measure. */
-body:has(.system-overview) .VPDoc .container { max-width: 1440px; }
-body:has(.system-overview) .VPDoc .content { max-width: none; }
-body:has(.system-overview) .VPDoc .content-container { max-width: none; }
-body:has(.system-overview) .vp-doc { color: var(--os-ink); }
-body:has(.system-overview) .vp-doc h1, body:has(.system-overview) .vp-doc h2, body:has(.system-overview) .vp-doc h3 { color: var(--os-ink); }
-.editorial-hero {
-  position: relative; overflow: hidden; margin: 0 0 1rem; padding: clamp(1.5rem, 3vw, 2rem);
-  border: 1px solid var(--os-line); border-radius: 1.5rem;
-  background: radial-gradient(ellipse at 90% 0%, color-mix(in srgb, var(--os-memory) 15%, transparent), transparent 48%), var(--os-panel);
-}
-.editorial-hero .eyebrow { color: var(--os-memory); font: 700 .78rem/1.2 var(--vp-font-family-mono); letter-spacing: .14em; text-transform: uppercase; }
-.editorial-hero h1 { max-width: 18ch; margin: .45rem 0 .7rem; font-size: clamp(2rem, 3vw, 3rem); line-height: 1.12; }
-.editorial-hero p { max-width: 68ch; margin: .45rem 0; color: var(--os-muted); font-size: clamp(1rem, 1.3vw, 1.15rem); }
-.editorial-hero .hero-meta { display: flex; flex-wrap: wrap; gap: .6rem; margin-top: .8rem; }
-.hero-meta span { border: 1px solid var(--os-line); border-radius: 99px; padding: .35rem .7rem; color: var(--os-muted); font: .8rem var(--vp-font-family-mono); }
-.spec-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .7rem; margin: 1.25rem 0 2rem; }
-.spec-strip div { padding: 1rem; border: 1px solid var(--os-line); border-radius: .8rem; background: var(--os-panel); }
-.spec-strip strong { display: block; color: var(--os-ink); font-size: 1.1rem; }
-.spec-strip span { color: var(--os-muted); font-size: .83rem; }
-.home-section-intro { max-width: 76ch; color: var(--os-muted); }
-.roadmap-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .7rem; margin: 1.2rem 0; }
-.roadmap-grid a, .home-link-card { display: block; min-width: 0; padding: 1rem; border: 1px solid var(--os-line); border-radius: .85rem; background: var(--os-panel); text-decoration: none; }
-.roadmap-grid a:hover, .home-link-card:hover { border-color: var(--os-memory); transform: translateY(-2px); }
-.roadmap-grid small { display: block; color: var(--os-memory); font: 700 .72rem var(--vp-font-family-mono); }
-.roadmap-grid strong { display: block; margin: .3rem 0; color: var(--os-ink); }
-.roadmap-grid span { color: var(--os-muted); font-size: .82rem; }
-.lab-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .8rem; }
-.lab-grid .home-link-card { color: var(--os-ink); }
-.home-link-card b { display: block; margin-bottom: .25rem; }
-.home-link-card span { color: var(--os-muted); font-size: .9rem; }
-.vp-doc details { margin: 1.25rem 0; padding: .25rem 1.2rem 1rem; border: 1px solid var(--os-line); border-radius: .8rem; background: var(--os-panel); }
-.vp-doc details summary { padding: .8rem 0; color: var(--os-ink); cursor: pointer; font-weight: 700; }
-.system-overview { margin: 1.5rem 0 2.5rem; }
-@media (max-width: 800px) {
-  .spec-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .roadmap-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .lab-grid { grid-template-columns: 1fr; }
-}
-@media (max-width: 420px) {
-  .editorial-hero { padding: 1.4rem; }
-  .roadmap-grid { grid-template-columns: 1fr; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .roadmap-grid a:hover, .home-link-card:hover { transform: none; }
-  *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
+.vp-doc a { color: var(--vp-c-brand-1); text-underline-offset: 2px; }
+.vp-doc a:hover { color: var(--vp-c-brand-2); }
+.vp-doc code {
+  color: var(--os-ink-0);
+  background: var(--os-surface-2);
+  border: 1px solid var(--os-line-0);
+  border-radius: var(--wuwa-radius-sm);
+  padding: 0.08rem 0.35rem;
+  font-family: var(--vp-font-family-mono);
 }
 
+/* =========================================================================
+   Phase 2 — Documentation layout
+   ========================================================================= */
 
-/* WUWAOS design experiment: stronger editorial hierarchy without altering OS teaching models. */
-body:has(.wuwa-home-hero) .VPDoc .container,
-body:has(.wuwa-home-hero) .VPDoc .content,
-body:has(.wuwa-home-hero) .VPDoc .content-container { max-width: 1440px; }
-body:has(.wuwa-home-hero) .vp-doc { color: var(--os-ink); }
-.wuwa-home-hero {
-  background: #071825;
-  color: #f1f8f8;
+/* ---- Sidebar ---- */
+.VPSidebar { border-right: 1px solid var(--os-line-0); }
+.VPSidebarItem .text { color: var(--os-ink-1); transition: color var(--wuwa-dur-hover) var(--wuwa-ease-out); }
+.VPSidebarItem:hover > .VPMenu .text,
+.VPSidebarItem .text:hover { color: var(--os-ink-0); }
+.VPSidebarItem.is-active > .VPMenu .text,
+.VPSidebarItem.is-active > a { color: var(--vp-c-brand-1); font-weight: 650; }
+.VPSidebarItem .VPLink a:hover, .VPSidebarItem .VPMenu .text:hover {
+  text-decoration: none;
+  background: var(--os-surface-2);
+}
+.VPSidebarItem.level-1 .text {
+  color: var(--os-ink-2);
+  font-family: var(--vp-font-family-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+/* active marker: a left rail instead of a full pill */
+.VPSidebarItem.is-active > .VPMenu > .VPMenuSummary .text,
+.VPSidebarItem.is-active > a {
   position: relative;
-  isolation: isolate;
-  display: grid;
-  grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
-  align-items: center;
-  gap: clamp(1.3rem, 4vw, 4rem);
-  overflow: hidden;
-  border-radius: 1.1rem;
-  padding: clamp(1.5rem, 5vw, 4rem);
-  min-height: 470px;
-  border: 1px solid #204a55;
 }
+.VPSidebarItem.is-active > a::before,
+.VPSidebarItem.is-active > .VPMenu .text::before {
+  content: ""; position: absolute; left: -14px; top: 50%; transform: translateY(-50%);
+  width: 3px; height: 60%; background: var(--vp-c-brand-1); border-radius: 2px;
+}
+
+/* ---- Nav bar ---- */
+.VPNavBar { border-bottom: 1px solid var(--os-line-0); background: color-mix(in srgb, var(--os-surface-0) 88%, transparent); backdrop-filter: blur(8px); }
+.VPNavBarTitle .title { font-weight: 750; letter-spacing: 0.01em; }
+.VPNavBarTitle .title::before { content: "⌁ "; color: var(--vp-c-brand-1); }
+
+/* ---- Table of contents ---- */
+.VPDoc .outline .outline-marker { display: none; }
+.VPDoc .outline .header { font-family: var(--vp-font-family-mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--os-ink-2); }
+.VPDoc .outline .item { border-left: 1px solid var(--os-line-0); }
+.VPDoc .outline .link { color: var(--os-ink-1); transition: color var(--wuwa-dur-hover) var(--wuwa-ease-out), border-color var(--wuwa-dur-hover); }
+.VPDoc .outline .link.is-active { color: var(--vp-c-brand-1); }
+.VPDoc .outline .link:hover { color: var(--os-ink-0); text-decoration: none; }
+.VPDoc .outline .level > .item { padding-left: 0.75rem; }
+.VPDoc .outline .level > .item::before {
+  content: ""; position: absolute; left: -1px; top: 0.3rem; width: 2px; height: 0.6rem; background: var(--os-line-1);
+}
+
+/* ---- Code blocks ---- */
+.vp-doc .vp-code { border: 1px solid var(--os-line-0); border-radius: var(--wuwa-radius); overflow: hidden; }
+.vp-doc .vp-code > .code-group-header {
+  border-bottom: 1px solid var(--os-line-0);
+  background: var(--os-surface-2);
+  font-family: var(--vp-font-family-mono);
+}
+.vp-doc .vp-code .line { min-height: 1.5em; }
+.vp-doc .language-c .token.function,
+.vp-doc .language-asm .token.function { color: var(--os-kernel); }
+.vp-doc .language-c .token.keyword,
+.vp-doc .language-asm .token.keyword { color: var(--os-process); }
+.vp-doc .language-c .token.comment, .vp-doc .language-asm .token.comment { color: var(--os-ink-2); font-style: italic; }
+.vp-doc .language-c .token.string { color: var(--os-storage); }
+.vp-doc .language-c .token.number { color: var(--os-cpu); }
+
+/* ---- Tables ---- */
+.vp-doc table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
+.vp-doc table th, .vp-doc table td { border: 1px solid var(--os-line-0); padding: 0.6rem 0.85rem; text-align: left; }
+.vp-doc table th {
+  background: var(--os-surface-2);
+  font-family: var(--vp-font-family-mono);
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--os-ink-1);
+  white-space: nowrap;
+}
+.vp-doc table tbody tr { transition: background-color var(--wuwa-dur-hover) var(--wuwa-ease-out); }
+.vp-doc table tbody tr:hover { background: var(--os-surface-2); }
+.vp-doc table td:first-child { font-weight: 600; }
+
+/* ---- Chapter headings: coordinate + rule, not a pill ---- */
+.vp-doc h2 {
+  margin-top: 3.25rem;
+  padding-bottom: 0.5rem;
+  font-size: clamp(1.5rem, 2.4vw, 1.95rem);
+  letter-spacing: -0.02em;
+  line-height: 1.3;
+  border-bottom: 1px solid var(--os-line-0);
+  position: relative;
+}
+.vp-doc h2::before {
+  content: ""; position: absolute; left: 0; bottom: -1px;
+  width: 2.4rem; height: 2px; background: var(--vp-c-brand-1);
+}
+.vp-doc h3 { margin-top: 2rem; font-size: 1.2rem; letter-spacing: -0.01em; }
+.vp-doc h3::before { content: "§ "; color: var(--vp-c-brand-1); font-family: var(--vp-font-family-mono); font-weight: 700; }
+
+/* ---- Source-code references: make path chips readable ---- */
+.vp-doc code[title], .vp-doc .source-ref {
+  font-family: var(--vp-font-family-mono);
+}
+.vp-doc a code { text-decoration: none; }
+
+/* =========================================================================
+   Homepage — shared wide canvas
+   ========================================================================= */
+body:has(.wuwa-home) .VPDoc .container,
+body:has(.wuwa-home) .VPDoc .content,
+body:has(.wuwa-home) .VPDoc .content-container { max-width: 1320px; }
+body:has(.wuwa-home) .vp-doc { color: var(--os-ink-0); }
+/* Homepage sections are editorial, so keep the wide measure; chapter prose keeps default. */
+body:has(.wuwa-home) .vp-doc .content-container { max-width: 1320px; }
+
+/* Section scaffold: coordinate label + hairline top rule */
+.wuwa-home section.wuwa-block { position: relative; padding-top: 1rem; margin-top: clamp(3rem, 7vw, 5rem); }
+.wuwa-home section.wuwa-block > .wuwa-kicker {
+  display: flex; align-items: center; gap: 0.75rem;
+  font-family: var(--vp-font-family-mono); font-size: 0.72rem; font-weight: 700;
+  letter-spacing: 0.12em; color: var(--os-ink-2); text-transform: uppercase;
+  margin-bottom: 1rem;
+}
+.wuwa-home section.wuwa-block > .wuwa-kicker::before {
+  content: ""; width: 1.75rem; height: 1px; background: var(--os-line-1);
+}
+.wuwa-home section.wuwa-block > .wuwa-kicker .wuwa-idx { color: var(--vp-c-brand-1); }
+.wuwa-home section.wuwa-block h2 {
+  border-bottom: none; margin: 0 0 0.4rem;
+  font-size: clamp(1.6rem, 3vw, 2.3rem); letter-spacing: -0.03em; line-height: 1.2;
+}
+.wuwa-home section.wuwa-block h2::before { display: none; }
+.wuwa-home section.wuwa-block > p.wuwa-lead {
+  max-width: 68ch; margin: 0.75rem 0 0; color: var(--os-ink-1); font-size: 1.02rem; line-height: 1.8;
+}
+
+/* =========================================================================
+   Phase 1 — Hero
+   ========================================================================= */
+.wuwa-home-hero {
+  position: relative; isolation: isolate; overflow: hidden;
+  display: grid; grid-template-columns: minmax(0, 1.02fr) minmax(0, 0.98fr);
+  align-items: center; gap: clamp(1.5rem, 4vw, 3.5rem);
+  min-height: min(78vh, 640px);
+  padding: clamp(1.5rem, 4.5vw, 3.5rem);
+  margin-top: 1.25rem;
+  border: 1px solid var(--os-line-0);
+  border-radius: 0.75rem;
+  background: var(--os-surface-1);
+}
+/* faint engineering grid — not particles */
 .wuwa-home-hero::before {
-  content: ""; position: absolute; inset: 0; pointer-events: none; z-index: -1;
+  content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
   background:
-    radial-gradient(circle at 75% 25%,rgba(36,117,123,.32),transparent 47%),
-    linear-gradient(rgba(126,226,206,.045) 1px, transparent 1px),
-    linear-gradient(90deg,rgba(126,226,206,.045) 1px,transparent 1px);
-  background-size: auto, 40px 40px, 40px 40px;
+    linear-gradient(var(--os-line-0) 1px, transparent 1px) 0 0 / 44px 44px,
+    linear-gradient(90deg, var(--os-line-0) 1px, transparent 1px) 0 0 / 44px 44px;
+  opacity: 0.5;
+  -webkit-mask-image: radial-gradient(ellipse 90% 80% at 30% 20%, #000 0%, transparent 72%);
+          mask-image: radial-gradient(ellipse 90% 80% at 30% 20%, #000 0%, transparent 72%);
+}
+/* privilege-mode band on the right edge of the hero */
+.wuwa-home-hero::after {
+  content: "M\n/\nS\n/\nU";
+  position: absolute; right: 0.6rem; top: 50%; transform: translateY(-50%);
+  writing-mode: vertical-rl; font-family: var(--vp-font-family-mono);
+  font-size: 0.6rem; letter-spacing: 0.5em; color: var(--os-ink-2); opacity: 0.5;
 }
 .wuwa-hero-copy { min-width: 0; }
-.wuwa-home-hero .wuwa-hero-overline {
-  margin: 0 0 1.4rem; color: #b1d1cf;
-  font: 650 .75rem/1.5 var(--vp-font-family-mono);
-  letter-spacing: .045em;
+.wuwa-hero-overline {
+  display: flex; align-items: center; gap: 0.6rem; margin: 0 0 1.25rem;
+  font-family: var(--vp-font-family-mono); font-size: 0.76rem; font-weight: 650; letter-spacing: 0.05em;
+  color: var(--os-ink-1);
 }
-.wuwa-live-dot { display:inline-block;width:.48rem;height:.48rem;margin-right:.4rem;border-radius:50%;background:#6be4bd;box-shadow:0 0 0 3px rgba(107,228,189,.12); }
-.wuwa-hero-sep { padding: 0 .35rem; color:#5b8d94; }
+.wuwa-hero-overline .wuwa-sep { color: var(--os-line-1); }
+.wuwa-hero-overline b { color: var(--vp-c-brand-1); font-weight: 750; }
+.wuwa-live-dot { width: 0.46rem; height: 0.46rem; border-radius: 50%; background: var(--vp-c-brand-1); box-shadow: 0 0 0 3px var(--vp-c-brand-soft); }
 .wuwa-home-hero h1 {
-  color: #fff !important; letter-spacing: -.046em;
-  font-size: clamp(2.1rem,4.15vw,4.25rem); line-height: 1.14;
-  max-width: 16ch; margin: 0 0 1.2rem;
+  color: var(--os-ink-0); margin: 0 0 1.1rem;
+  font-size: clamp(2.2rem, 4.6vw, 3.9rem); font-weight: 780; line-height: 1.12; letter-spacing: -0.045em;
+  max-width: 17ch;
 }
-.wuwa-home-hero h1 span { color: #72dcc1; display: block; }
-.wuwa-home-hero .wuwa-hero-lead { color:#b3cbd0; line-height:1.85; max-width:56ch; font-size:clamp(.98rem,1.3vw,1.06rem);margin: 0; }
-.wuwa-hero-lead code { color: #bdf0cc; background:rgba(109,226,188,.12);border-radius:.3rem;padding:.1rem .35rem; }
-.wuwa-hero-actions { display:flex;gap:.8rem;flex-wrap:wrap;align-items:center;margin:2rem 0 1.9rem; }
-.wuwa-hero-actions a { text-decoration:none;display:inline-flex;align-items:center;justify-content:space-between;gap:1.5rem;font-weight:700;padding:.76rem 1.1rem;border-radius:.45rem;min-height:2.9rem;transition: background-color .3s, color .3s, transform .3s; }
-.wuwa-hero-primary { background:#6de2bc;color:#071b1f !important; }
-.wuwa-hero-primary:hover { background:#9cffe0; transform:translateY(-2px); }
-.wuwa-hero-secondary { color:#e5f6f3 !important; border: 1px solid #4b727b; }
-.wuwa-hero-secondary:hover { border-color:#bde9e0; }
-.wuwa-hero-actions a:focus-visible { outline:2px solid #9cffe0;outline-offset:3px; }
-.wuwa-hero-facts { display:flex;gap:.7rem 1.1rem;flex-wrap:wrap;color:#93b8be;font:600 .68rem/1.5 var(--vp-font-family-mono);letter-spacing:.06em; }
-.wuwa-hero-facts span:not(:first-child)::before { content:"/";margin-right:1rem;color:#3d6874; }
-.wuwa-page-note { margin:.55rem 0 1.9rem;text-align:right;color:var(--os-muted);font-size:.76rem; }
-body:has(.wuwa-home-hero) .vp-doc h2 { padding-bottom:.55rem;border-bottom:1px solid var(--os-line);font-size:clamp(1.5rem,2.4vw,2.05rem);letter-spacing:-.025em; }
-body:has(.wuwa-home-hero) .vp-doc h2::before {content:"";display:inline-block;width:.45rem;height:.45rem;background:var(--os-memory);border-radius:50%;margin:0 .7rem .18rem 0; }
-body:has(.wuwa-home-hero) .spec-strip {gap:0;border-top:1px solid var(--os-line);border-bottom:1px solid var(--os-line);margin:1.8rem 0 2.6rem; }
-body:has(.wuwa-home-hero) .spec-strip div { border:0;border-radius:0;border-right:1px solid var(--os-line);background:transparent;padding:1.2rem 1.5rem; }
-body:has(.wuwa-home-hero) .spec-strip div:last-child { border-right:0; }
-body:has(.wuwa-home-hero) .spec-strip strong {font:750 1.35rem/1.4 var(--vp-font-family-mono);letter-spacing:-.03em; }
-body:has(.wuwa-home-hero) .roadmap-grid {grid-template-columns:repeat(3,minmax(0,1fr));gap:0;border-top:1px solid var(--os-line);}
-body:has(.wuwa-home-hero) .roadmap-grid a {
-  border:0;border-bottom:1px solid var(--os-line);border-right:1px solid var(--os-line);
-  border-radius:0;background:transparent;padding:1.4rem 1.3rem;
-  transition:background-color .3s,color .3s;
+.wuwa-home-hero h1 .wuwa-accent { color: var(--vp-c-brand-1); }
+.wuwa-hero-lead {
+  max-width: 54ch; margin: 0 0 1.75rem; color: var(--os-ink-1);
+  font-size: clamp(1rem, 1.35vw, 1.1rem); line-height: 1.85;
 }
-body:has(.wuwa-home-hero) .roadmap-grid a:nth-child(3n) {border-right:0;}
-body:has(.wuwa-home-hero) .roadmap-grid a:hover {transform:none;background:var(--os-soft);}
-body:has(.wuwa-home-hero) .roadmap-grid strong {font-size:1.04rem;letter-spacing:-.01em;}
-body:has(.wuwa-home-hero) .roadmap-grid small {font-size:.7rem;letter-spacing:.05em;}
+.wuwa-hero-lead code { color: var(--vp-c-brand-1); background: var(--vp-c-brand-soft); border-color: transparent; font-weight: 600; }
+.wuwa-hero-actions { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 1.9rem; }
+.wuwa-hero-actions a {
+  display: inline-flex; align-items: center; justify-content: space-between; gap: 0.6rem;
+  min-height: 2.9rem; padding: 0.62rem 1.05rem; text-decoration: none; font-weight: 650; font-size: 0.95rem;
+  border: 1px solid transparent; border-radius: var(--wuwa-radius);
+  transition: background-color var(--wuwa-dur-hover) var(--wuwa-ease-out),
+              color var(--wuwa-dur-hover) var(--wuwa-ease-out),
+              border-color var(--wuwa-dur-hover) var(--wuwa-ease-out),
+              transform var(--wuwa-dur-hover) var(--wuwa-ease-out);
+}
+.wuwa-hero-primary { background: var(--vp-c-brand-1); color: var(--os-accent-ink) !important; }
+.wuwa-hero-primary:hover { background: var(--vp-c-brand-2); transform: translateY(-2px); }
+.wuwa-hero-secondary { color: var(--os-ink-0) !important; border-color: var(--os-line-1); background: var(--os-surface-1); }
+.wuwa-hero-secondary:hover { border-color: var(--vp-c-brand-1); color: var(--vp-c-brand-1) !important; transform: translateY(-2px); }
+.wuwa-hero-actions a:focus-visible { outline: var(--wuwa-focus); outline-offset: 3px; }
 
-/* Motion Prompt #081 · MIT License (c) 2026 Shohei Ohtaki · https://showheyohtaki.github.io/motion-prompt/#081
-   Hover lift: 10px / 0.3s ease-out; applies only to homepage lab links. */
-body:has(.wuwa-home-hero) .lab-grid .home-link-card {
-  border-radius:.8rem;min-height:7.7rem;padding:1.3rem 1.4rem;
-  background:var(--os-panel);
-  transition:transform .3s cubic-bezier(.22,1,.36,1),box-shadow .3s cubic-bezier(.22,1,.36,1),border-color .3s;
+/* platform readout: monospace spec, hairline columns (not cards) */
+.wuwa-hero-facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--os-line-0); border: 1px solid var(--os-line-0); border-radius: var(--wuwa-radius-sm); overflow: hidden; }
+.wuwa-hero-facts > div { background: var(--os-surface-1); padding: 0.7rem 0.8rem; }
+.wuwa-hero-facts dt { font-family: var(--vp-font-family-mono); font-size: 0.6rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--os-ink-2); }
+.wuwa-hero-facts dd { margin: 0.25rem 0 0; font-family: var(--vp-font-family-mono); font-size: 0.86rem; font-weight: 700; color: var(--os-ink-0); }
+.wuwa-page-note { margin: 0.7rem 0 0; color: var(--os-ink-2); font-size: 0.76rem; }
+.wuwa-page-note b { color: var(--os-ink-1); font-weight: 650; }
+
+/* =========================================================================
+   Terminal frame (shared look; the demo itself is HomeTerminal.vue)
+   ========================================================================= */
+.wuwa-console {
+  position: relative; isolation: isolate; overflow: hidden;
+  min-width: 0; align-self: stretch;
+  display: flex; flex-direction: column;
+  background: #0a1310; color: #e6f0ec;
+  border: 1px solid color-mix(in srgb, var(--os-memory) 30%, var(--os-line-0));
+  border-radius: var(--wuwa-radius);
+  box-shadow: 0 24px 70px rgba(4, 12, 10, 0.32);
 }
-body:has(.wuwa-home-hero) .lab-grid .home-link-card:hover {
-  transform:translateY(-10px);box-shadow:0 12px 22px rgba(20,37,51,.22);border-color:var(--os-memory);
+/* #154 spotlight — pointer-driven radial surface light */
+.wuwa-console::before {
+  content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 0;
+  background: radial-gradient(120px circle at var(--spot-x, 50%) var(--spot-y, 30%), rgba(255, 255, 255, 0.14), transparent);
 }
-body:has(.wuwa-home-hero) .lab-grid .home-link-card:focus-visible {outline:2px solid var(--os-memory);outline-offset:3px;}
-/* Motion Prompt #086 · MIT License (c) 2026 Shohei Ohtaki · https://showheyohtaki.github.io/motion-prompt/#086
-   Underline expands in 0.3s on hover/focus and exits toward the right. */
-body:has(.wuwa-home-hero) .roadmap-grid a strong {position:relative;display:table;width:fit-content;}
-body:has(.wuwa-home-hero) .roadmap-grid a strong::after {
-  content:"";position:absolute;left:0;right:0;bottom:-3px;height:3px;background:var(--os-memory);
-  transform:scaleX(0);transform-origin:right center;transition:transform .3s cubic-bezier(.22,1,.36,1);
+.wuwa-console > * { position: relative; z-index: 1; }
+.wuwa-console .console-header,
+.wuwa-console .console-footer {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.6rem;
+  padding: 0.75rem 1rem; font-family: var(--vp-font-family-mono);
+  font-size: 0.63rem; font-weight: 650; letter-spacing: 0.075em; color: #8fa6a0;
+  border-color: rgba(120, 170, 160, 0.16);
 }
-body:has(.wuwa-home-hero) .roadmap-grid a:hover strong::after,
-body:has(.wuwa-home-hero) .roadmap-grid a:focus-visible strong::after {transform:scaleX(1);transform-origin:left center;}
-/* Motion Prompt #079 · MIT License (c) 2026 Shohei Ohtaki · https://showheyohtaki.github.io/motion-prompt/#079
-   Progressive enhancement: scroll-linked reading progress on supported browsers. */
+.wuwa-console .console-header { border-bottom: 1px solid rgba(120, 170, 160, 0.16); background: rgba(255, 255, 255, 0.03); }
+.wuwa-console .console-footer { border-top: 1px solid rgba(120, 170, 160, 0.16); }
+.wuwa-console .console-lights { display: flex; gap: 0.3rem; }
+.wuwa-console .console-lights i { width: 0.5rem; height: 0.5rem; border-radius: 50%; background: #5c6b66; }
+.wuwa-console .console-lights i:nth-child(1) { background: #e0745f; }
+.wuwa-console .console-lights i:nth-child(2) { background: #e0b45f; }
+.wuwa-console .console-lights i:nth-child(3) { background: #57c9a6; }
+.wuwa-console .console-status { color: #6fd6b8; white-space: nowrap; }
+.wuwa-console .console-status b { display: inline-block; width: 0.36rem; height: 0.36rem; border-radius: 50%; background: currentColor; margin-right: 0.32rem; }
+.wuwa-console .console-demo { flex: 1; padding: clamp(1.2rem, 2.8vw, 2rem) clamp(1rem, 2.4vw, 1.8rem); font-family: var(--vp-font-family-mono); min-height: 240px; }
+.wuwa-console .console-prompt { color: #d7e5df; font-size: clamp(0.8rem, 1.05vw, 0.95rem); white-space: pre-wrap; }
+.wuwa-console .console-prompt .wuwa-ps1 { color: #5fd6b4; }
+.wuwa-console .console-prompt .wuwa-caret { display: inline-block; width: 2px; height: 1.12em; background: #5fd6b4; vertical-align: -0.2em; margin-left: 0.3rem; }
+.wuwa-console .console-output { color: #f0d9ad; font-size: clamp(1.35rem, 2.4vw, 2.1rem); margin: 0.8rem 0 1.15rem; letter-spacing: -0.02em; min-height: 1.4em; }
+.wuwa-console .console-rule { height: 1px; background: linear-gradient(90deg, rgba(95, 214, 180, 0.5), rgba(255, 255, 255, 0.05)); }
+.wuwa-console .console-caption { margin: 0.95rem 0 0.6rem; font-family: var(--vp-font-family-base); font-size: 0.78rem; line-height: 1.5; color: #9fb4ae; }
+.wuwa-console .console-stages { display: flex; gap: 0.42rem; align-items: center; flex-wrap: wrap; font-size: 0.68rem; color: #66d6b4; }
+.wuwa-console .console-stages span:nth-child(even) { color: #6a837d; }
+.wuwa-console .console-footer button {
+  appearance: none; background: transparent; border: 1px solid rgba(120, 200, 178, 0.32);
+  border-radius: var(--wuwa-radius-sm); min-height: 2rem; padding: 0.25rem 0.55rem;
+  color: #cfe7e0; cursor: pointer; font: inherit; letter-spacing: 0;
+  transition: background-color var(--wuwa-dur-hover) var(--wuwa-ease-out);
+}
+.wuwa-console .console-footer button:hover { background: rgba(95, 214, 180, 0.12); }
+.wuwa-console .console-footer button:focus-visible { outline: 2px solid #6fd6b8; outline-offset: 2px; }
+
+/* =========================================================================
+   Phase 1 — System architecture (SystemOverview.vue)
+   ========================================================================= */
+body:has(.system-overview) .VPDoc .container,
+body:has(.system-overview) .VPDoc .content,
+body:has(.system-overview) .VPDoc .content-container { max-width: 1320px; }
+.system-overview { border: 1px solid var(--os-line-0); border-radius: var(--wuwa-radius); padding: clamp(1rem, 2.5vw, 1.5rem); background: var(--os-surface-1); margin: 1.5rem 0 0; }
+.overview-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 1rem; margin-bottom: 0.9rem; }
+.overview-heading h3 { margin: 0.2rem 0 0; font-size: 1.3rem; }
+.overview-heading h3::before { content: none; }
+.overview-heading p { max-width: 42ch; margin: 0; color: var(--os-ink-1); font-size: 0.9rem; }
+.overview-kicker { margin: 0; color: var(--vp-c-brand-1); font-family: var(--vp-font-family-mono); font-size: 0.7rem; font-weight: 700; letter-spacing: 0.12em; }
+.system-svg { display: block; width: 100%; min-width: 720px; height: auto; color: var(--os-ink-0); }
+
+/* =========================================================================
+   Phase 1 — Learning roadmap (scroll timeline, Motion Prompt #145 numbers)
+   ========================================================================= */
+.wuwa-roadmap { position: relative; margin: 1.5rem 0 0; padding-left: clamp(1.25rem, 3vw, 2rem); }
+.wuwa-roadmap .wuwa-rail { position: absolute; left: clamp(0.3rem, 0.9vw, 0.6rem); top: 0.55rem; bottom: 0.55rem; width: 2px; background: var(--os-line-0); }
+.wuwa-roadmap .wuwa-rail-fill { position: absolute; left: 0; top: 0; width: 100%; height: var(--wuwa-progress, 0%); background: linear-gradient(var(--vp-c-brand-1), color-mix(in srgb, var(--vp-c-brand-1) 40%, var(--os-ink-2))); }
+.wuwa-rm-item { position: relative; display: grid; grid-template-columns: minmax(5.5rem, 1fr) minmax(0, 1.6fr); gap: 1rem; padding: 1rem 0; align-items: start; }
+.wuwa-rm-item .wuwa-rm-side { display: block; }
+.wuwa-rm-item .wuwa-rm-main { display: block; min-width: 0; }
+.wuwa-rm-item::before {
+  content: ""; position: absolute; left: calc(-1 * clamp(1.25rem, 3vw, 2rem) + clamp(0.28rem, 0.7vw, 0.48rem));
+  top: 1.5rem; width: 0.8rem; height: 0.8rem; border-radius: 50%;
+  background: var(--os-surface-1); border: 2px solid var(--os-line-1);
+  transition: background-color var(--wuwa-dur-hover) var(--wuwa-ease-out), border-color var(--wuwa-dur-hover), transform var(--wuwa-dur-hover) var(--wuwa-ease-out);
+}
+.wuwa-rm-item.is-lit::before { background: var(--vp-c-brand-1); border-color: var(--vp-c-brand-1); }
+.wuwa-rm-item a { display: block; min-width: 0; text-decoration: none; color: inherit; transition: opacity var(--wuwa-dur-reveal) var(--wuwa-ease-out), transform var(--wuwa-dur-reveal) var(--wuwa-ease-out); }
+.wuwa-rm-num { font-family: var(--vp-font-family-mono); font-size: 0.8rem; font-weight: 750; letter-spacing: 0.06em; color: var(--os-ink-2); }
+.wuwa-rm-item.is-lit .wuwa-rm-num { color: var(--vp-c-brand-1); }
+.wuwa-rm-kind { display: block; margin-top: 0.2rem; font-family: var(--vp-font-family-mono); font-size: 0.66rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--os-ink-2); }
+.wuwa-rm-title { display: block; margin: 0.15rem 0 0.25rem; font-size: 1.08rem; font-weight: 700; color: var(--os-ink-0); letter-spacing: -0.01em; }
+.wuwa-rm-desc { display: block; color: var(--os-ink-1); font-size: 0.88rem; line-height: 1.6; max-width: 46ch; }
+.wuwa-rm-item a:focus-visible { outline: var(--wuwa-focus); outline-offset: 3px; border-radius: var(--wuwa-radius-sm); }
+/* #086 underline on the chapter title */
+.wuwa-rm-title { position: relative; display: table; width: fit-content; }
+.wuwa-rm-title::after { content: ""; position: absolute; left: 0; right: 0; bottom: -3px; height: 2px; background: var(--vp-c-brand-1); transform: scaleX(0); transform-origin: right center; transition: transform var(--wuwa-dur-hover) var(--wuwa-ease-out); }
+.wuwa-rm-item a:hover .wuwa-rm-title::after,
+.wuwa-rm-item a:focus-visible .wuwa-rm-title::after { transform: scaleX(1); transform-origin: left center; }
+
+/* =========================================================================
+   Phase 1 — Interactive lab entries
+   ========================================================================= */
+.wuwa-labs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; margin: 1.5rem 0 0; background: var(--os-line-0); border: 1px solid var(--os-line-0); border-radius: var(--wuwa-radius); overflow: hidden; }
+.wuwa-lab-entry {
+  --role: var(--os-memory);
+  position: relative; display: block; min-width: 0; padding: 1.35rem 1.4rem 1.4rem;
+  background: var(--os-surface-1); text-decoration: none; color: inherit;
+  transition: background-color var(--wuwa-dur-hover) var(--wuwa-ease-out), transform var(--wuwa-dur-hover) var(--wuwa-ease-out);
+}
+.wuwa-lab-entry::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--role); opacity: 0.85; }
+.wuwa-lab-entry .wuwa-lab-top { display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem; margin-bottom: 0.55rem; }
+.wuwa-lab-entry .wuwa-lab-idx { font-family: var(--vp-font-family-mono); font-size: 0.72rem; font-weight: 750; letter-spacing: 0.06em; color: var(--role); }
+.wuwa-lab-entry .wuwa-lab-glyph { font-family: var(--vp-font-family-mono); font-size: 1.4rem; line-height: 1; color: var(--role); opacity: 0.9; }
+.wuwa-lab-entry h3 { margin: 0 0 0.35rem; font-size: 1.15rem; font-weight: 720; letter-spacing: -0.015em; color: var(--os-ink-0); }
+.wuwa-lab-entry p { margin: 0; color: var(--os-ink-1); font-size: 0.9rem; line-height: 1.62; max-width: 44ch; }
+.wuwa-lab-entry .wuwa-lab-cta { display: inline-flex; align-items: center; gap: 0.4rem; margin-top: 0.85rem; font-family: var(--vp-font-family-mono); font-size: 0.74rem; font-weight: 700; letter-spacing: 0.04em; color: var(--role); }
+.wuwa-lab-entry .wuwa-lab-cta span { transition: transform var(--wuwa-dur-hover) var(--wuwa-ease-out); }
+.wuwa-lab-entry:hover { background: var(--os-surface-2); transform: translateY(-3px); }
+.wuwa-lab-entry:hover .wuwa-lab-cta span { transform: translateX(4px); }
+.wuwa-lab-entry:focus-visible { outline: var(--wuwa-focus); outline-offset: 3px; }
+
+/* =========================================================================
+   Phase 3 — Interactive labs (shared lab shell; per-lab styles in components)
+   ========================================================================= */
+.wuwa-lab {
+  --lab-border: var(--os-line-0);
+  --lab-muted: var(--os-ink-1);
+  --lab-soft: var(--os-surface-1);
+  --lab-card: var(--os-surface-1);
+  --lab-accent: var(--os-memory);
+  --lab-ink: var(--os-ink-0);
+  --lab-green: var(--os-memory);
+  --lab-red: var(--os-fault);
+  margin: 1.5rem 0 2.5rem; padding: clamp(1rem, 2.8vw, 1.6rem);
+  border: 1px solid var(--lab-border); border-radius: var(--wuwa-radius);
+  background: var(--lab-soft); color: var(--lab-ink);
+}
+.wuwa-lab .lab-heading h2 { margin: 0; font-size: clamp(1.3rem, 2.8vw, 1.7rem); line-height: 1.25; letter-spacing: -0.02em; }
+.wuwa-lab .lab-heading h2::before { content: none; }
+.wuwa-lab .eyebrow { margin: 0 0 0.4rem; color: var(--lab-accent); font-family: var(--vp-font-family-mono); font-size: 0.72rem; font-weight: 750; letter-spacing: 0.08em; text-transform: uppercase; }
+.wuwa-lab .eyebrow::before { content: "▸ "; }
+.wuwa-lab button {
+  min-height: 2.5rem; padding: 0.45rem 0.8rem; border: 1px solid var(--lab-border);
+  border-radius: var(--wuwa-radius-sm); background: var(--lab-card); color: var(--lab-ink);
+  font: inherit; font-size: 0.86rem; cursor: pointer;
+  transition: border-color var(--wuwa-dur-hover) var(--wuwa-ease-out), background-color var(--wuwa-dur-hover) var(--wuwa-ease-out), color var(--wuwa-dur-hover);
+}
+.wuwa-lab button:hover:not(:disabled) { border-color: var(--lab-accent); color: var(--lab-accent); }
+.wuwa-lab button:focus-visible { outline: var(--wuwa-focus); outline-offset: 2px; }
+.wuwa-lab button:disabled { cursor: not-allowed; opacity: 0.45; }
+.wuwa-lab .controls button[aria-pressed="true"] { border-color: var(--lab-accent); background: var(--lab-accent); color: var(--os-accent-ink); }
+.wuwa-lab .frame-copy strong, .wuwa-lab .frame-status strong { font-size: 1rem; }
+
+/* =========================================================================
+   Motion — #079 reading progress (scroll-timeline where supported)
+   ========================================================================= */
 @supports (animation-timeline: scroll()) {
-  body::after {
-    content:"";position:fixed;left:0;top:0;width:100%;height:3px;z-index:9999;
-    background:var(--vp-c-brand-1);transform:scaleX(0);transform-origin:left center;
-    pointer-events:none;animation:wuwa-reading-progress linear both;animation-timeline:scroll(root block);
+  body:not(.vuap-no-scroll-progress) .VPDoc ~ #app::after { display: none; }
+  .VPDoc::before {
+    content: ""; position: fixed; left: 0; top: 0; width: 100%; height: 3px; z-index: 100;
+    background: var(--vp-c-brand-1); transform: scaleX(0); transform-origin: left center;
+    pointer-events: none; animation: wuwa-reading-progress linear both; animation-timeline: scroll(root block);
   }
 }
-@keyframes wuwa-reading-progress {to{transform:scaleX(1);}}
-@media (max-width:950px) {
-  .wuwa-home-hero{grid-template-columns:1fr;gap:2rem;}
-  .wuwa-home-hero h1 {max-width:20ch;}
+@keyframes wuwa-reading-progress { to { transform: scaleX(1); } }
+
+/* =========================================================================
+   Motion — #074 fade-in on scroll (IntersectionObserver adds .is-revealed)
+   ========================================================================= */
+[data-reveal] {
+  opacity: 0; transform: translateY(28px);
+  transition: opacity var(--wuwa-dur-reveal) var(--wuwa-ease-out),
+              transform var(--wuwa-dur-reveal) var(--wuwa-ease-out);
 }
-@media (max-width:700px) {
-  body:has(.wuwa-home-hero) .roadmap-grid {grid-template-columns:repeat(2,minmax(0,1fr));}
-  body:has(.wuwa-home-hero) .roadmap-grid a:nth-child(3n){border-right:1px solid var(--os-line);}
-  body:has(.wuwa-home-hero) .roadmap-grid a:nth-child(2n){border-right:0;}
-  body:has(.wuwa-home-hero) .spec-strip div:nth-child(2){border-right:0;}
+[data-reveal].is-revealed { opacity: 1; transform: none; }
+
+/* =========================================================================
+   Responsive
+   ========================================================================= */
+@media (max-width: 950px) {
+  .wuwa-home-hero { grid-template-columns: 1fr; gap: 2rem; min-height: 0; }
+  .wuwa-home-hero h1 { max-width: 20ch; }
+  .wuwa-home-hero::after { display: none; }
+  .wuwa-labs { grid-template-columns: 1fr; }
 }
-@media (max-width:420px) {
-  .wuwa-home-hero {padding:1.3rem;border-radius:.8rem;}
-  .wuwa-hero-facts span:not(:first-child)::before{margin-right:.4rem;}
-  body:has(.wuwa-home-hero) .roadmap-grid {grid-template-columns:1fr;}
-  body:has(.wuwa-home-hero) .roadmap-grid a {border-right:0!important;}
-  body:has(.wuwa-home-hero) .spec-strip div {padding:.8rem;}
+@media (max-width: 700px) {
+  .wuwa-hero-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .wuwa-rm-item { grid-template-columns: 1fr; gap: 0.35rem; }
 }
+@media (max-width: 420px) {
+  .wuwa-home-hero { padding: 1.3rem; }
+  .wuwa-rm-num { font-size: 0.72rem; }
+}
+
+/* =========================================================================
+   Reduced motion — keep every static end-state legible
+   ========================================================================= */
 @media (prefers-reduced-motion: reduce) {
- .wuwa-hero-actions a, body:has(.wuwa-home-hero) .roadmap-grid a,
- body:has(.wuwa-home-hero) .roadmap-grid a strong::after,
- body:has(.wuwa-home-hero) .lab-grid .home-link-card {transition:none!important;}
- body:has(.wuwa-home-hero) .lab-grid .home-link-card:hover, .wuwa-hero-primary:hover {transform:none;}
- body::after {animation:none!important;display:none;}
+  html { scroll-behavior: auto; }
+  [data-reveal] { opacity: 1; transform: none; transition: none; }
+  .wuwa-rm-item a, .wuwa-lab-entry, .wuwa-lab-entry .wuwa-lab-cta span,
+  .wuwa-hero-actions a, .wuwa-rm-title::after { transition: none !important; }
+  .wuwa-lab-entry:hover, .wuwa-hero-primary:hover, .wuwa-hero-secondary:hover { transform: none; }
+  .wuwa-roadmap .wuwa-rail-fill { transition: none; }
+  .VPDoc::before { animation: none !important; }
 }

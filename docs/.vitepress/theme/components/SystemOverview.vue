@@ -50,13 +50,13 @@ function onKey(event: KeyboardEvent, id: string) {
           <text class="module-title" :x="item.x + 15" :y="item.y + 59">{{ item.label }}</text>
           <text class="module-mark" :x="item.x + item.w - 22" :y="item.y + 78">↗</text>
         </g>
-        <path class="flow flow-boot" d="M 545 155 V 169" marker-end="url(#system-arrow)" />
+        <path class="flow flow-boot" d="M 545 155 V 169" pathLength="1" marker-end="url(#system-arrow)" />
         <text class="flow-label" x="558" y="167">韌體交接</text>
         <g class="module role-kernel" :class="{ selected: selectedId === 'opensbi' }" role="button" tabindex="0" aria-label="OpenSBI：查看定義與來源" :aria-pressed="selectedId === 'opensbi'" @click="choose('opensbi')" @keydown="onKey($event, 'opensbi')">
           <rect class="module-box" x="350" y="177" width="390" height="62" rx="12" />
           <text class="module-eyebrow" x="368" y="202">M-MODE · FIRMWARE</text><text class="module-title" x="368" y="225">OpenSBI</text>
         </g>
-        <path class="flow flow-boot" d="M 545 240 V 266" marker-end="url(#system-arrow)" />
+        <path class="flow flow-boot" d="M 545 240 V 266" pathLength="1" marker-end="url(#system-arrow)" />
         <text class="flow-label" x="558" y="259">_start → kernel_main</text>
         <g class="module role-kernel" :class="{ selected: selectedId === 'kernel' }" role="button" tabindex="0" aria-label="WUWAOS 核心與桌面服務：查看定義與來源" :aria-pressed="selectedId === 'kernel'" @click="choose('kernel')" @keydown="onKey($event, 'kernel')">
           <rect class="module-box kernel-box" x="204" y="278" width="680" height="127" rx="14" />
@@ -93,28 +93,51 @@ function onKey(event: KeyboardEvent, id: string) {
 </template>
 
 <style scoped>
-.system-overview { --role: var(--os-kernel); border: 1px solid var(--os-line); border-radius: 1rem; padding: clamp(1rem, 2.5vw, 1.6rem); background: var(--os-canvas); }
-.overview-heading { display: flex; align-items: end; justify-content: space-between; gap: 1rem; margin-bottom: .8rem; }
-.overview-heading h3 { margin: .2rem 0; font-size: 1.35rem; }
-.overview-heading p { max-width: 40ch; margin: 0; color: var(--os-muted); font-size: .9rem; }
-.overview-kicker { margin: 0; color: var(--os-memory); font: 700 .7rem var(--vp-font-family-mono); letter-spacing: .12em; }
-.system-svg { display: block; width: 100%; min-width: 760px; height: auto; color: var(--os-ink); }
-.qemu-boundary { fill: var(--os-soft); stroke: var(--os-line); stroke-width: 1.5; stroke-dasharray: 6 5; }
-.boundary-label, .module-eyebrow, .flow-label, .diagram-note { fill: var(--os-muted); font-family: var(--vp-font-family-mono); }
+.system-overview { --role: var(--os-kernel); border: 1px solid var(--os-line-0); border-radius: var(--wuwa-radius); padding: clamp(1rem, 2.5vw, 1.5rem); background: var(--os-surface-1); }
+.overview-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 1rem; margin-bottom: 0.9rem; }
+.overview-heading h3 { margin: 0.2rem 0 0; font-size: 1.3rem; }
+.overview-heading p { max-width: 42ch; margin: 0; color: var(--os-ink-1); font-size: 0.9rem; }
+.overview-kicker { margin: 0; color: var(--vp-c-brand-1); font-family: var(--vp-font-family-mono); font-size: 0.7rem; font-weight: 700; letter-spacing: 0.12em; }
+.system-svg { display: block; width: 100%; min-width: 720px; height: auto; color: var(--os-ink-0); }
+.qemu-boundary { fill: var(--os-surface-2); stroke: var(--os-line-1); stroke-width: 1.5; stroke-dasharray: 6 5; }
+.boundary-label, .module-eyebrow, .flow-label, .diagram-note { fill: var(--os-ink-2); font-family: var(--vp-font-family-mono); }
 .boundary-label { font-size: 11px; font-weight: 700; }
 .module { cursor: pointer; outline: none; }
-.module-box { fill: var(--os-panel); stroke: var(--role); stroke-width: 2; transition: stroke-width .15s, fill .15s; }
+.module-box { fill: var(--os-surface-1); stroke: var(--role); stroke-width: 2; transition: stroke-width .15s var(--wuwa-ease-out), fill .15s var(--wuwa-ease-out); }
 .role-cpu { --role: var(--os-cpu); }.role-memory { --role: var(--os-memory); }.role-kernel { --role: var(--os-kernel); }.role-process { --role: var(--os-process); }.role-io { --role: var(--os-io); }.role-storage { --role: var(--os-storage); }
-.module:hover .module-box, .module:focus-visible .module-box, .module.selected .module-box { stroke-width: 4; fill: color-mix(in srgb, var(--role) 10%, var(--os-panel)); }
-.module-eyebrow { font-size: 10px; }.module-title { fill: var(--os-ink); font-size: 17px; font-weight: 700; }.module-subtitle { fill: var(--os-muted); font-size: 12px; }.module-mark { fill: var(--role); font-size: 18px; font-weight: 700; }
-.kernel-chip { fill: color-mix(in srgb, var(--os-kernel) 12%, var(--os-panel)); stroke: color-mix(in srgb, var(--os-kernel) 42%, var(--os-line)); }
-.fs-chip { fill: color-mix(in srgb, var(--os-storage) 12%, var(--os-panel)); stroke: var(--os-storage); stroke-width: 1.5; }
-.chip-label { fill: var(--os-ink); font-size: 12px; }
-.flow { fill: none; stroke: var(--os-muted); stroke-width: 2; }.flow-boot { stroke: var(--os-kernel); }.flow-call { stroke: var(--os-process); stroke-dasharray: 5 4; }.flow-label { font-size: 10px; }.return-label { font-size: 10px; }
-.diagram-note { font-size: 10px; }.module-detail { display: grid; grid-template-columns: minmax(130px, .35fr) minmax(0, 1.65fr); gap: .2rem 1rem; margin-top: .8rem; padding: 1rem; border: 1px solid var(--os-line); border-radius: .8rem; background: var(--os-panel); }
-.detail-role { grid-row: span 2; align-self: start; font-weight: 700; }.text-cpu { color: var(--os-cpu); }.text-memory { color: var(--os-memory); }.text-kernel { color: var(--os-kernel); }.text-process { color: var(--os-process); }.text-io { color: var(--os-io); }.text-storage { color: var(--os-storage); }
-.module-detail p { margin: 0; }.detail-source { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; color: var(--os-muted); font-size: .85rem; }.detail-source code { color: var(--os-ink); overflow-wrap: anywhere; }.module-detail a { grid-column: 2; width: fit-content; }
-.system-caption { margin: .6rem 0 0; color: var(--os-muted); font-size: .8rem; }
-@media(max-width: 680px) { .overview-heading { display: block; }.overview-heading p { margin-top: .4rem; }.module-detail { grid-template-columns: 1fr; }.detail-role { grid-row: auto; }.module-detail a { grid-column: 1; } }
-@media(prefers-reduced-motion: reduce) { .module-box { transition: none; } }
+.module:hover .module-box, .module:focus-visible .module-box, .module.selected .module-box { stroke-width: 4; fill: color-mix(in srgb, var(--role) 10%, var(--os-surface-1)); }
+.module:focus-visible { outline: 2px solid var(--vp-c-brand-1); outline-offset: 3px; border-radius: 8px; }
+.module-eyebrow { font-size: 10px; }.module-title { fill: var(--os-ink-0); font-size: 17px; font-weight: 700; }.module-subtitle { fill: var(--os-ink-2); font-size: 12px; }.module-mark { fill: var(--role); font-size: 18px; font-weight: 700; }
+.kernel-chip { fill: color-mix(in srgb, var(--os-kernel) 12%, var(--os-surface-1)); stroke: color-mix(in srgb, var(--os-kernel) 42%, var(--os-line-0)); }
+.fs-chip { fill: color-mix(in srgb, var(--os-storage) 12%, var(--os-surface-1)); stroke: var(--os-storage); stroke-width: 1.5; }
+.chip-label { fill: var(--os-ink-0); font-size: 12px; }
+.flow { fill: none; stroke: var(--os-ink-2); stroke-width: 2; }
+.flow-boot { stroke: var(--os-kernel); }
+.flow-call { stroke: var(--os-process); stroke-dasharray: 5 4; }
+.flow-label { font-size: 10px; }.return-label { font-size: 10px; }
+/* SVG flow reveal: boot hand-off lines (solid) draw in M->S->U, then the dashed
+   ecall boundary and its label fade in. Purposeful — it shows the real privilege
+   hand-off direction, not a live trace. Solid paths use pathLength="1" so the
+   dash pattern is normalized for the draw; the dashed ecall line only fades. */
+.flow-boot { stroke-dasharray: 1; stroke-dashoffset: 1; animation: wuwa-flow-draw .8s var(--wuwa-ease-out) forwards; }
+.flow-boot:nth-of-type(2) { animation-delay: .5s; }
+@keyframes wuwa-flow-draw { to { stroke-dashoffset: 0; } }
+.flow-call, .flow-label { opacity: 0; animation: wuwa-fade-in .6s var(--wuwa-ease-out) forwards; animation-delay: 1.3s; }
+@keyframes wuwa-fade-in { to { opacity: 1; } }
+.diagram-note { font-size: 10px; }
+.module-detail { display: grid; grid-template-columns: minmax(130px, 0.35fr) minmax(0, 1.65fr); gap: 0.2rem 1rem; margin-top: 0.9rem; padding: 1rem 1.1rem; border: 1px solid var(--os-line-0); border-left: 3px solid var(--os-kernel); border-radius: var(--wuwa-radius); background: var(--os-surface-2); }
+.detail-role { grid-row: span 2; align-self: start; font-weight: 700; font-family: var(--vp-font-family-mono); font-size: 0.9rem; }
+.text-cpu { color: var(--os-cpu); }.text-memory { color: var(--os-memory); }.text-kernel { color: var(--os-kernel); }.text-process { color: var(--os-process); }.text-io { color: var(--os-io); }.text-storage { color: var(--os-storage); }
+.module-detail p { margin: 0; color: var(--os-ink-1); line-height: 1.6; }
+.detail-source { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; color: var(--os-ink-2); font-size: 0.85rem; }
+.detail-source span { font-family: var(--vp-font-family-mono); font-size: 0.7rem; letter-spacing: 0.06em; text-transform: uppercase; }
+.detail-source code { color: var(--os-ink-0); overflow-wrap: anywhere; }
+.module-detail a { grid-column: 2; width: fit-content; font-weight: 600; }
+.system-caption { margin: 0.7rem 0 0; color: var(--os-ink-2); font-size: 0.8rem; }
+@media (max-width: 680px) { .overview-heading { display: block; }.overview-heading p { margin-top: 0.4rem; }.module-detail { grid-template-columns: 1fr; }.detail-role { grid-row: auto; }.module-detail a { grid-column: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .module-box { transition: none; }
+  .flow-boot { animation: none; stroke-dashoffset: 0; }
+  .flow-call, .flow-label { animation: none; opacity: 1; }
+}
 </style>

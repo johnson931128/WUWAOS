@@ -53,7 +53,7 @@ export default defineConfig({
       { text: '互動教學', items: [{ text: 'Block Async I/O', link: '/topics/block-async' }, { text: 'FD 與 OFD', link: '/topics/file-descriptors' }, { text: '換頁與 Swap', link: '/topics/paging' }, { text: 'Journal 與安全替換', link: '/topics/journal' }] },
       { text: '從硬體到應用程式', items: chapters.map(([text, slug], i) => ({ text: `${String(i + 1).padStart(2, '0')} · ${text}`, link: `/topics/${slug}` })) },
       { text: '規格與參考', items: [{ text: '原始規格與驗收紀錄', link: '/history' }, { text: 'Thread 設計草案', link: '/SPEC-34-threads' }, { text: 'Thread 階段 A 實作', link: '/thread-stage-a' }, { text: '磁碟保護與驗證', link: '/SPEC-31-filesystem-initialization-guard' }, { text: '完整程式碼導覽', link: '/CODE_GUIDE' }] },
-      { text: '網站改版規範', items: [{ text: '視覺教材設計', link: '/visual-system' }, { text: '研究與來源對照', link: '/redesign' }] },
+      { text: '網站改版規範', items: [{ text: '視覺教材設計', link: '/visual-system' }, { text: '研究與來源對照', link: '/redesign' }, { text: 'Motion Prompt 動效紀錄', link: '/motion-prompt-design-experiment' }] },
     ],
     outline: { level: [2, 3], label: '本頁內容' },
     search: { provider: 'local', options: { locales: { root: { translations: { button: { buttonText: '搜尋文件', buttonAriaLabel: '搜尋文件' }, modal: { noResultsText: '找不到相關內容', resetButtonTitle: '清除搜尋', footer: { selectText: '選取', navigateText: '切換', closeText: '關閉' } } } } } } },

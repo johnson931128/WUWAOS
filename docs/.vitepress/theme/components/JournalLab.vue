@@ -147,7 +147,7 @@ onBeforeUnmount(stop)
   --j-muted: var(--vp-c-text-2, #586174);
   --j-soft: var(--vp-c-bg-soft, #f5f7fa);
   --j-card: var(--vp-c-bg, #fff);
-  --j-accent: var(--vp-c-brand-1, #3758a8);
+  --j-accent: var(--os-storage, #865500);
   --j-green: #267258;
   --j-red: #aa433c;
   margin: 2rem 0 2.5rem;
@@ -168,7 +168,7 @@ onBeforeUnmount(stop)
 button { min-height: 2.55rem; padding: .55rem .85rem; border: 1px solid var(--j-border); border-radius: .65rem; background: var(--j-card); color: inherit; font: inherit; font-size: .86rem; cursor: pointer; transition: border-color .16s ease, background-color .16s ease, transform .16s ease; }
 button:hover:not(:disabled) { border-color: var(--j-accent); transform: translateY(-1px); }
 button:focus-visible { outline: 3px solid color-mix(in srgb, var(--j-accent) 42%, transparent); outline-offset: 2px; }
-.scenario-picker button[aria-pressed="true"], .controls button:nth-child(2) { border-color: var(--j-accent); background: var(--j-accent); color: white; }
+.scenario-picker button[aria-pressed="true"], .controls button:nth-child(2) { border-color: var(--j-accent); background: var(--j-accent); color: var(--os-accent-ink, #fff); }
 button:disabled { cursor: not-allowed; opacity: .48; }
 .progress { height: .35rem; margin-top: .95rem; overflow: hidden; border-radius: 1rem; background: var(--j-border); }
 .progress span { display: block; height: 100%; border-radius: inherit; background: var(--j-accent); transition: width .22s ease; }
@@ -219,6 +219,7 @@ button:disabled { cursor: not-allowed; opacity: .48; }
   .result-row > div + div { padding: .5rem 0 0; border-top: 1px solid var(--j-border); border-left: 0; }
   .scenario-picker button, .controls button { flex: 1 1 auto; }
 }
+.dark .journal-lab { --j-green: #57c9a6; --j-red: #ff9995; } /* fixed light-mode greens/reds only contrast on light; lift for dark */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
 }

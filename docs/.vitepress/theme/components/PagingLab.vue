@@ -236,7 +236,7 @@ onBeforeUnmount(stop)
   --lab-border: var(--vp-c-divider);
   --lab-surface: var(--vp-c-bg-soft);
   --lab-muted: var(--vp-c-text-2);
-  --lab-accent: var(--vp-c-brand-1);
+  --lab-accent: var(--os-memory);
   margin: 1.5rem 0 2rem;
   padding: 1.25rem;
   border: 1px solid var(--lab-border);
