@@ -32,6 +32,14 @@
 
 若 `.agents/skills/motion-prompt/SKILL.md` 已存在，也可閱讀並依實際需求選用少量動效；**檔案不存在時不必為了遵守此規則自行安裝**。Claude Code 若未自動辨識 `.agents/skills/`，直接讀取對應 `SKILL.md`。
 
+## 進階 UI 視覺與流暢度（務必同時重視）
+
+- **先有吸引人的外觀，再安排互動**：每次網頁改版都要先確定整體構圖、排版、留白、字級、圖示、色塊與資訊層級；避免只加動畫、懸浮效果就宣稱設計完成。選擇 2–3 個成熟網站，從不同站點各借鏡一項特點，不要照抄某個產品的版型或品牌。
+- 動態操作要自然：Hover／Click／Focus 的回饋、所選節點與解說切換、可中斷的動畫都應清楚平穩。動畫應有目的、節奏一致、不改變圖中固定節點位置，也不造成版面跳動。
+- **網站 UI 工作額外先讀** `.agents/skills/wuwaos-visual-interaction/SKILL.md`、`references/site-patterns.md` 與 `references/design-review.md`，在設計與互動之間作完整取捨。必要時參考其署名的 UI/UX Pro Max 規則。
+- 遇到使用者反映「卡頓／不絲滑」時，先判斷是視覺轉場不自然，還是有實際效能問題。前者先改善動效設計；後者參考 `.agents/skills/performance/SKILL.md`，並以實際瀏覽器證據診斷，不可憑感覺宣稱性能提升。
+- 當次任務未明確要求安裝新套件時，優先使用既有 Vue／CSS／SVG；`motion-v`、其他重型框架或套件只能在具體需求成立後再考慮。
+
 ## 實作範圍、Git 與驗證
 
 - 保留現有 VitePress／Vue／SVG 技術及文件、導覽與原始碼連結；除非另外指定，不要為設計而遷移框架、重寫後端或修改 `kernel/`、`arch/`、`drivers/`、`user/`。
