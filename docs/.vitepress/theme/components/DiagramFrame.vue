@@ -68,7 +68,7 @@ function resetZoom() {
   margin: 1.5rem 0;
   padding: clamp(0.9rem, 2.5vw, 1.4rem);
   border: 1px solid var(--diagram-border);
-  border-radius: 0.9rem;
+  border-radius: var(--os-radius-workspace);
   background: var(--diagram-bg);
   color: var(--diagram-text);
   min-width: 0;
@@ -92,7 +92,7 @@ function resetZoom() {
   border-radius: 0.65rem;
   scrollbar-color: var(--diagram-muted) transparent;
 }
-.diagram-viewport.zoomable:focus-visible { outline: 3px solid var(--os-focus, #4f8cff); outline-offset: 2px; }
+.diagram-viewport.zoomable:focus-visible { outline: 3px solid var(--os-focus); outline-offset: 2px; }
 .diagram-content { min-width: 0; transform: scale(var(--diagram-scale, 1)); transform-origin: top left; }
 .diagram-viewport.zoomable .diagram-content { width: 100%; }
 .diagram-content :deep(svg) { display: block; max-width: 100%; height: auto; }
@@ -100,8 +100,8 @@ function resetZoom() {
 .diagram-caption { margin-top: 0.75rem; }
 .zoom-controls { display: flex; flex: 0 0 auto; align-items: center; gap: 0.35rem; }
 .zoom-controls button {
-  min-width: 2.25rem;
-  min-height: 2.25rem;
+  min-width: 2.75rem;
+  min-height: 2.75rem;
   padding: 0.35rem 0.55rem;
   border: 1px solid var(--diagram-border);
   border-radius: 0.45rem;
@@ -111,7 +111,7 @@ function resetZoom() {
   cursor: pointer;
 }
 .zoom-controls button:disabled { opacity: 0.55; cursor: not-allowed; }
-.zoom-controls button:focus-visible { outline: 3px solid var(--os-focus, #4f8cff); outline-offset: 2px; }
+.zoom-controls button:focus-visible { outline: 3px solid var(--os-focus); outline-offset: 2px; }
 .zoom-controls span { min-width: 3rem; color: var(--diagram-muted); font-size: 0.82rem; text-align: center; font-variant-numeric: tabular-nums; }
 @media (max-width: 640px) {
   .diagram-heading { flex-direction: column; }

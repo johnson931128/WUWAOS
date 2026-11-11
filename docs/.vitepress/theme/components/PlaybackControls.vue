@@ -55,18 +55,18 @@ const status = computed(() => {
   color: var(--playback-text);
 }
 .playback-controls button {
-  min-height: 2.5rem;
+  min-height: 2.75rem;
   padding: 0.45rem 0.75rem;
   border: 1px solid var(--playback-border);
-  border-radius: 0.55rem;
+  border-radius: var(--os-radius-control);
   background: var(--playback-bg);
   color: inherit;
   font: inherit;
   cursor: pointer;
 }
 .playback-controls button:disabled { opacity: 0.55; cursor: not-allowed; }
-.playback-controls button:focus-visible { outline: 3px solid var(--os-focus, #4f8cff); outline-offset: 2px; }
-.playback-controls button[aria-pressed="true"] { border-color: var(--os-accent, #476de0); }
+.playback-controls button:focus-visible { outline: 3px solid var(--os-focus); outline-offset: 2px; }
+.playback-controls button[aria-pressed="true"] { border-color: var(--os-accent); background: var(--os-accent); color: var(--os-on-accent); }
 .playback-count { min-width: 3.5rem; font-variant-numeric: tabular-nums; text-align: center; }
 .visually-hidden {
   position: absolute;

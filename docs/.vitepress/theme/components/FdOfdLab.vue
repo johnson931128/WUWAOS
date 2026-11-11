@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import StepTimeline from './StepTimeline.vue'
 
 type Descriptor = { fd: number; target: string; label?: string }
 type ProcessView = { name: string; descriptors: Descriptor[] }
@@ -52,6 +53,31 @@ const playing = ref(false)
 let timer: ReturnType<typeof setInterval> | undefined
 const selected = computed(() => scenarios.find((scenario) => scenario.id === selectedId.value) ?? scenarios[0])
 const frame = computed(() => selected.value.frames[index.value])
+const graph = computed(() => {
+  const baseEdges = frame.value.processes.flatMap((process) => process.descriptors.map((descriptor) => ({
+    process: process.name, fd: descriptor.fd, target: descriptor.target, label: descriptor.label,
+    ofd: frame.value.descriptions.find((item) => item.id === descriptor.target),
+  })))
+  const endpointKey = (edge: (typeof baseEdges)[number]) => edge.ofd ? edge.ofd.file : 'UART|console'
+  const endpointMap = new Map<string, { key: string; label: string; kind: string }>()
+  for (const edge of baseEdges) {
+    const key = endpointKey(edge)
+    if (!endpointMap.has(key)) endpointMap.set(key, { key, label: edge.ofd?.file ?? 'UART console', kind: key === 'terminal endpoint' ? 'shared terminal endpoint' : edge.ofd?.kind ?? 'fixed TTY route' })
+  }
+  const height = Math.max(300, baseEdges.length * 50 + 94, frame.value.descriptions.length * 122 + 132, endpointMap.size * 104 + 132)
+  const place = (count: number, index: number) => count <= 1 ? height / 2 : 66 + index * (height - 132) / (count - 1)
+  const ofds = frame.value.descriptions.map((ofd, index) => ({ ...ofd, y: place(frame.value.descriptions.length, index) }))
+  const endpoints = [...endpointMap.values()].map((endpoint, index) => ({ ...endpoint, y: place(endpointMap.size, index) }))
+  const endpointY = new Map(endpoints.map((endpoint) => [endpoint.key, endpoint.y]))
+  const ofdY = new Map(ofds.map((ofd) => [ofd.id, ofd.y]))
+  const routedEdges = baseEdges.map((edge, index) => ({ ...edge, y: 66 + index * 50, endpointKey: endpointKey(edge) }))
+  return { height, edges: routedEdges, ofds, endpoints, endpointY, ofdY }
+})
+const scenarioWhy = computed(() => selectedId.value === 'shared'
+  ? 'dup 與 fork 複製 FD 指向關係，會繼續共用同一 OFD 的 offset；每次 open 則建立獨立 OFD。'
+  : selectedId.value === 'separate'
+    ? '同一路徑的 open 建立不同 OFD；它們指向同一檔案資料，但各自保存 offset。'
+    : 'UART sentinel 直接選擇固定終端路由；GUI Terminal 則透過兩個 TTY OFD，其中 output OFD 被 fd 1、2 共用。')
 const isFirst = computed(() => index.value === 0)
 const isLast = computed(() => index.value === selected.value.frames.length - 1)
 
@@ -111,42 +137,49 @@ onBeforeUnmount(stop)
       <span :style="{ width: `${((index + 1) / selected.frames.length) * 100}%` }" />
     </div>
 
-    <div class="frame-caption" aria-live="polite" aria-atomic="true">
+    <div class="frame-caption">
       <div><span class="step-tag">STEP {{ String(index + 1).padStart(2, '0') }}</span><h3>{{ frame.title }}</h3></div>
-      <p>{{ frame.note }}</p>
       <code>{{ frame.actor }}</code>
     </div>
 
-    <div class="state-grid">
-      <div class="panel process-panel">
-        <div class="panel-title"><span class="panel-index">01</span><div><h3>各行程的 FD table</h3><p>fd 是行程本地的索引</p></div></div>
-        <div class="process-list">
-          <article v-for="process in frame.processes" :key="process.name" class="process-card">
-            <h4>{{ process.name }}</h4>
-            <div class="fd-list">
-              <div v-for="descriptor in process.descriptors" :key="descriptor.fd" class="fd-row" :class="{ 'is-sentinel': descriptor.target.startsWith('UART') }">
-                <span class="fd-number">fd {{ descriptor.fd }}</span><span class="fd-arrow">→</span><span class="fd-target">{{ descriptor.target }}</span><small v-if="descriptor.label">{{ descriptor.label }}</small>
-              </div>
-              <p v-if="process.descriptors.length === 0" class="empty-state">目前沒有指向 OFD 的 FD</p>
-            </div>
-          </article>
+    <div class="fd-workbench">
+      <section class="fd-graph" aria-label="Process file descriptors connect to shared open file descriptions and destinations">
+        <h3 class="graph-title">FD 所有權關係</h3>
+        <div class="graph-viewport" role="region" tabindex="0" aria-label="FD, OFD and file relationship diagram; scroll within this region on narrow screens">
+          <svg class="fd-graph-svg" :viewBox="`0 0 780 ${graph.height}`" role="img" aria-labelledby="fd-graph-svg-title fd-graph-svg-desc">
+            <title id="fd-graph-svg-title">FD references connect to shared OFDs and backing endpoints</title>
+            <desc id="fd-graph-svg-desc">Each FD has a connection to one global OpenFile object. Multiple FD paths converge on the same OFD node; OFD nodes connect to a file or TTY endpoint. UART sentinels bypass the OFD table.</desc>
+            <defs><marker id="fd-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 10 5 0 10z" fill="currentColor"/></marker></defs>
+            <text class="graph-col-title" x="20" y="22">Process · FD table</text>
+            <text class="graph-col-title" x="350" y="22">Global OpenFile OFD</text>
+            <text class="graph-col-title" x="630" y="22">檔案／TTY 端點</text>
+            <g v-for="edge in graph.edges" :key="`${edge.process}-${edge.fd}-${edge.y}`">
+              <path class="edge-line" :d="edge.ofd ? `M 198 ${edge.y} C 270 ${edge.y}, 285 ${graph.ofdY.get(edge.ofd.id)}, 350 ${graph.ofdY.get(edge.ofd.id)}` : `M 198 ${edge.y} C 370 ${edge.y}, 450 ${graph.endpointY.get(edge.endpointKey)}, 630 ${graph.endpointY.get(edge.endpointKey)}`" marker-end="url(#fd-arrow)" />
+              <rect class="fd-box" x="20" :y="edge.y - 21" width="178" height="42" rx="7" />
+              <title>{{ edge.process }} fd {{ edge.fd }} → {{ edge.ofd ? `OFD ${edge.ofd.id}` : `${edge.target} sentinel` }} · {{ edge.label }}</title>
+              <text class="fd-text" x="31" :y="edge.y - 2">{{ edge.process }}</text>
+              <text class="fd-subtext" x="31" :y="edge.y + 17">fd {{ edge.fd }}{{ edge.label ? ` · ${edge.label === 'story.txt · second open' ? '2nd open' : edge.label}` : '' }}{{ !edge.ofd && edge.target.startsWith('UART') ? ' · sentinel' : '' }}</text>
+            </g>
+            <g v-for="ofd in graph.ofds" :key="ofd.id">
+              <path v-if="ofd.alive" class="edge-line ofd-edge" :d="`M 558 ${ofd.y} C 590 ${ofd.y}, 600 ${graph.endpointY.get(ofd.file)}, 630 ${graph.endpointY.get(ofd.file)}`" marker-end="url(#fd-arrow)" />
+              <rect :class="['ofd-box', { touched: frame.touched === ofd.id, released: !ofd.alive }]" x="350" :y="ofd.y - 35" width="208" height="70" rx="8" />
+              <text class="fd-text" x="362" :y="ofd.y - 9">OFD {{ ofd.id }} · refs={{ ofd.refs }}{{ !ofd.alive ? ' · 已回收' : '' }}</text>
+              <text class="fd-subtext" x="362" :y="ofd.y + 16">{{ ofd.kind }} · offset={{ ofd.kind === 'regular file' && ofd.alive ? ofd.offset : ofd.alive ? '—' : '已回收' }}</text>
+            </g>
+            <g v-for="endpoint in graph.endpoints" :key="endpoint.key">
+              <rect class="endpoint-box" x="630" :y="endpoint.y - 26" width="132" height="52" rx="8" />
+              <text class="fd-text" x="640" :y="endpoint.y - 3">{{ endpoint.label === 'terminal endpoint' ? 'terminal' : endpoint.label }}</text>
+              <text class="fd-subtext" x="640" :y="endpoint.y + 14">{{ endpoint.kind }}</text>
+            </g>
+          </svg>
         </div>
-        <p class="panel-footnote">每個 Process 最多 8 個 FD 槽位，含空槽；空槽可由 open／dup／pipe 重用。</p>
-      </div>
-
-      <div class="panel ofd-panel">
-        <div class="panel-title"><span class="panel-index">02</span><div><h3>核心全域 OFD 表</h3><p>refs 按 FD 計算；一般檔案卡顯示 offset</p></div></div>
-        <div v-if="frame.descriptions.length" class="ofd-list">
-          <article v-for="ofd in frame.descriptions" :key="ofd.id" class="ofd-card" :class="{ 'is-touched': frame.touched === ofd.id, 'is-released': !ofd.alive }">
-            <div class="ofd-card-heading"><span class="ofd-id">OFD {{ ofd.id }}</span><span class="object-kind">{{ ofd.kind }}</span></div>
-            <div class="ofd-meta"><span>refs</span><strong>{{ ofd.refs }}</strong><span>offset</span><strong>{{ ofd.kind === 'regular file' ? ofd.offset : '—' }}</strong></div>
-            <p>{{ ofd.alive ? `指向 ${ofd.file}` : 'refs = 0 · 槽位已回收' }}</p>
-          </article>
-        </div>
-        <p v-else class="empty-ofd">此情境中的 UART 使用 sentinel，沒有配置 OFD。</p>
-        <p class="panel-footnote">全域最多 16 個 OFD。refs 計算所有行程 FD table 中指向該 OFD 的項目。</p>
-      </div>
+      </section>
+      <aside class="fd-inspector" aria-label="目前 FD 與 OFD 欄位快照">
+        <h3>欄位快照</h3><dl><dt>Process.fd_table</dt><dd><code>{{ frame.processes.map((process) => process.name + ': ' + process.descriptors.map((fd) => `${fd.fd}→${fd.target}`).join(', ')).join(' / ') }}</code></dd><dt>OpenFile.refs</dt><dd><code>{{ frame.descriptions.map((ofd) => `${ofd.id}=${ofd.refs}`).join(' · ') || 'UART sentinel：未配置 OFD' }}</code></dd><dt>OpenFile.offset</dt><dd><code>{{ frame.descriptions.map((ofd) => `${ofd.id}=${!ofd.alive ? '已回收' : ofd.kind === 'regular file' ? ofd.offset : '不適用'}`).join(' · ') || '不適用' }}</code></dd><dt>fd_pin</dt><dd>靜止快照；read／write 期間會暫時增加 refs。</dd><dt>OFD_LIMIT</dt><dd>16 個全域槽位</dd></dl>
+      </aside>
     </div>
+
+    <section class="frame-explanation"><div><h3>目前操作</h3><p>{{ frame.note }}</p></div><div><h3>為什麼會發生</h3><p>{{ scenarioWhy }}</p></div><div><h3>狀態變化</h3><p>{{ frame.processes.map((process) => process.name + ': ' + process.descriptors.map((fd) => `fd ${fd.fd}→${fd.target}`).join(', ')).join('；') }}<br>{{ frame.descriptions.map((ofd) => `OFD ${ofd.id}: refs=${ofd.refs}, offset=${ofd.offset}`).join('；') }}</p></div><p class="source-links"><strong>原始碼：</strong><a href="https://github.com/johnson931128/WUWAOS/blob/main/kernel/io/io.c">FD table · fd_pin · OFD refs</a> · <a href="https://github.com/johnson931128/WUWAOS/blob/main/kernel/proc/process.c">fork 繼承</a></p></section>
 
     <div v-if="frame.descriptions.some((ofd) => ofd.kind === 'regular file')" class="file-panel" aria-label="OFD offset 對應的檔案資料位置">
       <div class="file-panel-heading"><div><span class="panel-index">03</span><h3>同一檔案的資料位置</h3></div><p>標記顯示下一次 read 將開始的位置</p></div>
@@ -160,17 +193,18 @@ onBeforeUnmount(stop)
     </div>
 
     <p class="sr-status" aria-live="polite">{{ selected.label }}，{{ index + 1 }}／{{ selected.frames.length }}：{{ frame.title }}。{{ playing ? '正在播放' : '播放已停止' }}</p>
+    <StepTimeline :frames="selected.frames" :current="index" label="檔案描述流程時間線" @seek="(i) => { stop(); goTo(i) }" />
   </section>
 </template>
 
 <style scoped>
 .fd-ofd-lab {
-  --lab-border: var(--vp-c-divider, #d9dee8);
-  --lab-muted: var(--vp-c-text-2, #586174);
-  --lab-soft: var(--vp-c-bg-soft, #f5f7fa);
-  --lab-card: var(--vp-c-bg, #fff);
-  --lab-accent: var(--vp-c-brand-1, #3758a8);
-  --lab-green: #267258;
+  --lab-border: var(--os-line, var(--vp-c-divider));
+  --lab-muted: var(--os-muted, var(--vp-c-text-2));
+  --lab-soft: var(--os-canvas, var(--vp-c-bg-soft));
+  --lab-card: var(--os-panel, var(--vp-c-bg));
+  --lab-accent: var(--os-accent, var(--vp-c-brand-1));
+  --lab-green: var(--os-active, #267258);
   margin: 2rem 0 2.5rem;
   padding: clamp(1rem, 3vw, 1.75rem);
   border: 1px solid var(--lab-border);
@@ -189,7 +223,7 @@ onBeforeUnmount(stop)
 button { min-height: 2.55rem; padding: .55rem .85rem; border: 1px solid var(--lab-border); border-radius: .65rem; background: var(--lab-card); color: inherit; font: inherit; font-size: .86rem; cursor: pointer; transition: border-color .16s ease, background-color .16s ease, transform .16s ease; }
 button:hover:not(:disabled) { border-color: var(--lab-accent); transform: translateY(-1px); }
 button:focus-visible { outline: 3px solid color-mix(in srgb, var(--lab-accent) 42%, transparent); outline-offset: 2px; }
-.scenario-picker button[aria-pressed="true"], .controls button:nth-child(2) { border-color: var(--lab-accent); background: var(--lab-accent); color: white; }
+.scenario-picker button[aria-pressed="true"], .controls button:nth-child(2) { border-color: var(--lab-accent); background: var(--lab-accent); color: var(--os-on-accent, #fff); }
 button:disabled { cursor: not-allowed; opacity: .48; }
 .progress-track { height: .35rem; margin-top: .95rem; overflow: hidden; border-radius: 1rem; background: var(--lab-border); }
 .progress-track span { display: block; height: 100%; border-radius: inherit; background: var(--lab-accent); transition: width .22s ease; }
@@ -199,7 +233,31 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 .frame-caption h3, .panel-title h3, .file-panel-heading h3 { margin: 0; font-size: 1.03rem; }
 .frame-caption > p { margin: 0; color: var(--lab-muted); font-size: .9rem; }
 .frame-caption code { grid-column: 1 / -1; width: fit-content; max-width: 100%; padding: .35rem .55rem; overflow-wrap: anywhere; border-radius: .4rem; background: var(--lab-card); color: var(--lab-accent); font-size: .78rem; }
-.state-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(15rem, .9fr); gap: .85rem; }
+.fd-workbench { display: grid; grid-template-columns: minmax(0,1.8fr) minmax(17rem,1fr); gap: .85rem; align-items: start; }
+.fd-graph { min-width: 0; overflow-x: auto; padding: .75rem; border: 1px solid var(--lab-border); border-radius: .85rem; background: var(--lab-card); }
+.graph-title { margin: 0 0 .45rem; font-size: 1rem; }
+.graph-viewport { width: 100%; overflow-x: auto; overscroll-behavior-inline: contain; border: 1px solid var(--lab-border); border-radius: .65rem; background: var(--lab-soft); }
+.fd-graph-svg { display: block; width: 100%; height: auto; color: var(--lab-accent); }
+.fd-graph-svg text { fill: var(--vp-c-text-1); font-family: var(--vp-font-family-base); }
+.fd-graph-svg .fd-text { font-size: 17px; font-weight: 700; }
+.fd-graph-svg .fd-subtext { fill: var(--lab-muted); font-size: 16px; }
+.fd-graph-svg .graph-col-title { fill: var(--lab-muted); font-size: 17px; font-weight: 700; }
+.fd-graph-svg .fd-box, .fd-graph-svg .ofd-box, .fd-graph-svg .endpoint-box { fill: var(--lab-card); stroke: var(--lab-border); stroke-width: 1.5; }
+.fd-graph-svg .ofd-box { fill: var(--os-active-soft,var(--lab-card)); }
+.fd-graph-svg .ofd-box.touched { stroke: var(--lab-accent); stroke-width: 3; }
+.fd-graph-svg .ofd-box.released { fill: var(--lab-soft); stroke-dasharray: 5 4; }
+.fd-graph-svg .endpoint-box { fill: var(--os-info-soft,var(--lab-card)); }
+.fd-graph-svg .edge-line { fill: none; stroke: var(--lab-accent); stroke-width: 1.7; }
+.fd-graph-svg .ofd-edge { stroke: var(--os-active,var(--lab-accent)); }
+.fd-inspector { min-width: 0; padding: .9rem; border: 1px solid var(--lab-border); border-radius: .85rem; background: var(--lab-card); }
+.fd-inspector h3 { margin: 0 0 .6rem; font-size: 1rem; }
+.fd-inspector dl { margin: 0; }
+.fd-inspector dt { margin-top: .55rem; color: var(--lab-muted); font-size: .8125rem; }
+.fd-inspector dd { margin: .1rem 0 0; overflow-wrap: anywhere; font-size: .8125rem; line-height: 1.45; }
+.frame-explanation { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: .8rem; margin-top: .85rem; padding: .9rem; border: 1px solid var(--lab-border); border-radius: .85rem; background: var(--lab-card); }
+.frame-explanation h3 { margin: 0 0 .3rem; font-size: .92rem; }
+.frame-explanation p { margin: 0; line-height: 1.55; overflow-wrap: anywhere; }
+.source-links { grid-column: 1 / -1; font-size: .8125rem; }
 .panel, .file-panel { min-width: 0; padding: 1rem; border: 1px solid var(--lab-border); border-radius: .85rem; background: var(--lab-card); }
 .panel-title { justify-content: flex-start; align-items: flex-start; margin-bottom: .8rem; }
 .panel-title > div { min-width: 0; }
@@ -216,9 +274,9 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 .fd-row.is-sentinel .fd-target { background: color-mix(in srgb, var(--lab-green) 13%, var(--lab-card)); color: var(--lab-green); }
 .panel-footnote { margin: .7rem 0 0; color: var(--lab-muted); font-size: .74rem; line-height: 1.5; }
 .ofd-list { display: grid; gap: .55rem; }
-.ofd-card { padding: .7rem; border: 1px solid var(--lab-border); border-left: .25rem solid var(--lab-accent); border-radius: .6rem; background: var(--lab-card); transition: border-color .16s ease, background-color .16s ease; }
+.ofd-card { padding: .7rem; border: 1px solid var(--lab-border); border-radius: .6rem; background: var(--lab-card); transition: border-color .16s ease, background-color .16s ease; }
 .ofd-card.is-touched { background: color-mix(in srgb, var(--lab-accent) 8%, var(--lab-card)); }
-.ofd-card.is-released { border-left-color: var(--lab-muted); opacity: .7; }
+.ofd-card.is-released { background: var(--lab-soft); color: var(--lab-muted); }
 .ofd-id { color: var(--lab-accent); font-size: .86rem; font-weight: 800; }
 .object-kind { color: var(--lab-muted); font-size: .7rem; text-align: right; }
 .ofd-meta { justify-content: flex-start; gap: .4rem; margin-top: .55rem; color: var(--lab-muted); font-size: .75rem; }
@@ -243,7 +301,10 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 .b-dot { border: 2px solid var(--lab-green); }
 .sr-status { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 @media (max-width: 700px) {
-  .state-grid { grid-template-columns: 1fr; }
+  .fd-workbench { grid-template-columns: 1fr; }
+  .fd-graph-svg { width: 680px; max-width: none; }
+  .frame-explanation { grid-template-columns: 1fr; }
+  .source-links { grid-column: 1; }
   .frame-caption { grid-template-columns: 1fr; gap: .55rem; }
   .frame-caption code { grid-column: 1; }
   .file-panel-heading { display: block; }

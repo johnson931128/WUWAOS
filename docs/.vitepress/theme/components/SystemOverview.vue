@@ -93,7 +93,7 @@ function onKey(event: KeyboardEvent, id: string) {
 </template>
 
 <style scoped>
-.system-overview { --role: var(--os-kernel); border: 1px solid var(--os-line); border-radius: 1rem; padding: clamp(1rem, 2.5vw, 1.6rem); background: var(--os-canvas); }
+.system-overview { --role: var(--os-kernel); border: 1px solid var(--os-line); border-radius: var(--os-radius-workspace); padding: clamp(1rem, 2.5vw, 1.6rem); background: var(--os-canvas); }
 .overview-heading { display: flex; align-items: end; justify-content: space-between; gap: 1rem; margin-bottom: .8rem; }
 .overview-heading h3 { margin: .2rem 0; font-size: 1.35rem; }
 .overview-heading p { max-width: 40ch; margin: 0; color: var(--os-muted); font-size: .9rem; }
@@ -103,7 +103,8 @@ function onKey(event: KeyboardEvent, id: string) {
 .boundary-label, .module-eyebrow, .flow-label, .diagram-note { fill: var(--os-muted); font-family: var(--vp-font-family-mono); }
 .boundary-label { font-size: 11px; font-weight: 700; }
 .module { cursor: pointer; outline: none; }
-.module-box { fill: var(--os-panel); stroke: var(--role); stroke-width: 2; transition: stroke-width .15s, fill .15s; }
+.module:focus-visible .module-box { stroke: var(--os-focus); stroke-width: 4; }
+.module-box { fill: var(--os-panel); stroke: var(--role); stroke-width: 2; transition: stroke-width var(--os-motion-fast) var(--os-ease), fill var(--os-motion-fast) var(--os-ease); }
 .role-cpu { --role: var(--os-cpu); }.role-memory { --role: var(--os-memory); }.role-kernel { --role: var(--os-kernel); }.role-process { --role: var(--os-process); }.role-io { --role: var(--os-io); }.role-storage { --role: var(--os-storage); }
 .module:hover .module-box, .module:focus-visible .module-box, .module.selected .module-box { stroke-width: 4; fill: color-mix(in srgb, var(--role) 10%, var(--os-panel)); }
 .module-eyebrow { font-size: 10px; }.module-title { fill: var(--os-ink); font-size: 17px; font-weight: 700; }.module-subtitle { fill: var(--os-muted); font-size: 12px; }.module-mark { fill: var(--role); font-size: 18px; font-weight: 700; }

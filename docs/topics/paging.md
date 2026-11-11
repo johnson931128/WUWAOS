@@ -15,7 +15,7 @@
 
 ## 互動：挑選 victim 與換出
 
-下方固定資料互動展示 FIFO 候選與 dirty page 換出成功或 I/O 失敗。這是固定資料教學示意，不會呼叫核心或磁碟；QEMU runtime 與瀏覽器操作驗收均為 NOT_RUN。
+下方固定資料互動展示 FIFO 候選與 dirty page 換出成功或 I/O 失敗。這是固定資料教學示意，不會呼叫核心或磁碟；QEMU runtime 驗證仍需獨立執行。
 
 <script setup>
 import PagingLab from '../.vitepress/theme/components/PagingLab.vue'

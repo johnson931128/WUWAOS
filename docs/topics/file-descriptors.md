@@ -23,7 +23,7 @@ import FdOfdLab from '../.vitepress/theme/components/FdOfdLab.vue'
 
 一般檔案 FD table 項目存放 OFD 表索引。不同 process 的 FD 數字可以各自指到相同 OFD；相同的 FD 數字也不保證指向相同 OFD。`OFD_FILE` 的 `offset` 屬於 OFD，而非 FD 或 inode，因此多個 FD 共享同一 OFD 時也共享讀寫位置。
 
-UART 初始的 fd 0、1、2 分別存 `-1`、`-2`、`-3` sentinel，核心據此路由輸入、輸出與錯誤輸出；它們不是 `open_files` 中的 OFD，不消耗 16 個全域槽位。GUI Terminal 的配置不同：核心建立兩個 TTY OFD，fd 0 指向可讀 input OFD，fd 1 和 fd 2 指向同一個可寫 output OFD，因此 output refs 是 2。`refs` 是 FD 引用總數，按每個 process table 中的 FD 項目計數，不按不同 process 數計數。
+UART 初始的 fd 0、1、2 分別存 `-1`、`-2`、`-3` sentinel，核心據此路由輸入、輸出與錯誤輸出；它們不是 `open_files` 中的 OFD，不消耗 16 個全域槽位。GUI Terminal 的配置不同：核心建立兩個 TTY OFD，fd 0 指向可讀 input OFD，fd 1 和 fd 2 指向同一個可寫 output OFD。靜止時 output refs 是 2。`refs` 包含 FD 引用，也暫時包含 `read`／`write` 系統呼叫進入時建立的 `fd_pin`，讓 I/O 睡眠期間即使 close 或重用 FD，原 OFD 仍活著。因此互動圖是 quiescent snapshot；活躍 I/O 時不能直接以 refs 等同 FD table 項目數。
 
 ## open、dup 與 fork 的位置差異
 
@@ -39,7 +39,7 @@ UART 初始的 fd 0、1、2 分別存 `-1`、`-2`、`-3` sentinel，核心據此
 | --- | --- |
 | `Process.fd_table[8]` | 每行程的 FD → OFD 索引；負 sentinel 用於 UART，`-99` 表示空格。 |
 | `OpenFile.type` | 區分保留配置、一般檔案、pipe 端點及 TTY。 |
-| `OpenFile.refs` | 指向這個 OFD 的 FD 項目數；`dup`、fork 繼承會增加，close 會減少。 |
+| `OpenFile.refs` | OFD 持有引用數；包含 FD 項目與 I/O 期間的暫時 `fd_pin`。靜止時才等同指向它的 FD 數；`dup`、fork、pin 增加，close、unpin 減少。 |
 | `OpenFile.readable` / `writable` | 由 open flags 或 TTY/pipe 端點建立的讀寫能力。方向不允許時回 `ERR_BAD_FD`。 |
 | `OpenFile.inode` | WUFS inode 編號；同一路徑的不同 open 可以各自建立 OFD，但指向同一 inode。 |
 | `OpenFile.offset` | 一般檔案的目前位置；同一 OFD 的 FD 共享此值，新的 open 會初始化自己的值。 |
