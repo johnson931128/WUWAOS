@@ -64,7 +64,8 @@ void thread_release(Thread *thread) {
         (thread->state != THREAD_NEW && thread->state != THREAD_ZOMBIE) ||
         thread->internal_gate_depth || thread->cancel_defer_depth ||
         thread->sync_wait_handle || thread->kernel_locks || thread->kernel_waiting ||
-        thread->event_wait.active || thread->join_claimed || thread->joiner_tid)
+        thread->event_wait.active || thread->join_claimed || thread->joiner_tid ||
+        thread->joining_tid)
         thread_panic("Unsafe TCB release");
     Process *process = thread->process;
     if (process) process->retired_cpu_ticks += thread->cpu_ticks;

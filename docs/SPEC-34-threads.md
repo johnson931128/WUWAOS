@@ -80,7 +80,7 @@ long gettid(void);
 | `gettid` | 呼叫者 TID | 不等於 hart ID；不要求數值與 PID 不同 |
 | 既有 `exit` | 不返回 | 任一 Thread 呼叫即要求整個 Process 結束 |
 
-現行 syscall 編號為 1–41。本設計預留 `SYS_THREAD_CREATE=42`、`SYS_THREAD_JOIN=43`、`SYS_THREAD_EXIT=44`、`SYS_GETTID=45`，實作前須再次檢查是否已被使用；舊編號不得變動。
+原有 syscall 編號為 1–41；目前已接入 `SYS_THREAD_CREATE=42`、`SYS_THREAD_JOIN=43`、`SYS_THREAD_EXIT=44`、`SYS_GETTID=45`，舊編號未變動。
 
 RV64 syscall 沿用 `a7` 傳編號、`a0..a2` 傳參數、`a0` 傳結果。`SYS_THREAD_CREATE` 的原始參數為 `(entry, argument, trampoline)`；C wrapper 額外傳入受同一 ELF／內建映像控制的 user trampoline 位址，使用者 API 仍只有兩個參數。Join 使用 `(tid, status_address)`，exit 使用 `(status)`，gettid 無參數。
 
@@ -222,5 +222,7 @@ Thread 執行狀態由 `kernel/proc/thread.h`／`thread.c` 管理；使用者入
 | `demo threads`／專用 Thread 列表介面 | NOT_IMPLEMENTED |
 | 多 Thread QEMU／新增故障注入／效能測量 | NOT_RUN |
 | 網站文件建置 | 2026-11-10 VitePress 建置通過；不代表 Thread 驗收 |
+
+2026-11-12 B／C 收尾補上建立取消錯誤傳遞、Thread exit scope 防護、退出期間新 join／wait 拒絕，以及 channel 等待的取消結果。此次主機缺少工具鏈，修正後編譯 **NOT_RUN**，不將上表先前編譯結果套用至此次變更；runtime 仍 **NOT_RUN**。細節見 [B／C 紀錄](./thread-stage-b.md)。
 
 硬體觀念與來源集中於[教學章節](./topics/threads.md#資料來源與實作對照)。本規格的容量、位址、錯誤與生命週期是 WUWAOS 的設計決策，不是 RISC-V ISA 或 POSIX 的強制規定。

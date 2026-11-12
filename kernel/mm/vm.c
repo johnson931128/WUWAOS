@@ -740,9 +740,9 @@ int vm_thread_stack_release(uintptr_t root, int slot) {
     int leave = vm_scope_leave(); return leave < 0 ? leave : result;
 }
 int vm_user_executable(uintptr_t root, uintptr_t address, size_t length) {
-    int error = vm_scope_enter(); if (error < 0) return 0;
+    int error = vm_scope_enter(); if (error < 0) return error;
     int result = vm_user_executable_impl(root, address, length);
-    return vm_scope_leave() < 0 ? 0 : result;
+    int leave = vm_scope_leave(); return leave < 0 ? leave : result;
 }
 
 long vm_sbrk(uintptr_t root, long increment) {

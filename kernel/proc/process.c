@@ -237,9 +237,11 @@ long thread_create(uintptr_t entry, uintptr_t argument, uintptr_t trampoline) {
     if (slot < 0) return ERR_NO_SLOT;
     Thread *thread = thread_allocate_extra(process, slot);
     if (!thread) return ERR_NO_SLOT;
-    if (!vm_user_executable(process->page_table, entry, 2) ||
-        !vm_user_executable(process->page_table, trampoline, 2)) {
-        thread_release(thread); return ERR_ADDRESS;
+    int executable = vm_user_executable(process->page_table, entry, 2);
+    if (executable > 0) executable = vm_user_executable(process->page_table, trampoline, 2);
+    if (executable <= 0) {
+        thread_release(thread);
+        return executable < 0 ? executable : ERR_ADDRESS;
     }
     if (caller->kill_pending || process->state != PROCESS_LIVE || process->image_changing) {
         thread_release(thread); return ERR_INTERRUPTED;
@@ -305,7 +307,8 @@ static int join_status_hits_stack(Thread *target, uintptr_t address) {
 long thread_join(long tid, uintptr_t status_address) {
     Thread *caller = thread_current();
     Process *process = caller->process;
-    if (process->state != PROCESS_LIVE || caller->kill_pending) return ERR_INTERRUPTED;
+    if (process->state != PROCESS_LIVE) return ERR_BUSY;
+    if (caller->kill_pending) return ERR_INTERRUPTED;
     if (tid == caller->tid) return ERR_INVALID;
     Thread *target = find_tid(tid);
     if (!target || target->process != process) return ERR_INVALID;
@@ -361,6 +364,12 @@ long thread_join(long tid, uintptr_t status_address) {
 _Noreturn void thread_exit(long status) {
     Thread *thread = thread_current();
     Process *process = thread->process;
+    /* A Zombie may be joined or group-reaped once this stack switches away.
+       Never publish it while an internal scope still owns resources. */
+    if (thread->internal_gate_depth || thread->cancel_defer_depth) {
+        console_puts("[thread] Internal scope leaked across thread exit\n");
+        kernel_idle();
+    }
     mark_thread_zombie(thread, status);
     if (process->state == PROCESS_LIVE) {
         int others = 0;
@@ -742,7 +751,7 @@ long thread_sleep(long channel) {
     thread->channel = channel;
     thread_transition(thread, THREAD_WAITING, "sleep channel");
     suspend_current();
-    return 0;
+    return thread->kill_pending ? ERR_INTERRUPTED : 0;
 }
 
 long thread_sleep_ms(long milliseconds) {
@@ -808,6 +817,8 @@ static long collect_child(Process *parent, Process *child, uintptr_t status) {
 long process_wait(long pid, uintptr_t status_address) {
     Process *parent = process_current();
     Thread *caller = thread_current();
+    if (parent->state != PROCESS_LIVE) return ERR_BUSY;
+    if (caller->kill_pending) return ERR_INTERRUPTED;
     Process *child = find_pid(pid);
     if (child == 0 || child->parent_pid != parent->pid) {
         return ERR_NO_CHILD;

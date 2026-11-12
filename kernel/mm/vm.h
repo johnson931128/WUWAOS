@@ -49,6 +49,7 @@ int vm_get_usage(uintptr_t root, VmUsage *usage);
 int vm_thread_stack_reserve(uintptr_t root, int slot);
 int vm_thread_stack_prepare(uintptr_t root, int slot);
 int vm_thread_stack_release(uintptr_t root, int slot);
+/* 1: executable range, 0: invalid range, negative: VM scope/cancellation error. */
 int vm_user_executable(uintptr_t root, uintptr_t address, size_t length);
 
 #endif

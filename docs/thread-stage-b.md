@@ -17,6 +17,18 @@
 
 單 hart 下以短、不可切換的 descriptor table 操作、FD reservation 與 OFD pins 保護共享 FD table，沒有再引入第二把 table gate。未增加 `demo threads`、Thread 專用清單命令或新的可觀測 TID 列表；目前診斷保留 Process row 與代表 TID。這些選擇不改動 Spec 的 syscall/stack ABI 與生命週期契約。
 
+## 2026-11-12：B／C 實作收尾
+
+依 Spec 34 的 B、C 範圍核對既有程式，保留上列單 hart 資源保護方法，補齊以下邊界：
+
+- B：`vm_user_executable` 區分可執行（1）、位址無效（0）與 VM scope／取消錯誤（負值）。建立 Thread 時，負值原樣回傳，先釋放保留的 NEW TCB；不再把取消誤報成 `ERR_ADDRESS`。尚未取得 user stack reservation，故此分支不釋放其他 Thread 的 stack。
+- B：Thread exit 在發布 Zombie 前檢查 internal gate 與 cancel-defer 深度；遺漏 scope 時停止並診斷，避免 join／群組回收把仍被引用的執行資源當成可回收。TCB release 也拒絕殘留的 outgoing join claim（`joining_tid`）。
+- C：Process 已退出 LIVE 狀態時，新的 join／child wait 回 `ERR_BUSY`；目前 Thread 已被取消則回 `ERR_INTERRUPTED`。先前已開始的等待仍走原 stack 的取消與 claim 清理。
+- C：channel sleep 被 group exit／kill 喚醒後回 `ERR_INTERRUPTED`，與 event／sync 等待一致，不再回報一般成功。
+- 更新過時的「僅階段 A、尚無 user thread ABI」註解與進度。B／C 實作已具備；不包含 D 的 demo／專用 Thread 清單，也不等於 runtime 驗收完成。
+
+本輪 `git diff --check` 通過；目前主機沒有可用 Clang／Make、已安裝 WSL 發行版或 `build/portable/msys64` 工具鏈，**本次編譯 NOT_RUN**。下方是 2026-11-10 的歷史編譯紀錄，不能作為這次修正的編譯證據。未新增測試程式、未跑 QEMU／CLI／GUI、未操作 guest 磁碟，B／C runtime 驗收仍為 **NOT_RUN**。
+
 ## 驗證狀態
 
 僅執行核心/使用者映像編譯與連結：

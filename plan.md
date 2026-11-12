@@ -302,6 +302,16 @@
 - 發布：來源 fa6ade4 已推送 main；既有 publish-docs.ps1 執行 VitePress build 成功（32.44 秒，保留既有 bundle size 提示），發布 gh-pages 21f3d37e6b3f1c4320e4f356654a4791af9542ab。[Pages 工作 43133970378](https://github.com/johnson931128/WUWAOS/actions/runs/43133970378) completed/success。
 - 瀏覽器、公開頁操作及 OS／CLI 檢查依本輪指示略過（NOT_RUN），不以建置或部署成功代替操作驗收。未啟動預覽伺服器或瀏覽器背景程序。
 
+## Thread B／C 收尾（2026-11-12）
+
+- 依使用者要求先處理 Spec 34 的 B／C，僅 main，完成後 commit/push；不擴充 D 的 demo、清單命令、SMP、TLS 或其他 ABI。
+- 核對既有 B：每 Process 8／全系統 32 TCB、7 個額外 guarded user stacks、create／join／exit／gettid、trampoline 與安全回收。既有 C：OFD pin／FD reservation、cwd snapshot、group exit、child wait TID claim、fork／exec 唯一占用 TCB 限制均已存在。
+- 本輪實際修正：VM 可執行位址檢查改用 `1 / 0 / negative error` 契約；create 遇取消錯誤釋放 NEW TCB 並原樣回傳，只有 0 轉 ERR_ADDRESS。虛擬碼：`reserve TCB → validate entry/trampoline → error: release TCB → return error; valid: reserve/prepare stack → publish Ready`。
+- Thread exit：`gate depth 或 defer depth 非零 → fail-stop；否則發布 Zombie → 切回 scheduler`；release 額外檢查 outgoing join claim。保留原本 join／群組回收在另一 stack 執行的規則。
+- C：新 join／wait 遇非 LIVE 回 ERR_BUSY、已取消回 ERR_INTERRUPTED；已開始等待保留既有 unwind。channel 等待醒來以 kill_pending 區分取消／正常完成，避免取消被回報成功。
+- 同步 Spec 34、B／C 紀錄與 plan_current 的狀態，移除「尚未實作 create/join」的過時描述。實作具備不等同 runtime 驗收完成。
+- 驗證：git diff --check 通過。此環境沒有 Clang／Make、可用 WSL 或 portable 工具鏈，本輪編譯 NOT_RUN；QEMU／CLI／GUI runtime NOT_RUN，未新增測試程式、未操作磁碟。不沿用歷史編譯結果作為本輪證據。本輪不涉及網站 UI 或部署。
+
 ## 進度維護
 
 每完成一個步驟後，更新本檔與 [`plan_current.md`](./plan_current.md) 的進度。依使用者要求，本檔須記錄實際採用的解決觀念／演算法、必要虛擬碼、驗收結果與限制。未執行或未完成對應 runtime 驗證的項目不得記為完成；若當前條件無法進行 runtime 驗證，需明確保留未完成狀態並記錄限制。

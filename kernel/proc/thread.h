@@ -45,7 +45,7 @@ typedef struct ThreadControlBlock {
     TtyId console_route_tty;
 } Thread;
 
-/* Internal lifecycle only: no user thread_create/join/exit ABI in stage A. */
+/* TCB storage and lifecycle; user create/join/exit ABI is implemented below. */
 void thread_init(void);
 Thread *thread_allocate(struct ProcessControlBlock *process);
 Thread *thread_allocate_extra(struct ProcessControlBlock *process, int stack_slot);
