@@ -1,6 +1,26 @@
+<script setup>
+import TrapFlow from '../.vitepress/theme/components/TrapFlow.vue'
+</script>
+
 # 03 · 例外與系統呼叫
 
 User Mode（使用者模式）程式不能直接控制所有硬體。它以 syscall（系統呼叫）請核心提供服務；CPU 偵測到非法存取或缺頁時，也會進入核心。
+
+## 從使用者程式進入核心，再返回
+
+切換情境，沿固定架構逐步閱讀。系統呼叫、合法缺頁與計時器中斷共用入口，但處理原因、返回位置及暫存器更新不同。
+
+<TrapFlow />
+
+## 三種情境的返回差異
+
+| 情境 | 來源與原因 | 核心處理 | 正常返回位置 |
+| --- | --- | --- | --- |
+| 使用者系統呼叫 | U-mode；`scause = 8` | `syscall_dispatch` 將結果寫入 `a0` | `sepc + 4`；exit 不返回 |
+| 合法缺頁 | U-mode；`scause = 12 / 13 / 15` | `vm_handle_fault` 檢查權限並補頁 | 補頁成功後重試原 `sepc` |
+| 計時器中斷 | U-mode；中斷位為 1、原因碼 5 | `timer_interrupt`、`thread_preempt` 與 `thread_resume` | 保存的 `sepc`；保留 `a0` |
+
+上述返回皆以行程仍允許繼續執行為前提。非法缺頁、補頁失敗、exit 或返回邊界處理 pending kill，可能使行程結束；不能把它們畫成成功返回使用者。
 
 ## CPU 如何進入入口
 
@@ -47,3 +67,14 @@ ecall（環境呼叫指令）長度固定 4 bytes；核心將 sepc 加 4，讓�
 核心自身出錯目前會印出陷阱資訊並停止；使用者非法存取則結束該行程。目前已有計時器驅動的 50 ms RR，UART 仍輪詢，也沒有完整訊號機制或核心內搶占。新的外部 IRQ 骨架不改變這些前提。
 
 觀念參考：`notes/ch2 Operating-System Structures.md` 的系統呼叫與雙模式。早期基礎驗收見 [Spec 01](../SPEC-01-user-syscalls.md)，目前缺頁路徑見 [Spec 10](../SPEC-10-demand-paging.md)。
+
+## 規格版本與驗收邊界
+
+本章依目前 `arch/riscv/trap.S`、`arch/riscv/trap.c`、`kernel/syscall/syscall.c` 與 `kernel/proc/process.c` 整理，不將歷史規格的限制當成現行架構。
+
+- [Spec 01](../SPEC-01-user-syscalls.md) 記錄最初單行程及三個基本 syscall；本章沿用 Direct mode、TrapFrame 與 ecall 返回規則，不表示目前只有那些服務。
+- [Spec 10](../SPEC-10-demand-paging.md) 記錄按需分頁與當時的同步 I/O 驗收。後續核心等待與取消邊界已演進，需合併閱讀[換頁與 Swap](./paging.md)及[Block Async I/O](./block-async.md)。
+- [Thread 階段 A](../thread-stage-a.md) 記錄 PCB／TCB 分工；目前 trap frame 與排程狀態由 Thread 管理，Process 持有位址空間等資源。
+- [外部中斷規格](../SPEC-32-plic-external-interrupts.md)與[整合紀錄](../merge-2026-11-10.md)保留各自實際驗證範圍；本頁圖解不擴大那些驗收結論。
+
+此元件是固定教學步驟，不讀取 QEMU、PCB 或硬體暫存器。本次頁面改版不重跑 OS／CLI 操作驗收，相關 runtime 檢查標為 **NOT_RUN**。
