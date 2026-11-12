@@ -145,6 +145,56 @@ UNUSED -> NEW -> READY -> RUNNING
 RUNNING -> exit / safe cancellation -> ZOMBIE -> join -> UNUSED
 ```
 
+### 目前實作的狀態轉移與排程順序（2026-11-12）
+
+本節記錄目前原始碼的行為，供網站圖解與步驟解析共用；不是新增排程政策，也不是完整多 Thread runtime 驗收紀錄。
+
+| ThreadState | 意義 | 主要轉移 |
+| --- | --- | --- |
+| UNUSED | 未占用的 TCB slot | 配置後進入 NEW |
+| NEW | 建立中的保留 slot，不在 Ready queue | 初始化成功後 READY；失敗並完成回滾後 UNUSED |
+| READY | 可執行，等待 CPU | 排程器從隊首取出後 RUNNING |
+| RUNNING | 目前占用單一 hart 的 Thread | 時間片／yield 到 READY；阻塞到 WAITING；退出到 ZOMBIE |
+| WAITING | 等待條件，沒有排在 Ready queue | 完成、逾時或取消後 READY，再恢復原 stack 檢查結果 |
+| ZOMBIE | Thread 已結束，仍保留結果並占用 TCB slot | 另一 stack 上 join 或 Process 群組清理後 UNUSED |
+
+Waiting 的 `wait_reason` 分為 CHANNEL、CHILD、SYNC、EVENT、JOIN；沒有等待時為 NONE。EVENT 另外記錄來源 generation／sequence、deadline 與結果，deadline 等待不必有 source。Ready 表示可被排程，不代表事件成功：被取消或逾時的 Thread 也會先轉 Ready，再沿原 kernel stack 處理錯誤。
+
+Ready queue 是 FIFO 串列，元素為 `Thread *`；head 出隊、tail 入隊，`ready_queued` 防止同一 TCB 重複入列。每次派發設定 `SCHEDULER_QUANTUM_MS = 50`。沒有優先權、多級回饋或每 Process 公平分配；同一 Process 有多條 Ready Thread 時，每條都各自參與 RR。
+
+排程虛擬碼（省略診斷與失敗分支）：
+
+```text
+Thread 主動等待或讓出：
+  更新狀態為 WAITING 或 READY
+  若為 READY，加入隊尾
+  停止目前 timer，結算 Thread CPU ticks
+  context_switch(Thread.context, scheduler.context)
+
+scheduler 每輪：
+  切核心頁表；current Thread = null
+  嘗試清理 DYING Process、處理事件來源與逾時、回收無父 Zombie
+  next = Ready queue 隊首出隊
+  若有 next：
+    current = next；狀態 = RUNNING；dispatches++
+    選擇 next.Process 的頁表，設定 50 ms deadline
+    記錄執行起點，context_switch(scheduler.context, next.context)
+  否則若有 event／UI／block 活動：
+    用不晚於 10 ms poll deadline 的事件 deadline 等待 WFI
+    醒來輪詢來源與逾時，再檢查 Ready queue
+  否則：輸出無可執行工作或無事件來源的等待診斷，進入 idle
+```
+
+U-mode 計時器中斷由 `trap_entry` 保存 TrapFrame，`trap_handler` 呼叫 `timer_interrupt` 清 pending，再由 `thread_preempt` 增加 preemptions、將目前 Thread 排回隊尾；`thread_resume` 經原核心上下文切回 scheduler。普通 syscall／成功缺頁返回不重新設定時間片。50 ms 是派發時設定的時間片，**不是核心工作必定在 50 ms 被強制切斷的上限**：核心仍採 SIE=0、不強制搶占，只在明確阻塞／讓出點切換。即使有 IRQ 喚醒其他 Thread，也不表示立即切換至該 Thread。
+
+`context_switch` 保存／恢復核心的 ra、sp、s0–s11；使用者一般暫存器與 sepc／sstatus 等由 TrapFrame 保存。Thread 再次獲選時，恢復自己的核心 stack，從先前 `suspend_current` 的呼叫返回繼續；阻塞 read 會完成原本的讀取後才回 user，不重跑整個程式。第一次執行則從 first_run → user_enter → sret 開始。只有一條 Ready Thread 時，也可能在時間片到期後再次選到同一條。
+
+以 `cat code.txt` 為例，shell fork 建立子 Process 與初始 Thread；子 Thread 讀檔時可在 RUNNING → WAITING → READY → RUNNING 間多次循環。檔案內容與檔案系統 metadata 讀取都可能需要 block I/O；單憑一般 `event wait` trace 不能判定每一筆等待的來源。重複出現同一組 PID／TID 代表同一 Thread 的狀態改變，不代表反覆建立 Thread。子 Process 完成清理後，父 shell 的 child wait 才能完成回收；Thread join 與 Process wait 是不同層級。
+
+`trace off` 統一關閉正常 thread／exec／exit／wait 追蹤，`trace on` 恢復；開關為全域、預設 on，重開機不保留。這只控制追蹤輸出，不改變排程或隱藏真正錯誤，也不抑制程式本身要求的輸出。`cat` 在正常完成時因此只輸出檔案內容與 shell 原有提示字元。
+
+原始碼對照：[Thread 狀態與等待欄位](https://github.com/johnson931128/WUWAOS/blob/main/kernel/proc/thread.h)、[Ready queue](https://github.com/johnson931128/WUWAOS/blob/main/kernel/proc/scheduler.c)、[50 ms 定義](https://github.com/johnson931128/WUWAOS/blob/main/kernel/proc/scheduler.h)、[狀態轉移／等待／scheduler loop](https://github.com/johnson931128/WUWAOS/blob/main/kernel/proc/process.c)、[trap 分派](https://github.com/johnson931128/WUWAOS/blob/main/arch/riscv/trap.c)、[核心上下文切換](https://github.com/johnson931128/WUWAOS/blob/main/arch/riscv/swtch.S)。
+
 Event 仍採「取得 source generation／sequence → 檢查條件 → 登記等待 → 切到 scheduler」；同一 Thread 同時最多一筆等待。IRQ callback 只 ACK／收集／通知並使等待者 Ready，不在 callback 中睡眠或切換 stack。Thread A 等待不改變 Thread B 的 state；所有掃描 timeout、cancel 與 wakeup 的迴圈都改用 Thread 容量。
 
 ## Join 與 Thread 退出

@@ -1,6 +1,35 @@
+<script setup>
+import ThreadFlow from '../.vitepress/theme/components/ThreadFlow.vue'
+</script>
+
 # Thread、OS 與 CPU
 
-本章說明執行緒在作業系統中的角色、軟體工作如何交給硬體執行，以及 WUWAOS 下一階段的設計。**目前已完成 TCB 排程的階段 A，但每 Process 仍只有一條 Thread，尚未提供多 Thread API**。[階段 A 紀錄](../thread-stage-a.md) 說明已實作範圍；下文標為「規劃」的額外堆疊、create／join 與多 Thread 生命週期，仍須依 [Spec 34](../SPEC-34-threads.md) 繼續實作。
+WUWAOS 由核心直接排程 Thread。同一個 Process 可以有多條 Thread，共用位址空間與 FD table，各自保存暫存器、堆疊與等待狀態；目前 QEMU 只有一個 hart，同一時間只執行一條 Thread。
+
+**B／C 的多 Thread API、額外堆疊與共享資源生命週期已實作，完整多 Thread runtime 驗收仍為 NOT_RUN。** [Spec 34](../SPEC-34-threads.md) 定義狀態與 ABI；[B／C 紀錄](../thread-stage-b.md) 說明實作與驗收邊界。階段 A 的歷史回歸不等於 B／C 已驗收。
+
+## 一條 Thread 如何等待、恢復與退出
+
+先看 Ready queue、hart 0 與 Waiting 的關係，再切換情境逐步閱讀。圖中的 A／B／C 是固定教學代號；不連接正在執行的 WUWAOS，也不改變核心時間片。
+
+<ThreadFlow />
+
+| 狀態 | 代表什麼 | 下一步由誰決定 |
+| --- | --- | --- |
+| Unused | 空的 TCB slot | 配置程式保留為 New |
+| New | 正在準備 stack／frame，尚未入隊 | 建立成功後發布 Ready；失敗回滾 |
+| Ready | 可執行，排在 FIFO 佇列 | 排程器從隊首派發 |
+| Running | 目前在 hart 0 執行 | 時間片／yield、阻塞或退出 |
+| Waiting | 等待事件、同步、子行程或 join | 完成、逾時、取消後排回 Ready |
+| Zombie | 已退出，仍保存結果並占槽 | join 或 Process 群組清理後回收 |
+
+Ready 不代表 I/O 一定成功；取消與逾時也會先喚醒，讓原核心呼叫恢復並處理錯誤。50 ms 是派發時間片，核心內仍不強制搶占，因此不是最大回應時間保證。
+
+### 用 cat 對照真實追蹤
+
+`cat code.txt` 由 shell fork 出子 Process 與初始 Thread。讀取檔案內容及 metadata 可能多次等待 block I/O；同一個 PID／TID 重複出現 Running → Waiting → Ready → Running，表示同一條 Thread 多次等待與恢復，不是不斷建立 Thread。只有一般 event 訊息時，不能逐筆確定等待的是哪一個來源。
+
+在 WUWAOS shell 輸入 `trace off`，正常的 thread／exec／exit／wait 訊息會一起關閉；`cat` 正常完成時只輸出內容與原有提示字元。`trace on` 恢復追蹤。此全域設定重開機不保留，也不隱藏真正錯誤或程式主動輸出。
 
 ## 為什麼一個程式需要多條執行路徑
 
@@ -15,7 +44,7 @@
 Process 是資源與生命週期的容器；Thread 是可被排程的一條執行路徑。程式碼和資料可以共用，但執行到哪一行、暫存器值與函式呼叫堆疊要各自保存。
 
 ```text
-One Process / one address space                  (planned)
+One Process / one shared address space
 +--------------------------------------------------------+
 | PID / program / global data / heap / FD table / cwd     |
 |                                                        |
@@ -32,13 +61,13 @@ One Process / one address space                  (planned)
 
 | 項目 | 同 Process 的 Thread | 不同 Process，依 WUWAOS 目前設計 |
 | --- | --- | --- |
-| PID／TID | PID 相同，TID 各自不同（多 Thread 規劃） | PID 不同；目前各自有初始 TCB 與獨立配置的 TID |
+| PID／TID | PID 相同，TID 各自不同 | PID 不同；每條 Thread 也有獨立 TID |
 | 程式、global、heap | 共用同一個位址空間 | fork 複製私有內容，沒有 COW |
-| 暫存器與 PC | 各自保存 | 各 Process 現在各自保存 |
-| 使用者與核心堆疊 | 每 Thread 各有一組 | 目前各 Process 的初始 TCB 各有一組 |
+| 暫存器與 PC | 各自保存 | 各 Process 內的 Thread 各自保存 |
+| 使用者與核心堆疊 | 每 Thread 各有一組 | 各 Process 的 Thread 各有一組 |
 | FD table、cwd | 共用，變更會被其他 Thread 看見 | 各 Process 有自己的表與 cwd |
 | 開啟檔案的 offset | 相同 OFD 共用，由鎖序列化 | fork／dup 也可能共用 OFD |
-| 一條執行路徑等待 | 只讓該 Thread Waiting | 目前是初始 TCB Waiting，PCB 資源生命週期仍為 Live |
+| 一條執行路徑等待 | 只讓該 Thread Waiting | 不直接改變其他 Process／Thread 的執行狀態 |
 
 「自己的 stack」是使用與管理上的分配，不是同 Process 內的記憶體隔離。Thread A 拿到 B stack 的有效指標，仍可能讀寫它；B 結束後更不能繼續依賴其區域變數。
 
@@ -83,7 +112,7 @@ RISC-V 使用 **hart** 表示執行環境中能推進指令的硬體執行資源
 
 | 名詞 | 指的是什麼 | 與 WUWAOS 的關係 |
 | --- | --- | --- |
-| Software Thread | OS／程式庫管理的執行路徑 | 本次準備新增的 TID／TCB |
+| Software Thread | OS／程式庫管理的執行路徑 | 已實作的 TID／TCB 與 Thread API |
 | Hart | RISC-V 執行環境提供的硬體執行資源 | 目前 QEMU `-smp 1` 提供一個 guest hart |
 | CPU core | 處理器核心的硬體實作單位 | 多核心平台可提供多個可執行 context |
 | SMT | 同一實體核心提供多個硬體執行 context 的實作方式 | 第一版不管理 SMT 拓樸 |
@@ -120,7 +149,7 @@ Case 3: SMT core       core 0: [context 0] [context 1]
 Step                 0       1       2       3       4
 ----------------------------------------------------------
 hart 0 executes      A       B       C       A       B
-Thread A             RUN     WAIT    WAIT    RUN     READY
+Thread A             RUN     WAIT    READY   RUN     READY
 Thread B             READY   RUN     READY   READY   RUN
 Thread C             READY   READY   RUN     WAIT    WAIT
 Disk                 submit  ...     done
@@ -134,7 +163,7 @@ A 提交磁碟工作後阻塞，B／C 使用 CPU；磁碟完成時 A 變 Ready�
 
 Trap 進入 S-mode 時，架構更新 `sepc`、`scause`、`stval` 與 `sstatus` 相關狀態；一般整數暫存器和 stack 切換由入口組合語言處理。返回時 `sret` 依 `sepc` 與特權狀態續行；`satp` 決定位址轉譯使用的頁表根。這些是執行機制，不包含 Ready queue 的選擇政策。[RISC-V Supervisor ISA](https://docs.riscv.org/reference/isa/v20260120/priv/supervisor.html)
 
-在 WUWAOS 階段 A 的現行程式中，對應關係如下：
+在 WUWAOS 目前原始碼中，對應關係如下：
 
 | 保存資料 | 現行位置 | 用途 |
 | --- | --- | --- |
@@ -173,7 +202,7 @@ CPU 當下只有目前 context 的暫存器值；暫停 Thread 的值保存在 R
 
 LP64 函式呼叫須維持 16-byte stack alignment；`tp` 在 ABI 中是 thread pointer，但要有 runtime 配置 TLS 與載入器／編譯器配合，才有每 Thread 的 TLS 資料。本版只保存整數 context，尚不提供 TLS。[RISC-V psABI：Integer Register／Calling Convention](https://riscv-non-isa.github.io/riscv-elf-psabi-doc/)
 
-## 共用記憶體以後要處理什麼
+## 共用記憶體如何維持生命週期
 
 共享讓 Thread 能直接交換資料，也讓一條 Thread 的錯誤可能影響整個 Process。以邏輯上的 read／add／write 拆解，交錯可能如下：
 
@@ -188,18 +217,18 @@ two increments, final value 1
 
 這只是遺失更新的概念示意；不是鼓勵執行有未定義資料競爭的 C 程式。實作示範應用明確的同步點控制步驟，正式共用更新用 mutex 或合適的原子操作。`volatile` 不能代替互斥、原子性或同步協定。
 
-Thread 版還必須處理以下生命週期：
+目前 B／C 已接入以下保護，完整 runtime 驗收仍待完成：
 
 - A read 等待期間，B close 並重用同一 FD number：已開始的 read 要保留原 OFD，不能醒來後讀到另一個檔案。
 - A 改 cwd：B 已開始處理的相對路徑使用當次快照，不應隨等待時的 cwd 改變。
 - A thread_exit：保留 B 仍在使用的 page table、FD table 與 TTY；A 的 stack 也要等退出原 kernel stack 後才能回收。
 - A 呼叫 Process exit：通知所有 Thread 安全退出，等 DMA／交易清理完成後才能銷毀共用空間。
 
-同 Process 切換通常能共用位址空間，但是否省略 `satp` 切換與 TLB fence 是核心實作決定。WUWAOS 現在的 `vm_enable` 明確執行 fence，規劃第一版保留這條安全路徑；本章不宣稱已量到 Thread 切換較快，也不宣稱 context switch 一定清空或一定保留所有 cache。
+同 Process 切換通常能共用位址空間，但是否省略 `satp` 切換與 TLB fence 是核心實作決定。WUWAOS 現在的 `vm_enable` 明確執行 fence，第一版保留這條安全路徑；本章不宣稱已量到 Thread 切換較快，也不宣稱 context switch 一定清空或一定保留所有 cache。
 
-## WUWAOS 第一版準備提供什麼
+## WUWAOS 目前提供的 API 與限制
 
-| 項目 | 規劃 |
+| 項目 | 目前實作；runtime 待驗收 |
 | --- | --- |
 | 建立／等待／退出 | `thread_create(entry, arg)`、`thread_join(tid, status)`、`thread_exit(status)`、`gettid()` |
 | 共用資源 | 每 Process 一份 VmSpace／FD table／cwd；同 Process 的 TID 不同 |
@@ -211,9 +240,11 @@ Thread 版還必須處理以下生命週期：
 
 這裡的「由核心排程的使用者 Thread」會在 U-mode 執行函式，並在 syscall／fault／interrupt 時進入核心；它與永遠處理核心工作的 kernel worker 不同。第一版也不是把多條 user-level fibers 全映射到單一 OS Thread 的 M:1 模型。
 
-以下是預定 API 的使用示意，**目前尚不能在 WUWAOS 編譯／執行**：
+以下是符合目前 API 的程式片段，需整合至使用 WUWAOS user library 的程式；不是可直接貼進 shell 的命令，也不是已驗收的測試結果：
 
 ```c
+#include "user/lib/api.h"
+
 static long shared_result;
 
 static long worker(void *argument) {
@@ -233,7 +264,7 @@ void thread_example(void) {
 
 例子使用 Process 生命週期的 static 資料，避免把很快返回的 caller stack 當成長期有效的 argument。成功 join 要保證能觀察到已退出 Thread 的寫入；若兩條 Thread 都還在修改 shared_result，則仍需同步保護。
 
-目前可操作的仍是 `ps`、`pcb`、`demo sync` 等指令；`ps` 已列 TID 與 TCB 槽位，`pcb` 區分 Process lifecycle 與初始 TCB 的 state。這些只涵蓋每 Process 一條 Thread 的相容路徑。預定的 `demo threads`／多 Thread 清單尚不存在，請勿把上表當成已可執行的命令。[完整 ABI、生命週期、錯誤與驗收條件](../SPEC-34-threads.md)
+目前可用 `ps`、`pcb`、`demo sync` 等既有命令觀察；`ps`／`pcb` 仍以 Process 與代表 TCB 為主，不能當成完整 Thread 清單。階段 D 的 `demo threads`／專用 Thread 清單尚不存在。正常啟動 fan 也不會自動建立多條 Thread：shell fork 產生子 Process 與初始 Thread，exec 沿用該 PID／TID，fan 目前沒有呼叫 thread_create。[完整 ABI、生命週期、錯誤與驗收條件](../SPEC-34-threads.md)
 
 ## 資料來源與實作對照
 
@@ -245,4 +276,4 @@ void thread_example(void) {
 - [Trap 入口](https://github.com/johnson931128/WUWAOS/blob/main/arch/riscv/trap.S)、[核心 context switch](https://github.com/johnson931128/WUWAOS/blob/main/arch/riscv/swtch.S)、[計時器](https://github.com/johnson931128/WUWAOS/blob/main/arch/riscv/timer.c)。
 - [KernelGate](https://github.com/johnson931128/WUWAOS/blob/main/kernel/proc/gate.c)、[mutex／semaphore](https://github.com/johnson931128/WUWAOS/blob/main/kernel/ipc/sync.c)、[VM](https://github.com/johnson931128/WUWAOS/blob/main/kernel/mm/vm.c)。
 
-教學圖不是硬體模擬器或真實 trace。階段 A 的 TCB runtime／基本 QEMU 回歸已通過，多 Thread API 仍為 NOT_IMPLEMENTED，多 Thread QEMU／效能測試為 NOT_RUN；文件網站建置與 OS 驗收分開記錄。
+教學圖不是硬體模擬器或真實 trace。多 Thread API 與 B／C 生命週期為 CODE_PRESENT，階段 D 介面為 NOT_IMPLEMENTED，多 Thread 完整 QEMU／效能測試為 NOT_RUN；文件網站建置與 OS 驗收分開記錄。

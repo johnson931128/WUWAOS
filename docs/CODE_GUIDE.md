@@ -258,7 +258,7 @@ ps 的 free／total 是底層配置池頁數；vmstat 的 resident／limit 是�
 ## 7. process.c / process.h：PCB 與生命週期
 
 原本的 Process 結構現在以 ProcessControlBlock 標記，仍只有一份真實狀態。processes[16] 是行程表；每個 page-aligned kernel stack slot 為一頁 unmapped guard 加 16 KiB stack，scheduler stack 同樣配置。
-PCB 保存 PID／父 PID／角色／生命週期／結束碼、頁表、固定 8 格 FD table、cwd、TTY session 與初始 Thread 指標。TCB 保存 TID／Ready-Running-Waiting 狀態、frame／context／stack、等待原因與 event record、取消／cancel-defer／gate 深度。階段 A 每個 Process 只有一條 Thread；詳細責任與本次回歸見[階段 A 紀錄](./thread-stage-a.md)。TTY／pipe 的短期 staging 留在 caller Thread stack，不交給 scheduler poller。
+PCB 保存 PID／父 PID／角色／生命週期／結束碼、頁表、固定 8 格 FD table、cwd、TTY session 與代表 Thread 指標。TCB 保存 TID／執行狀態、frame／context／stack、等待原因與 event record、取消／cancel-defer／gate 深度。B／C 已提供同 Process 多 Thread、create／join／exit 與額外 stack；每 Process 最多占用 8 個 TCB slots，全系統 32 個，含 New／未 join Zombie。代表指標可能隨回收改變；Process 群組清理後為 null。完整多 Thread runtime 仍 NOT_RUN，見 [B／C 紀錄](./thread-stage-b.md)及 [Spec 34](./SPEC-34-threads.md)。TTY／pipe 的短期 staging 留在 caller Thread stack，不交給 scheduler poller。
 TCB 的 `ready_next` 指向下一個 Ready TCB，`ready_queued` 標示是否已入列；Running／Waiting／Zombie／Unused 不佔據 Ready queue。PCB 保存資源生命週期，TCB 保存執行狀態，佇列不複製 TCB。
 
 ```text
@@ -267,7 +267,7 @@ Unused（可用）→ New（建立中）→ Ready（就緒）→ Running（執�
                                  ├── yield ──────┤
                                  │               ↓ sleep / wait / read / write
                                  └── 喚醒 ── Waiting（等待中）
-Running／Waiting／Ready → exit／kill → Zombie（待回收） → wait → Unused
+Thread 退出／安全取消 → Zombie → join／Process 群組清理 → Unused
 ```
 
 - create_process 掃描空欄位、分配遞增 PID、清除 PCB／stack、建立私有頁表、設定初始 frame，最後公布為 Ready。頁面不足回 -12 並恢復 Unused；失敗可能消耗 PID，但不占用 PCB 或頁面。
@@ -322,7 +322,7 @@ process_table 先格式化各列，依最大資料長度調整欄寬，再輸出
 `ReadyQueue` 保存 `Process *head`、`Process *tail` 與 count。節點鏈結直接放在 PCB，無需 malloc 或額外複製行程資料。
 `scheduler_enqueue` 先檢查 ready_queued 防止重複入列，再接到 tail；`scheduler_next` 取出 head、清除該 PCB 的鏈結與入列標記，取走最後一個節點時也清空 tail。兩者 O(1)。
 `scheduler_remove` 尋找指定 PCB 的前一個節點，再重接鏈結；同時處理隊首、中間、隊尾與唯一節點，耗時 O(P)。kill Ready 行程與管線建立失敗回收時，透過 transition 移除節點，避免欄位重用後仍被舊鏈結排程。
-排程順序依實際入列時間，同一輪 wakeup／I/O 完成按 PCB 掃描順序入列，不按 PID 排序。佇列仍採 FIFO，政策改為 50 ms RR；核心全域中斷關閉，因此無核心資料修改到一半被搶占，尚無多核心鎖。長核心操作可延後到期中斷，不是精確 CPU 時間統計。
+排程順序依實際入列時間，同一輪 wakeup／I/O 完成按 TCB 掃描順序入列，不按 PID／TID 排序。佇列仍採 FIFO，政策為 50 ms RR；核心全域中斷關閉，因此無核心資料修改到一半被搶占，尚無多核心鎖。長核心操作可延後到期中斷，不是精確 CPU 時間統計。
 參考筆記：`notes/ch5 CPU schedueling.md`「Round-Robin 理論觀念」與非搶占式核心。counter 仍主動 yield，其交替本身不是計時器證據；Spec 15 以既有無 yield 指令迴圈驗證真正搶占。ps 顯示時間片／中斷數，pcb 顯示派發／搶占數。
 
 ## 8. io.c / io.h：行輸入與真實管道

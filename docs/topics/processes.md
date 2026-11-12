@@ -6,7 +6,7 @@
 
 原始碼：[kernel/proc/process.h（GitHub）](https://github.com/johnson931128/WUWAOS/blob/main/kernel/proc/process.h)。
 
-`ProcessControlBlock` 就是 PCB（行程控制區塊），`processes[16]` 是目前行程表。PCB 保存 `page_table`、FD table、cwd、父子關係與生命週期；`thread` 指向初始 TCB。階段 A 每個 Process 只有一條 Thread，TCB table 有 32 個槽位；`frame`、`context`、`event_wait`、執行狀態與核心堆疊已移到 TCB。阻塞讀寫在原 Thread kernel stack 上恢復後重試，不把使用者 buffer 指標交給 scheduler poller。[實作與回歸紀錄](../thread-stage-a.md)
+`ProcessControlBlock` 就是 PCB（行程控制區塊），`processes[16]` 是目前行程表。PCB 保存 `page_table`、FD table、cwd、父子關係與生命週期；`thread` 指向代表 TCB，join／回收後可改變，Process 群組清理完成後可為 null。每 Process 最多占用 8 個 Thread slots，全系統共 32 個；New 與未 join 的 Zombie 也占槽。`frame`、`context`、`event_wait`、執行狀態與核心堆疊屬於各 TCB。阻塞讀寫在原 Thread kernel stack 恢復後繼續，不把使用者 buffer 指標交給 scheduler poller。[B／C 實作與限制](../thread-stage-b.md)
 
 `kernel/proc/gate.c` 的 owner-aware recursive Gate 以 TCB 指標／TID 記錄持有者與深度，等待者以 event sequence 防止漏喚醒。FS、VM、各 OFD 與各 pipe 使用不同 scope；runtime caller 可在等待 Gate 時讓出核心 stack，scheduler/UI poll 不可睡眠。新 PCB 保留 `PROCESS_NEW` slot，TCB 保留 `THREAD_NEW`，等頁表/frame 初始化完成後才發布 Ready；`pcb` 對 null frame 顯示 initializing。
 
@@ -28,7 +28,7 @@ flowchart TD
     F --> G[從原函式繼續，正常回傳 syscall 結果]
 ```
 
-每個行程保留自己的核心 C 呼叫堆疊，所以 wait 被喚醒後能接著檢查子行程並回收，read 被喚醒後能接著回傳真正讀取長度。排程器另有 16 KiB 堆疊，能安全回收已退出行程；不需要在某個退出行程的堆疊上挑選下一個。
+每條 Thread 保留自己的核心 C 呼叫堆疊，所以 wait 被喚醒後能接著檢查子行程並回收，read 被喚醒後能接著回傳真正讀取長度。排程器另有 16 KiB 堆疊，不需要在已退出 Thread 的堆疊上挑選下一個或回收該 Thread。
 
 新行程沒有舊核心呼叫位置，第一次切入走 first_run，再由 user_enter／sret 進使用者程式。fork 子行程使用新的核心上下文，沒有複製父的核心呼叫堆疊。pcb 的 kernel_context_sp／ra 是上次保存的值，Running 時可能不是目前硬體值。
 
@@ -38,17 +38,17 @@ flowchart TD
 
 ```text
 Thread: Unused → New → Ready → Running
-                 ↑        ├─ yield → Ready
-                 │        ├─ sleep／wait／阻塞 I/O → Waiting
-                 └─ 喚醒 ─┘
-Running／Ready／Waiting → exit／kill → Zombie → wait → Unused
+Running → 時間片／yield → Ready
+Running → sleep／wait／join／阻塞 I/O → Waiting
+Waiting → 完成／逾時／取消 → Ready
+Running → 退出或安全取消 → Zombie → join／群組回收 → Unused
 
 Process: Unused → New → Live → Dying → Zombie → wait → Unused
 ```
 
-Zombie（已退出、待回收）仍保留結束結果與資源，讓父行程能透過 wait 取得結果。它已不再執行，也不在 Ready queue（就緒佇列）裡。
+Thread Zombie 保留 Thread 結果並占用 slot，供同 Process 的另一 Thread join。Process Zombie 則是在群組資源清理完成後保留 PID／結束結果，供父 Process wait；此時頁表與 TCB 已釋放。兩種 Zombie 都不再執行，也不在 Ready queue 裡。
 
-`kill` 遇到仍在 syscall/fault/timer kernel call stack 上的目標時，先標記 `kill_pending`；可取消的 event、channel、child 或 sync wait 會喚醒原 stack 供其 unwind。cancel-defer 保護 cleanup、已提交 Block request 與 VM swap-out 的撤銷／回復範圍，須到裝置完成或確認 reset、釋放 Gate 並完成清理後，才在 trap return 邊界處理 kill。一般不持有 suspended kernel call stack 的目標仍可直接終止；這不是可隨時中斷 DMA 的任意取消機制。
+`kill(pid)` 對整個 Process 請求群組退出，向其餘 live Thread 設 `kill_pending`；可取消的 event、channel、child、join 或 sync wait 會喚醒原 stack 供其 unwind。cancel-defer 保護 cleanup、已提交 Block request 與 VM swap-out 的撤銷／回復範圍，須到裝置完成或確認 reset、釋放 Gate 並完成清理後，才在安全返回邊界退出。尚未首次執行的 Thread 則在 first_run 檢查取消。這不是可隨時中斷 DMA 的任意取消機制。
 
 Guard page 命中且成功進入 C trap handler 時會印 PID／stack 範圍並停機；若 stack 已不足以讓 `trap.S` 保存 TrapFrame，仍可能再次 fault，尚未設 emergency trap stack。這項保護及本輪取消路徑只完成實作，runtime 驗證為 NOT_RUN。
 
@@ -82,7 +82,7 @@ ps
 
 exit 關閉端點並留下 Zombie；wait 取得結果後釋放使用者頁、Swap slots（交換區槽位）、私有頁表及 PCB。孤兒行程另有接管與回收流程。狀態結果寫入父使用者空間失敗時，不會先丟棄 Zombie。
 
-最多 16 個行程（含 shell），exec 支援內建程式 ID，也支援從路徑載入受限的靜態 RV64 ELF；不支援任意 Linux 執行檔。排程已使用 TCB，但每 Process 仍只有一條初始 Thread，尚無建立多 Thread 的 syscall。多 Thread 的 user stack／join／群組退出仍依 [Spec 34](../SPEC-34-threads.md) 待實作；完整作業控制亦未提供。[Thread／硬體教學](./threads.md)
+最多 16 個行程（含 shell），exec 支援內建程式 ID，也支援從路徑載入受限的靜態 RV64 ELF；不支援任意 Linux 執行檔。多 Thread 的 create／join／額外 user stack 與群組退出已實作，完整 runtime 驗收仍 NOT_RUN。fork／exec 僅允許唯一占用 TCB 的 Process，包含 New／Zombie 在內超過一個 slot 都回 ERR_BUSY；成功 exec 保留 PID／TID。詳見 [Spec 34](../SPEC-34-threads.md)與 [Thread 圖解](./threads.md)。
 
 觀念參考：`notes/ch3 Process.md`。實作脈絡見 [Spec 02](../SPEC-02-process-lifecycle.md)、[Spec 05](../SPEC.md)，目前私有記憶體複製見 [Spec 10](../SPEC-10-demand-paging.md)。
 

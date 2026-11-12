@@ -11,6 +11,7 @@
 - 第 5 階段：已實作四視窗、焦點／z-order／拖曳／viewport resize／session close；VT 仍固定 100×30，GUI NOT_RUN。
 - 第 6 階段：已實作 fs_replace／Fan 安全替換、ERR_UNCERTAIN 與 UART 統一診斷；儲存／故障／重播 NOT_RUN。
 - 已完成：Spec 33 原始碼分層。
+- 2026-11-12 Thread 網站 A：已補記 Spec 34 的六狀態、FIFO／50 ms RR、等待恢復與 trace；使用者核准固定圖＋單步解析，ThreadFlow 提供 RR／I/O／join 回收共 16 步。threads／processes／scheduling／CODE_GUIDE 與導覽已同步 B／C 現況，D 與完整多 Thread runtime 仍未驗收。Chrome 1440 light/dark、390 light/dark、320 light 的互動／axe／溢出／至少 14px 圖中文字檢查通過；文件 build 初次通過，最終發布結果待補記。未跑 OS／CLI。
 - 2026-11-12 trace：trace off 統一關閉正常 thread／exec／exit／wait 追蹤，讓 cat 的輸出不被核心生命週期訊息打斷；trace on 恢復追蹤。更新 shell help，保留實際錯誤診斷。以還原後 portable 工具鏈編譯 all 與 build/kernel-disk.elf 成功；CLI runtime NOT_RUN。
 - 2026-11-12 網站〈例外與系統呼叫〉：依核准 A 方案加入固定架構與三情境單步解析，保留正文並補上返回差異表、規格版本與驗收邊界。來源 fa6ade4 已推送 main；VitePress build 成功，gh-pages 21f3d37 已發布，Pages 工作 43133970378 completed/success。瀏覽器、公開頁操作及 OS／CLI 檢查依指示略過（NOT_RUN）。
 - 依使用者指示分階段 agent 自行 commit，主代理整合 review／分批 push；未跑項目一律保留 NOT_RUN。

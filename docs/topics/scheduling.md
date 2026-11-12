@@ -6,11 +6,11 @@ import SchedulingLab from '../.vitepress/theme/components/SchedulingLab.vue'
 
 <SchedulingLab />
 
-2026-11-10 階段 A 已改為排程 TCB，每個 Process 暫時只有一條 Thread；互動模型的 PID 標籤仍代表其初始 Thread 的工作負載。50 ms RR 政策不變。[PCB／TCB 拆分與驗證](../thread-stage-a.md)
+目前排程單位是 TCB，同一 Process 可有多條 Thread，各自參與 Ready queue 輪轉。上方互動模型以 PID 標示獨立 CPU 工作負載，不是完整多 Thread 模型，也不改變核心固定 50 ms 的政策。等待、喚醒與退出請看 [Thread 狀態圖解](./threads.md)；實作與驗收邊界見 [B／C 紀錄](../thread-stage-b.md)。
 
 ## Overview
 
-**WUWAOS 目前使用固定 50 ms 時間片的 RR（Round Robin，輪詢排程）**。就緒行程仍以 FIFO（先進先出）順序排隊；在使用者模式執行的行程若時間片到期，核心會切換行程。互動圖使用固定的小型工作負載說明 RR 計算，不讀即時 OS 狀態。
+**WUWAOS 目前使用固定 50 ms 時間片的 RR（Round Robin，輪詢排程）**。Ready Thread 以 FIFO（先進先出）順序排隊；在使用者模式執行的 Thread 若時間片到期，核心將它排回隊尾，再派發下一條。每條 Thread 各自排隊，不保證每 Process 平分時間片。互動圖使用固定的小型工作負載說明 RR 計算，不讀即時 OS 狀態。
 
 派發機制已改為 [Spec 16 的核心上下文切換](./processes.md#核心函式如何暫停與恢復)：透過 `swtch.S` 往返獨立排程器堆疊，保存暫停中的核心函式；50 ms RR 政策維持不變。
 
@@ -24,12 +24,12 @@ RR 是先進先出的 ready queue 加上有限時間片。行程用完時間片�
 
 ```mermaid
 flowchart TD
-  A[從就緒隊首取出行程] --> B[設定時間片：現在 + 50 ms]
+  A[從就緒隊首取出 Thread] --> B[設定時間片：現在 + 50 ms]
   B --> C[sret：恢復暫存器，執行使用者程式]
   C --> D[時間到：CPU 進入 trap_entry]
   D --> E[保存 TrapFrame，辨識計時器中斷]
   E --> F[SBI 清除 pending，Running 改為 Ready]
-  F --> G[原行程排入隊尾]
+  F --> G[原 Thread 排入隊尾]
   G --> A
 ```
 
@@ -37,7 +37,7 @@ flowchart TD
 
 ### Ready queue 與 RR 輪轉
 
-Ready queue（就緒佇列）只串接 Ready PCB（就緒行程控制區塊）。head／tail（隊首／隊尾）讓入列與取隊首為 O(1)，移除特定節點最壞 O(N)。Running、Waiting、Zombie 不留在佇列；`ready_queued` 避免重複入列。
+Ready queue（就緒佇列）只串接 Ready TCB（執行緒控制區塊）。head／tail（隊首／隊尾）讓入列與取隊首為 O(1)，移除特定節點最壞 O(N)。Running、Waiting、Zombie 不留在佇列；`ready_queued` 避免重複入列。
 
 ```mermaid
 flowchart TD
@@ -46,7 +46,7 @@ flowchart TD
   C -->|50 ms 到期| A
 ```
 
-只有一個可執行行程時，它可重新獲選並取得下一個時間片。喚醒與新建行程排隊尾，不立刻搶走目前尚未到期的時間片。
+只有一條可執行 Thread 時，它可重新獲選並取得下一個時間片。喚醒與新建 Thread 排隊尾，不立刻搶走目前尚未到期的時間片。
 
 ## Step-by-step
 
@@ -56,17 +56,17 @@ flowchart TD
 
 ### 派發與時間片
 
-每次取得可執行行程時，scheduler 從 queue head 移除它、將狀態轉成 Running，計數 dispatch，切換至該行程頁表並設定 50 ms timer。時間片到期後，timer trap 呼叫 `thread_preempt()`：目前行程計數 preemption、轉回 Ready（因此入隊尾），停止 timer，保存工作狀態後切回 scheduler stack。`context_switch` 保存的是一般 C 呼叫邊界的 callee-saved state；完整使用者 TrapFrame 由 trap 路徑另外保存。
+每次派發 Thread 時，scheduler 從 queue head 移除它、將狀態轉成 Running，計數 dispatch，選擇其所屬 Process 的頁表並設定 50 ms timer。時間片到期後，timer trap 呼叫 `thread_preempt()`：目前 Thread 計數 preemption、轉回 Ready（因此入隊尾），停止 timer，保存工作狀態後切回 scheduler stack。`context_switch` 保存的是一般 C 呼叫邊界的 callee-saved state；完整使用者 TrapFrame 由 trap 路徑另外保存。
 
 ### 系統呼叫、yield 與阻塞
 
-普通 syscall 或合法缺頁處理完，若原行程仍是 Running，就保留原 deadline（到期時間）。因此不停呼叫 `getpid` 也不能讓時間片一直歸零。
+普通 syscall 或合法缺頁處理完，若原 Thread 仍是 Running，就保留原 deadline（到期時間）。因此不停呼叫 `getpid` 也不能讓時間片一直歸零。
 
 `yield`（主動讓出）會放棄剩餘時間並排隊尾；阻塞或退出也放棄時間片。重新被派發時才取得新的 50 ms，不累積未用完的預算。
 
 ### Ready queue 實作
 
-scheduler queue 使用 head、tail 與 count。enqueue 對已在佇列的 PCB 不重複加入；`scheduler_next` 移除 head 並清除 PCB 的 queue link/flag；指定 PCB 的移除則沿鏈結尋找前節點。Process state transition 擁有 enqueue/remove 呼叫，避免排程策略與狀態更新分家。
+scheduler queue 使用 head、tail 與 count。enqueue 對已在佇列的 TCB 不重複加入；`scheduler_next` 移除 head 並清除 TCB 的 queue link/flag；指定 TCB 的移除則沿鏈結尋找前節點。`thread_transition` 擁有 enqueue/remove 呼叫，避免排程策略與狀態更新分家。
 
 ### 在 QEMU 觀察
 

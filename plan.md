@@ -318,6 +318,22 @@
 - shell help 明列 thread/exec/exit/wait 的控制範圍。使用現有 trace syscall，不新增 ABI、設定檔或依賴。
 - 驗證：還原後 portable 環境執行 make -j4 all build/kernel-disk.elf 成功。未新增測試程式，CLI/QEMU 操作 NOT_RUN；未啟動或終止使用者的 QEMU，未操作磁碟映像。
 
+## Thread 排程規格與網站前置（2026-11-12）
+
+- 依使用者要求將前述原始碼核對結果寫入 Spec 34：六個 TCB 狀態、等待原因、FIFO Ready queue、50 ms RR 與 per-Thread 分配、scheduler loop／WFI、兩層 context、cat 的同 TID 等待循環與 trace 控制。只補記現行行為，不新增政策或 OS 實作。
+- 網站調查發現 threads／processes／scheduling 與 Thread 導覽仍沿用階段 A 限制。依 AGENTS.md 先提出網站範圍與可視化方案，取得明確答覆後才改 UI；本步未修改網站元件與版面。
+- 規格為 source-derived 說明，不能替代多 Thread runtime 驗收；驗收狀態保留 NOT_RUN。本步 npm run docs:build 成功（35.15 秒，既有 bundle size 提示），git diff --check 通過；未做瀏覽器或 OS 操作，未提交或部署，網站方案待確認。
+
+## Thread 網站 A 方案（2026-11-12）
+
+- 使用者明確核准 A：白底固定架構＋單步解析。ThreadFlow.vue 以固定 Ready queue／hart 0／Waiting 節點、SVG 連接與 A 的六狀態標籤顯示三情境：時間片輪轉 5 步、I/O 等待 6 步、Thread exit／join 回收 5 步。每步包含原因、欄位、source 與 Spec 34 連結；所有名稱為教學代號，非即時 TID 或 QEMU trace。
+- 狀態由 typed frame arrays 與唯一 scenario/index 驅動，timer 只負責前進；預設不播放，切換／單步／重設／卸載清理 timer。圖中分離「事件完成回 Ready」與「再次獲選才 Running」。退出範例僅展示額外 stack Thread A 的成功 join，不冒稱涵蓋 group exit／錯誤注入。
+- 保留節點位置，桌機以 SVG 標示派發、阻塞、時間片回隊尾、事件回隊尾；窄螢幕上下排列，使用 HTML 標籤而非縮小 SVG 文字。說明區以 CSS grid 疊放隱藏 frame 預留最長文字高度，隱藏內容 aria-hidden/inert 且不可聚焦，避免換步跳動；不加入依賴或無限動效。
+- 參考 Stripe 的閱讀層級、React Flow 的關係箭頭；不照搬品牌或拖拉介面。沿用既有 Vue／CSS／SVG，柔和整塊選取底色、完整細邊框，無單邊裝飾色條。深色模式選取對比問題已依實際 axe 結果修正。
+- 同步 threads／processes／scheduling 的 API、TCB 排程、Zombie／join 與群組清理說明，修正 CODE_GUIDE 的代表 TCB／掃描順序，導覽移除「規劃」並提供 B／C 紀錄。未修改 Kernel／Driver／User Programs；保留歷史階段 A 證據與 D 未實作限制。
+- 驗證：Chrome 實際操作 1440 light/dark、390 light/dark、320 light；每種檢查 16 步、播放／暫停、重設、鍵盤 Enter，無 page error／頁面水平溢出，元件可見文字最小 14px，axe 元件範圍無違規。修正後說明區各 viewport 高度不隨 frame 改變；確認隱藏 frame 無可見連結。另檢查 processes／scheduling 在 320px 無頁面水平溢出。截圖／檢查輸出留在系統 TEMP，不新增 repo 測試碼。不宣稱完整 WCAG 或效能指標。
+- 初次 VitePress build 成功（38.65 秒）；最終發布建置／部署結果待補記。OS／CLI／多 Thread runtime 依既有界線 NOT_RUN。網站驗收不代表核心驗收。
+
 ## 進度維護
 
 每完成一個步驟後，更新本檔與 [`plan_current.md`](./plan_current.md) 的進度。依使用者要求，本檔須記錄實際採用的解決觀念／演算法、必要虛擬碼、驗收結果與限制。未執行或未完成對應 runtime 驗證的項目不得記為完成；若當前條件無法進行 runtime 驗證，需明確保留未完成狀態並記錄限制。
