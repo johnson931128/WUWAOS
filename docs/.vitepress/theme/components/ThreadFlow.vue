@@ -5,27 +5,27 @@ import { withBase } from 'vitepress'
 type State = 'NEW' | 'READY' | 'RUNNING' | 'WAITING' | 'ZOMBIE' | 'UNUSED'
 type Frame = { title: string; why: string; state: State; queue: string[]; cpu: string; waiting: string[]; edge: string; field: string; source: string }
 const scenarios = {
-  rr: { label: '時間片輪轉', intro: 'A、B、C 都可執行。每條 Thread 各自參與 FIFO 輪轉，不依 Process 平分時間片。', frames: [
-    { title: 'A 正在使用 hart 0', why: 'A 已從隊首出隊並取得 50 ms 時間片。B、C 保持 Ready，等待之後派發。', state: 'RUNNING', queue: ['B', 'C'], cpu: 'A', waiting: [], edge: '', field: 'current = A；Ready head = B', source: 'kernel/proc/process.c' },
-    { title: 'A 的時間片到期，排回隊尾', why: 'U-mode timer trap 清除 pending，thread_preempt 增加搶占次數並將 A 改成 Ready；保存核心上下文後切回 scheduler。此畫面停在派發下一條之前。', state: 'READY', queue: ['B', 'C', 'A'], cpu: '', waiting: [], edge: 'preempt', field: 'A.preemptions++；A.state = THREAD_READY', source: 'arch/riscv/trap.c' },
-    { title: '隊首 B 取得 CPU', why: 'scheduler_next 取出 B，scheduler 設定 B 的頁表與新時間片，恢復 B 自己的核心上下文。喚醒或排隊本身不會跳過這一步。', state: 'READY', queue: ['C', 'A'], cpu: 'B', waiting: [], edge: 'dispatch', field: 'B.state = THREAD_RUNNING；quantum = 50 ms', source: 'kernel/proc/scheduler.c' },
-    { title: 'B 到期，也排回隊尾', why: 'B 在 U-mode 用完時間片，依相同規則回到隊尾。A 仍在等候，下一個輪到 C。50 ms 不是核心內強制搶占的硬上限。', state: 'READY', queue: ['C', 'A', 'B'], cpu: '', waiting: [], edge: 'preempt', field: 'Ready queue = C → A → B', source: 'kernel/proc/process.c' },
-    { title: 'C 執行，A 留在下一個位置', why: 'C 出隊後開始執行，A、B 仍依序等待。若只有一條 Ready Thread，排程器也可能再次選到剛用完時間片的同一條。', state: 'READY', queue: ['A', 'B'], cpu: 'C', waiting: [], edge: 'dispatch', field: 'current = C；Ready queue = A → B', source: 'kernel/proc/process.c' },
+  rr: { label: '時間片輪轉', intro: 'A、B、C 都可執行。排程器照隊列順序取出執行緒，用完時間片就排回隊尾。', frames: [
+    { title: 'A 正在使用 hart 0', why: '排程器先選中 A，給它 50 ms 的時間片。B 和 C 留在就緒佇列，等 CPU 空出來。', state: 'RUNNING', queue: ['B', 'C'], cpu: 'A', waiting: [], edge: '', field: 'current = A；Ready head = B', source: 'kernel/proc/process.c' },
+    { title: 'A 的時間片到期，排回隊尾', why: '計時器在 A 執行使用者程式時發出中斷。核心保存 A 的執行進度，將它排到隊尾，再交還控制權給排程器。', state: 'READY', queue: ['B', 'C', 'A'], cpu: '', waiting: [], edge: 'preempt', field: 'A.preemptions++；A.state = THREAD_READY', source: 'arch/riscv/trap.c' },
+    { title: '隊首 B 取得 CPU', why: '排程器從隊首取出 B，啟用它所屬行程的頁表，恢復它的執行狀態並重設計時器。', state: 'READY', queue: ['C', 'A'], cpu: 'B', waiting: [], edge: 'dispatch', field: 'B.state = THREAD_RUNNING；quantum = 50 ms', source: 'kernel/proc/scheduler.c' },
+    { title: 'B 到期，也排回隊尾', why: 'B 在使用者模式用完時間片後也回到隊尾。C 現在排在最前面。', state: 'READY', queue: ['C', 'A', 'B'], cpu: '', waiting: [], edge: 'preempt', field: 'Ready queue = C → A → B', source: 'kernel/proc/process.c' },
+    { title: 'C 執行，A 留在下一個位置', why: 'C 開始執行，A 排在 B 前面。如果佇列只剩一條執行緒，排程器會再次選中它。', state: 'READY', queue: ['A', 'B'], cpu: 'C', waiting: [], edge: 'dispatch', field: 'current = C；Ready queue = A → B', source: 'kernel/proc/process.c' },
   ] as Frame[] },
-  io: { label: 'I/O 等待', intro: 'A 呼叫 read 後等待事件，B 可繼續執行；事件完成只讓 A Ready，不會立即搶走 CPU。', frames: [
-    { title: 'A 準備讀取資料', why: 'A 在 U-mode 呼叫 read，進入自己的核心 stack。此範例展示需要等待裝置完成的路徑，不代表每次 read 都必定阻塞。', state: 'RUNNING', queue: ['B'], cpu: 'A', waiting: [], edge: '', field: 'A.kernel_call_active = 1', source: 'kernel/io/io.c' },
-    { title: '登記等待，A 讓出 CPU', why: '確認事件來源的 generation／sequence，登記等待後將 A 改成 Waiting。A 的核心呼叫堆疊仍保留，排程器不會替 A 完成讀取。', state: 'WAITING', queue: ['B'], cpu: '', waiting: ['A'], edge: 'block', field: 'A.wait_reason = WAIT_EVENT；event_wait.active = 1', source: 'kernel/proc/process.c' },
-    { title: 'A 等待期間，B 繼續前進', why: 'B 從 Ready queue 出隊。A 不在 Ready queue，因此不會被反覆派發空轉；同一時刻仍只有 hart 0 上的一條 Thread 執行。', state: 'WAITING', queue: [], cpu: 'B', waiting: ['A'], edge: 'dispatch', field: 'current = B；A.state = THREAD_WAITING', source: 'kernel/proc/scheduler.c' },
-    { title: '事件完成，A 回到隊尾', why: '裝置完成可由 IRQ 或 poll 路徑通知。A 的等待結果被記錄，狀態變成 Ready。此教學步驟停在通知後，B 仍是目前 Thread。', state: 'READY', queue: ['A'], cpu: 'B', waiting: [], edge: 'wake', field: 'A.event_wait.completed = 1；A.state = THREAD_READY', source: 'kernel/proc/process.c' },
-    { title: 'B 讓出後，才輪到 A', why: '此例假設 B 以 yield 主動讓出 CPU，排在 A 後面；不是事件通知直接切換 Thread。取消或逾時也會先喚醒，再由原 stack 處理結果。', state: 'READY', queue: ['A', 'B'], cpu: '', waiting: [], edge: 'preempt', field: 'Ready queue = A → B', source: 'kernel/proc/process.c' },
-    { title: '恢復 A 原本的 read 呼叫', why: 'A 再次獲選，恢復 KernelContext 與原核心 stack，從等待函式返回、處理完成結果，再還原 TrapFrame 回到使用者。整個程式沒有重新啟動。', state: 'RUNNING', queue: ['B'], cpu: 'A', waiting: [], edge: 'dispatch', field: 'A.wait_reason = WAIT_NONE；原 kernel stack 繼續', source: 'arch/riscv/swtch.S' },
+  io: { label: 'I/O 等待', intro: 'A 讀檔時要等磁碟，B 可以先跑。讀取完成後，A 回到就緒佇列，等待下一次派發。', frames: [
+    { title: 'A 準備讀取資料', why: 'A 呼叫 read，核心接手處理這次讀取，並使用 A 的核心堆疊保存函式資料。這次需要等裝置提供資料。', state: 'RUNNING', queue: ['B'], cpu: 'A', waiting: [], edge: '', field: 'A.kernel_call_active = 1', source: 'kernel/io/io.c' },
+    { title: '登記等待，A 讓出 CPU', why: '核心記錄 A 在等哪一次裝置事件，把 A 標為等待中，並保留這次讀取的核心堆疊。', state: 'WAITING', queue: ['B'], cpu: '', waiting: ['A'], edge: 'block', field: 'A.wait_reason = WAIT_EVENT；event_wait.active = 1', source: 'kernel/proc/process.c' },
+    { title: 'A 等待期間，B 繼續前進', why: '排程器選中 B。A 已離開就緒佇列，在裝置完成前不會占用 CPU 反覆檢查結果。', state: 'WAITING', queue: [], cpu: 'B', waiting: ['A'], edge: 'dispatch', field: 'current = B；A.state = THREAD_WAITING', source: 'kernel/proc/scheduler.c' },
+    { title: '事件完成，A 回到隊尾', why: '核心可透過裝置中斷或主動檢查得知結果，接著把 A 排回就緒佇列。B 此時仍在執行。', state: 'READY', queue: ['A'], cpu: 'B', waiting: [], edge: 'wake', field: 'A.event_wait.completed = 1；A.state = THREAD_READY', source: 'kernel/proc/process.c' },
+    { title: 'B 讓出後，才輪到 A', why: 'B 呼叫 yield 主動讓出 CPU，排到 A 後面。A 現在位於隊首。', state: 'READY', queue: ['A', 'B'], cpu: '', waiting: [], edge: 'preempt', field: 'Ready queue = A → B', source: 'kernel/proc/process.c' },
+    { title: '恢復 A 原本的 read 呼叫', why: '排程器恢復 A 的核心堆疊，讓原本的 read 接著處理裝置回報的結果。核心完成後，A 回到使用者程式。', state: 'RUNNING', queue: ['B'], cpu: 'A', waiting: [], edge: 'dispatch', field: 'A.wait_reason = WAIT_NONE；原 kernel stack 繼續', source: 'arch/riscv/swtch.S' },
   ] as Frame[] },
-  exit: { label: '退出與回收', intro: 'A、B 屬於同一 Process。A 單獨 thread_exit，B 仍可執行，再以 join 取得結果並回收 A。', frames: [
-    { title: '同一 Process，兩條獨立 Thread', why: 'A、B 共用位址空間與 FD table，各自擁有 TCB、使用者 stack 與核心 stack。圖中的 A 是使用額外 stack slot 的 Thread。', state: 'RUNNING', queue: ['B'], cpu: 'A', waiting: [], edge: '', field: 'A.process = B.process；A.tid ≠ B.tid', source: 'kernel/proc/thread.h' },
-    { title: 'A 結束，先保留 Zombie', why: 'A 的函式 return 經 trampoline 呼叫 thread_exit。釋放自己的同步／raw owner 後記錄結果，切到 scheduler；Zombie 仍占 TCB slot，不能在原 stack 上回收自己。', state: 'ZOMBIE', queue: ['B'], cpu: '', waiting: [], edge: '', field: 'A.exit_status = 7；A.state = THREAD_ZOMBIE', source: 'kernel/proc/process.c' },
-    { title: 'B 繼續使用共享資源', why: 'A 的 thread_exit 不會關閉整份 FD table 或銷毀 Process 頁表。B 仍存在，所以 Process 保持 Live。既有 exit(status) 則會要求整個 Process 結束。', state: 'ZOMBIE', queue: [], cpu: 'B', waiting: [], edge: 'dispatch', field: 'Process.state = PROCESS_LIVE', source: 'kernel/proc/process.c' },
-    { title: 'B 取得 A 的 join claim', why: '同一 Process 的 B 呼叫 thread_join(A)。本例 A 已為 Zombie，不需等待其退出；status 成功 copyout、額外 stack 回收完成後，才能消耗 Zombie。', state: 'ZOMBIE', queue: [], cpu: 'B', waiting: [], edge: '', field: 'A.join_claimed = 1；A.joiner_tid = B.tid', source: 'kernel/proc/process.c' },
-    { title: 'A 的 slot 釋放，B 繼續執行', why: '成功 join 回傳 A 的 TID 與結果 7，釋放 A 的額外 user stack／swap 資源及 TCB slot。整個 Process 的退出與父行程 wait 是另一層生命週期。', state: 'UNUSED', queue: [], cpu: 'B', waiting: [], edge: '', field: 'A 的 TCB slot = THREAD_UNUSED；join status = 7', source: 'kernel/proc/thread.c' },
+  exit: { label: '退出與回收', intro: 'A 和 B 屬於同一行程。A 結束後，B 可以用 thread_join 取得 A 的退出值並回收它。', frames: [
+    { title: '同一 Process，兩條獨立 Thread', why: 'A 是額外建立的執行緒，有自己的 TCB、使用者堆疊和核心堆疊。它和 B 共用同一行程的記憶體映射與開啟檔案表。', state: 'RUNNING', queue: ['B'], cpu: 'A', waiting: [], edge: '', field: 'A.process = B.process；A.tid ≠ B.tid', source: 'kernel/proc/thread.h' },
+    { title: 'A 結束，先保留 Zombie', why: 'A 的入口函式回傳 7，啟動用的組合語言程式接手呼叫 thread_exit。核心記下退出值，切回排程器，暫時保留 A 的 TCB 和堆疊。', state: 'ZOMBIE', queue: ['B'], cpu: '', waiting: [], edge: '', field: 'A.exit_status = 7；A.state = THREAD_ZOMBIE', source: 'kernel/proc/process.c' },
+    { title: 'B 繼續使用共享資源', why: 'B 接著執行，仍可使用行程的開啟檔案表與頁表。若呼叫的是行程的 exit，核心就會要求同一行程的所有執行緒結束。', state: 'ZOMBIE', queue: [], cpu: 'B', waiting: [], edge: 'dispatch', field: 'Process.state = PROCESS_LIVE', source: 'kernel/proc/process.c' },
+    { title: 'B 取得回收 A 的資格', why: 'B 呼叫 thread_join，核心先保留回收資格，避免兩條執行緒回收同一個目標。A 已經退出，核心可以開始把退出值寫回 B 提供的位置。', state: 'ZOMBIE', queue: [], cpu: 'B', waiting: [], edge: '', field: 'A.join_claimed = 1；A.joiner_tid = B.tid', source: 'kernel/proc/process.c' },
+    { title: 'A 的 TCB 回收，B 繼續執行', why: '核心把 7 寫到 B 提供的變數，回收 A 的額外堆疊和 TCB，最後回傳 A 的 TID。B 現在可以讀取退出值。', state: 'UNUSED', queue: [], cpu: 'B', waiting: [], edge: '', field: 'A 的 TCB slot = THREAD_UNUSED；join status = 7', source: 'kernel/proc/thread.c' },
   ] as Frame[] },
 }
 type Scenario = keyof typeof scenarios
@@ -65,7 +65,7 @@ onBeforeUnmount(pause)
       <button v-for="(item, key) in scenarios" :key="key" :aria-pressed="scenario === key" @click="change(key)">{{ item.label }}</button>
     </div>
     <p class="scenario-intro">{{ sequence.intro }}</p>
-    <p class="model-note">A／B／C 是教學代號，非即時 TID。步驟不是實際耗時，亦非 QEMU Trace。</p>
+    <p class="model-note">A、B、C 代表教學情境中的執行緒。每一步顯示一個狀態變化。</p>
     <div class="map-container">
       <div class="system-map">
         <p class="return-label">時間片到期／yield：Running → Ready 隊尾</p>
@@ -78,9 +78,9 @@ onBeforeUnmount(pause)
         </svg>
         <div class="map-node ready-node" :class="{ active: frame.state === 'READY' }">
           <svg viewBox="0 0 32 32" width="32" height="32" aria-hidden="true"><path d="M5 8h22M5 16h22M5 24h22M9 5v6m0 2v6m0 2v6" /></svg>
-          <h3>Ready queue</h3><p>隊首 → 隊尾</p>
+          <h3>就緒佇列</h3><p>依隊首到隊尾排列</p>
           <ol aria-label="Ready queue 順序"><li v-for="name in frame.queue" :key="name">{{ name }}</li></ol>
-          <span v-if="!frame.queue.length" class="empty">目前沒有 Ready Thread</span>
+          <span v-if="!frame.queue.length" class="empty">目前沒有就緒的執行緒</span>
         </div>
         <p class="mobile-connection">隊首出隊 ↓</p>
         <div class="map-node cpu-node" :class="{ active: frame.cpu === 'A' }">
@@ -92,9 +92,9 @@ onBeforeUnmount(pause)
         <p class="mobile-connection">阻塞時讓出 CPU ↓</p>
         <div class="map-node wait-node" :class="{ active: frame.state === 'WAITING' }">
           <svg viewBox="0 0 32 32" width="32" height="32" aria-hidden="true"><circle cx="16" cy="16" r="11" /><path d="M16 9v8l5 3" /></svg>
-          <h3>Waiting</h3><p>等待條件完成</p>
+          <h3>等待中</h3><p>等待裝置或其他事件</p>
           <strong>{{ frame.waiting.length ? `Thread ${frame.waiting.join('、')}` : '目前沒有等待者' }}</strong>
-          <span>保留原核心 stack</span>
+          <span>保留原核心堆疊</span>
         </div>
         <p class="wake-label">事件完成／逾時／取消：Waiting → Ready 隊尾</p>
       </div>
@@ -103,7 +103,7 @@ onBeforeUnmount(pause)
       <span class="state-caption">A 的狀態</span>
       <span v-for="state in states" :key="state" class="state-tag" :class="{ chosen: frame.state === state }" :aria-current="frame.state === state ? 'true' : undefined">{{ frame.state === state ? '● ' : '' }}{{ state }}</span>
     </div>
-    <p class="lifecycle-note">建立：Unused → New → Ready。退出：Running → Zombie → 回收為 Unused；必須先離開原核心 stack。</p>
+    <p class="lifecycle-note">建立執行緒時，核心先保留空的 TCB，準備完成後再排入就緒佇列。退出後先保留結果，離開原核心堆疊後才可回收。</p>
     <div class="controls" role="group" aria-label="Thread 步驟控制">
       <button :disabled="index === 0" @click="select(index - 1)">上一步</button>
       <button :aria-pressed="playing" @click="toggle">{{ playing ? '暫停' : '播放' }}</button>
@@ -121,7 +121,7 @@ onBeforeUnmount(pause)
       </div>
     </div>
     <p class="model-note" role="status">{{ sequence.label }}，步驟 {{ index + 1 }}／{{ sequence.frames.length }}：{{ frame.title }}。</p>
-    <p class="model-note">預設不播放；播放每步停留 6.5 秒，可隨時暫停。核心內不強制搶占，50 ms 不是回應時間上限。</p>
+    <p class="model-note">播放時每步停留 6.5 秒，可隨時暫停。</p>
   </section>
 </template>
 
