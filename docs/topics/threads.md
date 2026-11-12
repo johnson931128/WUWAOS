@@ -4,18 +4,18 @@ import ThreadFlow from '../.vitepress/theme/components/ThreadFlow.vue'
 
 # 執行緒如何在 WUWAOS 裡運作
 
-程式讀檔時，磁碟可能還在找資料，CPU 卻已經可以做別的事。作業系統會暫停等待資料的**執行緒（thread）**，讓另一條執行緒先跑。資料就緒後，原本的執行緒會回到排程佇列，輪到它時，再從暫停的地方繼續。
+程式讀檔時，磁碟可能還在找資料，CPU 卻已經可以做別的事。作業系統會暫停等待資料的<strong>執行緒（thread）</strong>，讓另一條執行緒先跑。資料就緒後，原本的執行緒會回到排程佇列，輪到它時，再從暫停的地方繼續。
 
 這個做法也能用在同一個程式裡。例如文書編輯器可以讓一條執行緒處理鍵盤輸入，另一條負責存檔。存檔等磁碟時，介面仍有機會處理下一個按鍵。以下用這個分工說明概念，並以 WUWAOS 的 `cat` 追蹤示範實際的等待與恢復。
 
 ## Process 保有資源，Thread 保存執行進度
 
-**行程（process）**負責管理程式使用的資源。**執行緒**負責執行指令，同一個行程可以有多條。以編輯器為例，輸入和存檔的執行緒都能存取同一份文件資料，但兩條執行緒可能正在跑不同的函式，因此需要各自的暫存器和堆疊。
+<strong>行程（process）</strong>負責管理程式使用的資源。**執行緒**負責執行指令，同一個行程可以有多條。以編輯器為例，輸入和存檔的執行緒都能存取同一份文件資料，但兩條執行緒可能正在跑不同的函式，因此需要各自的暫存器和堆疊。
 
 - **PID 和 TID** 分別是行程和執行緒的編號。查到同一個 PID 下有不同 TID，就表示這些執行緒屬於同一個行程。
-- **位址空間（address space）** 是行程能使用的虛擬位址範圍及其映射。同一行程的執行緒可透過同一個指標存取全域變數或堆積上的動態配置資料。WUWAOS 的 `fork()` 會複製行程的私有記憶體。
-- **程式計數器（PC）** 記錄 CPU 接著要取指的位置。**堆疊（stack）** 保存函式呼叫所需的資料，例如區域變數與返回位置。每條執行緒都有使用者程式和核心各自使用的堆疊。由於執行緒共用位址空間，取得另一條執行緒的有效堆疊指標時，仍可透過它存取記憶體。
-- **檔案描述元（file descriptor，FD）** 是程式傳給 `read()`、`close()` 等函式的整數。**FD table** 用這個整數找到對應的開啟檔案物件。同一行程共用這張表，所以其中一條執行緒關閉 FD，會影響其他執行緒之後使用該 FD 的結果。
+- <strong>位址空間（address space）</strong> 是行程能使用的虛擬位址範圍及其映射。同一行程的執行緒可透過同一個指標存取全域變數或堆積上的動態配置資料。WUWAOS 的 `fork()` 會複製行程的私有記憶體。
+- <strong>程式計數器（PC）</strong> 記錄 CPU 接著要取指的位置。<strong>堆疊（stack）</strong> 保存函式呼叫所需的資料，例如區域變數與返回位置。每條執行緒都有使用者程式和核心各自使用的堆疊。由於執行緒共用位址空間，取得另一條執行緒的有效堆疊指標時，仍可透過它存取記憶體。
+- <strong>檔案描述元（file descriptor，FD）</strong> 是程式傳給 `read()`、`close()` 等函式的整數。**FD table** 用這個整數找到對應的開啟檔案物件。同一行程共用這張表，所以其中一條執行緒關閉 FD，會影響其他執行緒之後使用該 FD 的結果。
 
 <figure class="thread-figure">
   <figcaption>同一個行程中的共用資源與兩條執行緒</figcaption>
@@ -30,9 +30,9 @@ import ThreadFlow from '../.vitepress/theme/components/ThreadFlow.vue'
 
 ## OS 負責什麼，硬體負責什麼
 
-**排程器（scheduler）** 是核心中負責挑選下一條執行緒的程式。核心用 **TCB（Thread Control Block，執行緒控制區塊）** 保存每條執行緒的身分、狀態及恢復執行所需的資訊。暫停時把執行狀態存起來，換另一條執行緒繼續跑，稱為**上下文切換（context switch）**。核心把等待 CPU 的執行緒放在**就緒佇列（ready queue）**，選中其中一條並交給 CPU 執行的動作稱為**派發（dispatch）**。
+<strong>排程器（scheduler）</strong> 是核心中負責挑選下一條執行緒的程式。核心用 <strong>TCB（Thread Control Block，執行緒控制區塊）</strong> 保存每條執行緒的身分、狀態及恢復執行所需的資訊。暫停時把執行狀態存起來，換另一條執行緒繼續跑，稱為<strong>上下文切換（context switch）</strong>。核心把等待 CPU 的執行緒放在<strong>就緒佇列（ready queue）</strong>，選中其中一條並交給 CPU 執行的動作稱為<strong>派發（dispatch）</strong>。
 
-**頁表（page table）**記錄虛擬位址如何對應到實體記憶體，以及每頁的讀、寫、執行權限。**MMU（Memory Management Unit，記憶體管理單元）**是執行這些檢查和轉譯的硬體。計時器則能在時間片到期時發出中斷，讓核心取得控制權，再由排程器決定誰接著執行。[實體頁與 Sv39](./memory.md)
+<strong>頁表（page table）</strong>記錄虛擬位址如何對應到實體記憶體，以及每頁的讀、寫、執行權限。<strong>MMU（Memory Management Unit，記憶體管理單元）</strong>是執行這些檢查和轉譯的硬體。計時器則能在時間片到期時發出中斷，讓核心取得控制權，再由排程器決定誰接著執行。[實體頁與 Sv39](./memory.md)
 
 <figure class="thread-figure">
   <figcaption>從建立執行緒 B 到 CPU 執行 B</figcaption>
@@ -47,10 +47,10 @@ import ThreadFlow from '../.vitepress/theme/components/ThreadFlow.vue'
 
 | 名詞 | 用途 |
 | --- | --- |
-| **軟體執行緒（software thread）** | 讓程式的一條執行路徑可以獨立暫停、等待與恢復。WUWAOS 核心以 TCB 管理它。 |
-| **hart（hardware thread）** | RISC-V 執行環境提供的硬體執行位置，可獨立推進一條指令流。WUWAOS 在 QEMU 以 `-smp 1` 啟動，客體只看到一個 hart，編號為 0。 |
-| **CPU 核心（core）** | 實際取指、解碼、運算的硬體單位。一個實體核心可提供一個或多個硬體執行位置。 |
-| **SMT（Simultaneous Multithreading，同時多執行緒）** | 讓同一實體核心同時支援多條硬體指令流。每條有各自的架構暫存器狀態，共用部分執行單元與快取。Intel Hyper-Threading 是一個例子。 |
+| <strong>軟體執行緒（software thread）</strong> | 讓程式的一條執行路徑可以獨立暫停、等待與恢復。WUWAOS 核心以 TCB 管理它。 |
+| <strong>hart（hardware thread）</strong> | RISC-V 執行環境提供的硬體執行位置，可獨立推進一條指令流。WUWAOS 在 QEMU 以 `-smp 1` 啟動，客體只看到一個 hart，編號為 0。 |
+| <strong>CPU 核心（core）</strong> | 實際取指、解碼、運算的硬體單位。一個實體核心可提供一個或多個硬體執行位置。 |
+| <strong>SMT（Simultaneous Multithreading，同時多執行緒）</strong> | 讓同一實體核心同時支援多條硬體指令流。每條有各自的架構暫存器狀態，共用部分執行單元與快取。Intel Hyper-Threading 是一個例子。 |
 
 <figure class="thread-figure">
   <figcaption>同一個時間點，各種配置能執行幾條指令流</figcaption>
@@ -70,7 +70,7 @@ QEMU 的 hart 數是客體看到的執行資源。WUWAOS 要使用多個 hart，
 
 ## 單 hart 為什麼仍然有價值
 
-**併發（concurrency）**讓多項工作在同一段時間內都能前進。單 hart 靠交替執行做到這件事。**平行（parallelism）**指多條指令流能在同一時刻執行，需要多個硬體執行位置。增加執行緒能讓等待裝置的時間留給其他工作，但單 hart 的純運算工作仍得輪流使用 CPU。
+<strong>併發（concurrency）</strong>讓多項工作在同一段時間內都能前進。單 hart 靠交替執行做到這件事。<strong>平行（parallelism）</strong>指多條指令流能在同一時刻執行，需要多個硬體執行位置。增加執行緒能讓等待裝置的時間留給其他工作，但單 hart 的純運算工作仍得輪流使用 CPU。
 
 <figure class="thread-figure">
   <figcaption>四個時刻的單 hart 排程示意</figcaption>
@@ -90,7 +90,7 @@ QEMU 的 hart 數是客體看到的執行資源。WUWAOS 要使用多個 hart，
 
 ## 一條 Thread 如何等待、恢復與退出
 
-WUWAOS 用**輪轉排程（round robin）**從就緒佇列的隊首挑選執行緒。每次派發會給一段**時間片（time slice）**，也就是計時器允許這條執行緒連續使用 CPU 的時間。執行緒用完時間片或呼叫 `yield()` 主動讓出 CPU 時，會排到隊尾。若它正在等讀取等 **I/O（input/output，輸入輸出）**，核心先把它移出可執行的名單，等事件結束再排回去。
+WUWAOS 用<strong>輪轉排程（round robin）</strong>從就緒佇列的隊首挑選執行緒。每次派發會給一段<strong>時間片（time slice）</strong>，也就是計時器允許這條執行緒連續使用 CPU 的時間。執行緒用完時間片或呼叫 `yield()` 主動讓出 CPU 時，會排到隊尾。若它正在等讀取等 <strong>I/O（input/output，輸入輸出）</strong>，核心先把它移出可執行的名單，等事件結束再排回去。
 
 | 狀態 | 核心用它記錄什麼 |
 | --- | --- |
@@ -113,7 +113,7 @@ WUWAOS 用**輪轉排程（round robin）**從就緒佇列的隊首挑選執行�
 
 ## 一次 RISC-V 切換要保存什麼
 
-**Trap** 是 CPU 因中斷、例外或系統呼叫而把控制權交給核心的機制。在 WUWAOS，應用程式跑在 **U-mode（使用者模式）**，核心跑在權限較高的 **S-mode（監督者模式）**。例如 `read()` 透過 `ecall` 指令請求核心服務。進入 S-mode 時，硬體會設定部分控制暫存器，包括保存返回位置的 `sepc`、記錄進入原因的 `scause`、視原因補充錯誤位址等資訊的 `stval`，以及保存特權與中斷相關狀態的 `sstatus`。
+**Trap** 是 CPU 因中斷、例外或系統呼叫而把控制權交給核心的機制。在 WUWAOS，應用程式跑在 <strong>U-mode（使用者模式）</strong>，核心跑在權限較高的 <strong>S-mode（監督者模式）</strong>。例如 `read()` 透過 `ecall` 指令請求核心服務。進入 S-mode 時，硬體會設定部分控制暫存器，包括保存返回位置的 `sepc`、記錄進入原因的 `scause`、視原因補充錯誤位址等資訊的 `stval`，以及保存特權與中斷相關狀態的 `sstatus`。
 
 <figure class="thread-figure">
   <figcaption>從 A 的使用者指令切換到 B 的使用者指令</figcaption>
@@ -133,7 +133,7 @@ WUWAOS 用**輪轉排程（round robin）**從就緒佇列的隊首挑選執行�
 
 暫停的執行緒把狀態留在記憶體，CPU 的暫存器則給目前執行的指令流使用。WUWAOS 切換頁表時也執行 `sfence.vma`，讓後續位址轉譯使用正確的映射。**TLB** 是硬體用來加速位址轉譯的快取。[RISC-V Supervisor ISA](https://docs.riscv.org/reference/isa/v20260120/priv/supervisor.html)
 
-程式和編譯器之間的二進位介面規則稱為 **ABI（Application Binary Interface，應用程式二進位介面）**。例如 RISC-V LP64 的 `long` 與指標都是 64 位元，函式呼叫時堆疊要維持 16-byte 對齊，`tp` 則保留給執行緒指標。**TLS（Thread-Local Storage，執行緒區域儲存）**會讓每條執行緒各有一份同名變數。WUWAOS 目前保存整數暫存器，尚未配置 TLS。[RISC-V psABI](https://riscv-non-isa.github.io/riscv-elf-psabi-doc/)
+程式和編譯器之間的二進位介面規則稱為 <strong>ABI（Application Binary Interface，應用程式二進位介面）</strong>。例如 RISC-V LP64 的 `long` 與指標都是 64 位元，函式呼叫時堆疊要維持 16-byte 對齊，`tp` 則保留給執行緒指標。<strong>TLS（Thread-Local Storage，執行緒區域儲存）</strong>會讓每條執行緒各有一份同名變數。WUWAOS 目前保存整數暫存器，尚未配置 TLS。[RISC-V psABI](https://riscv-non-isa.github.io/riscv-elf-psabi-doc/)
 
 ## 共用記憶體如何維持生命週期
 
@@ -154,12 +154,12 @@ WUWAOS 用**輪轉排程（round robin）**從就緒佇列的隊首挑選執行�
   </div>
 </figure>
 
-這是讀取、加一、寫回的交錯示意。C 程式可以用 **mutex（互斥鎖）**，讓同一時間只有一條執行緒能進入受保護的更新區段，或使用**原子操作**把加一作為一個不可分割的更新。
+這是讀取、加一、寫回的交錯示意。C 程式可以用 <strong>mutex（互斥鎖）</strong>，讓同一時間只有一條執行緒能進入受保護的更新區段，或使用**原子操作**把加一作為一個不可分割的更新。
 
 同樣的問題也出現在核心。WUWAOS 的 **KernelGate** 用來限制同一時間哪些執行緒可以操作共用核心資源，例如檔案系統。假設 A 持有檔案系統的 gate 並等待磁碟，B 也要操作檔案系統。如果 gate 只看 PID，可能把 B 認成 A 再次進入。用 TID 辨認持有者，才能讓 B 等到 A 做完再進入。
 
-- **讀取期間關閉 FD。** 核心讓已開始的 `read()` 暫時保有原 **OFD（Open File Description，開啟檔案描述）**。OFD 記錄開啟的檔案與目前讀寫位置。即使另一條執行緒關閉 FD 又把同一個編號用於新檔案，進行中的讀取仍指向原檔案。`fork()` 或 `dup()` 也可能讓不同 FD 指向同一個 OFD。
-- **操作期間變更工作目錄。** 核心在處理相對路徑時先取得 **cwd（current working directory，目前工作目錄）** 的快照，讓該次操作在等待後仍以同一個目錄為起點。
+- **讀取期間關閉 FD。** 核心讓已開始的 `read()` 暫時保有原 <strong>OFD（Open File Description，開啟檔案描述）</strong>。OFD 記錄開啟的檔案與目前讀寫位置。即使另一條執行緒關閉 FD 又把同一個編號用於新檔案，進行中的讀取仍指向原檔案。`fork()` 或 `dup()` 也可能讓不同 FD 指向同一個 OFD。
+- **操作期間變更工作目錄。** 核心在處理相對路徑時先取得 <strong>cwd（current working directory，目前工作目錄）</strong> 的快照，讓該次操作在等待後仍以同一個目錄為起點。
 - **退出後回收。** `thread_exit()` 結束單一執行緒，行程資源仍可供其他執行緒使用。行程的 `exit()` 會通知其餘執行緒退出，等它們完成必要的裝置與檔案系統清理、離開各自的核心堆疊後，再銷毀共用資源。
 
 ## WUWAOS 目前提供的 API 與限制
@@ -196,7 +196,7 @@ void thread_example(void) {
 `shared_result` 具有靜態儲存期，因此在 `worker` 執行期間持續有效。這個例子先 `join` 再讀結果；如果兩條執行緒需要在執行中同時修改共用值，還需要互斥鎖或原子操作。
 
 - 系統最多有 16 個行程和 32 條執行緒。單一行程最多占用 8 格 TCB，尚未回收的 Zombie 也占一格。
-- 初始執行緒使用原本的一頁使用者堆疊。額外執行緒使用 32 KiB 的使用者堆疊，旁邊留一頁 **guard page（防護頁）**，讓越界碰到未映射頁時觸發例外。
+- 初始執行緒使用原本的一頁使用者堆疊。額外執行緒使用 32 KiB 的使用者堆疊，旁邊留一頁 <strong>guard page（防護頁）</strong>，讓越界碰到未映射頁時觸發例外。
 - `fork()` 用來建立子行程，`exec()` 用來替換目前行程執行的程式。行程占用超過一格 TCB 時，兩者都會回傳 `ERR_BUSY`。目前 `ps` 和 `pcb` 主要顯示行程及其代表執行緒，專用執行緒清單和 `demo threads` 尚未實作。
 
 階段 B／C 的 API 與共用資源清理已有程式碼，完整多執行緒 QEMU 執行驗收尚待完成。[執行緒規格](../SPEC-34-threads.md) · [階段 B／C 實作紀錄](../thread-stage-b.md)
