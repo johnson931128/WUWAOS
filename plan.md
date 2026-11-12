@@ -312,6 +312,12 @@
 - 同步 Spec 34、B／C 紀錄與 plan_current 的狀態，移除「尚未實作 create/join」的過時描述。實作具備不等同 runtime 驗收完成。
 - 驗證：git diff --check 通過。此環境沒有 Clang／Make、可用 WSL 或 portable 工具鏈，本輪編譯 NOT_RUN；QEMU／CLI／GUI runtime NOT_RUN，未新增測試程式、未操作磁碟。不沿用歷史編譯結果作為本輪證據。本輪不涉及網站 UI 或部署。
 
+## trace off 安靜輸出（2026-11-12）
+
+- 使用者要求 trace off 後 cat 只顯示檔案內容。既有 thread_transition 已受 trace_enabled 控制，本輪將正常 exec、exit、wait 記錄一併包在相同開關內；未變更排程、回收、syscall 結果或預設 trace on 行為。真正錯誤診斷仍保留。
+- shell help 明列 thread/exec/exit/wait 的控制範圍。使用現有 trace syscall，不新增 ABI、設定檔或依賴。
+- 驗證：還原後 portable 環境執行 make -j4 all build/kernel-disk.elf 成功。未新增測試程式，CLI/QEMU 操作 NOT_RUN；未啟動或終止使用者的 QEMU，未操作磁碟映像。
+
 ## 進度維護
 
 每完成一個步驟後，更新本檔與 [`plan_current.md`](./plan_current.md) 的進度。依使用者要求，本檔須記錄實際採用的解決觀念／演算法、必要虛擬碼、驗收結果與限制。未執行或未完成對應 runtime 驗證的項目不得記為完成；若當前條件無法進行 runtime 驗證，需明確保留未完成狀態並記錄限制。

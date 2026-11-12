@@ -717,12 +717,14 @@ static long process_install_image(Process *process, uintptr_t root, long program
     caller->wait_status = 0;
     vm_enable(root);
     (void)vm_destroy(old_root);
-    console_puts("[exec] PID=");
-    console_number(process->pid);
-    console_puts(program == PROGRAM_ELF ? " retained; loaded WUFS ELF, program=" :
-                 " retained; loaded app image, program=");
-    console_number(program);
-    console_putc('\n');
+    if (trace_enabled) {
+        console_puts("[exec] PID=");
+        console_number(process->pid);
+        console_puts(program == PROGRAM_ELF ? " retained; loaded WUFS ELF, program=" :
+                     " retained; loaded app image, program=");
+        console_number(program);
+        console_putc('\n');
+    }
     error = vm_scope_leave();
     const int defer_error = thread_cancel_defer_leave();
     process->image_changing = 0;
@@ -806,11 +808,13 @@ static long collect_child(Process *parent, Process *child, uintptr_t status) {
     const long exit_status = child->exit_status;
     const int reap_error = reap(child, 1);
     if (reap_error < 0) return reap_error;
-    console_puts("[wait] collected PID=");
-    console_number(pid);
-    console_puts(" status=");
-    console_number(exit_status);
-    console_putc('\n');
+    if (trace_enabled) {
+        console_puts("[wait] collected PID=");
+        console_number(pid);
+        console_puts(" status=");
+        console_number(exit_status);
+        console_putc('\n');
+    }
     return pid;
 }
 
@@ -988,8 +992,10 @@ static void finalize_dying_processes(void) {
             if (thread->state == THREAD_ZOMBIE && thread->process == process) thread_release(thread);
         }
         process->state = PROCESS_ZOMBIE;
-        console_puts("[exit] PID="); console_number(process->pid);
-        console_puts(" status="); console_number(process->exit_status); console_putc('\n');
+        if (trace_enabled) {
+            console_puts("[exit] PID="); console_number(process->pid);
+            console_puts(" status="); console_number(process->exit_status); console_putc('\n');
+        }
         notify_process_exit(process);
     }
 }
