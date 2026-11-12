@@ -332,7 +332,8 @@
 - 參考 Stripe 的閱讀層級、React Flow 的關係箭頭；不照搬品牌或拖拉介面。沿用既有 Vue／CSS／SVG，柔和整塊選取底色、完整細邊框，無單邊裝飾色條。深色模式選取對比問題已依實際 axe 結果修正。
 - 同步 threads／processes／scheduling 的 API、TCB 排程、Zombie／join 與群組清理說明，修正 CODE_GUIDE 的代表 TCB／掃描順序，導覽移除「規劃」並提供 B／C 紀錄。未修改 Kernel／Driver／User Programs；保留歷史階段 A 證據與 D 未實作限制。
 - 驗證：Chrome 實際操作 1440 light/dark、390 light/dark、320 light；每種檢查 16 步、播放／暫停、重設、鍵盤 Enter，無 page error／頁面水平溢出，元件可見文字最小 14px，axe 元件範圍無違規。修正後說明區各 viewport 高度不隨 frame 改變；確認隱藏 frame 無可見連結。另檢查 processes／scheduling 在 320px 無頁面水平溢出。截圖／檢查輸出留在系統 TEMP，不新增 repo 測試碼。不宣稱完整 WCAG 或效能指標。
-- 初次 VitePress build 成功（38.65 秒）；最終發布建置／部署結果待補記。OS／CLI／多 Thread runtime 依既有界線 NOT_RUN。網站驗收不代表核心驗收。
+- 發布：來源 a7a5ab0 已推送 main；最終 publish-docs.ps1 建置成功（32.01 秒，既有 bundle size 提示），gh-pages ab002612da6cdaf9fb80a38a8115bf8f66cbbde2。[Pages 工作 43168921351](https://github.com/johnson931128/WUWAOS/actions/runs/43168921351) completed/success。公開 topics/threads.html 與 SPEC-34-threads.html 回傳 HTTP 200，核對到新版 ThreadFlow、退出回收情境與規格排程章節。
+- 本輪預覽與瀏覽器已關閉，未操作使用者 QEMU。OS／CLI／多 Thread runtime 依既有界線 NOT_RUN。網站驗收不代表核心驗收。
 
 ## 進度維護
 
