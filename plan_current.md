@@ -11,7 +11,7 @@
 - 第 5 階段：已實作四視窗、焦點／z-order／拖曳／viewport resize／session close；VT 仍固定 100×30，GUI NOT_RUN。
 - 第 6 階段：已實作 fs_replace／Fan 安全替換、ERR_UNCERTAIN 與 UART 統一診斷；儲存／故障／重播 NOT_RUN。
 - 已完成：Spec 33 原始碼分層。
-- 2026-11-12 網站〈例外與系統呼叫〉：依核准 A 方案加入固定架構與三情境單步解析，保留正文並補上返回差異表、規格版本與驗收邊界。僅修改網站；瀏覽器及 OS／CLI 操作依指示略過（NOT_RUN）。發布建置及部署結果待補記。
+- 2026-11-12 網站〈例外與系統呼叫〉：依核准 A 方案加入固定架構與三情境單步解析，保留正文並補上返回差異表、規格版本與驗收邊界。來源 fa6ade4 已推送 main；VitePress build 成功，gh-pages 21f3d37 已發布，Pages 工作 43133970378 completed/success。瀏覽器、公開頁操作及 OS／CLI 檢查依指示略過（NOT_RUN）。
 - 依使用者指示分階段 agent 自行 commit，主代理整合 review／分批 push；未跑項目一律保留 NOT_RUN。
 - 2026-11-08：恢復剩餘 2B2、2C 與第 3–6 階段；實際演算法與依賴見 [plan.md](./plan.md#2026-11-08-剩餘階段執行規格與實際演算法)。
 - 2026-11-08 的 2B2、2C 與第 3–6 階段僅做必要整合編譯與文件部署建置，runtime 驗證標示 NOT_RUN。

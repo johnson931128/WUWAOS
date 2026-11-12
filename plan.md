@@ -299,7 +299,8 @@
 - TrapFlow.vue 以步驟陣列與唯一索引驅動節點、原因、狀態、欄位及來源。切換情境、單步、重設、卸載均停止 timer，預設不播放；不依動畫推算 OS 狀態。
 - 對照 trap.S、trap.c、syscall.c、process.c 與 Spec 01／10、Thread 階段 A 及外部 IRQ 紀錄。區分 ecall 的 sepc +4、成功補頁重試原指令、中斷保留 sepc/a0；exit、錯誤及 pending kill 不保證正常返回。教學示意不是 QEMU trace。
 - 參考 Stripe 正文層級與 Linear 簡潔控制，未採品牌配色或密集 Dashboard。使用既有 Vue／CSS／SVG，未新增依賴或修改 OS 功能。
-- 瀏覽器及 OS／CLI 操作依本輪指示略過（NOT_RUN）；發布所需 VitePress build 與部署結果待完成後補記。
+- 發布：來源 fa6ade4 已推送 main；既有 publish-docs.ps1 執行 VitePress build 成功（32.44 秒，保留既有 bundle size 提示），發布 gh-pages 21f3d37e6b3f1c4320e4f356654a4791af9542ab。[Pages 工作 43133970378](https://github.com/johnson931128/WUWAOS/actions/runs/43133970378) completed/success。
+- 瀏覽器、公開頁操作及 OS／CLI 檢查依本輪指示略過（NOT_RUN），不以建置或部署成功代替操作驗收。未啟動預覽伺服器或瀏覽器背景程序。
 
 ## 進度維護
 
