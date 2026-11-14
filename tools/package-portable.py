@@ -18,7 +18,7 @@ EXTRA_SOURCE_FILES = (
     'tools/portable-entry.sh',
     'tools/package-portable.py',
     'docs/portable-windows.md',
-    'THIRD_PARTY_NOTICES.md',
+    'licenses/THIRD_PARTY_NOTICES.md',
 )
 EXCLUDED_DIRECTORIES = {
     'home', 'tmp', 'dev', 'var/cache', 'var/log', 'var/tmp',

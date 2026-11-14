@@ -2,7 +2,7 @@
 
 WUWAOS's original source code uses the [MIT License](../LICENSE). The desktop
 font and tools included in a Windows portable release retain their own licenses.
-See [third-party notices](../THIRD_PARTY_NOTICES.md) for the package manifest,
+See [third-party notices](./THIRD_PARTY_NOTICES.md) for the package manifest,
 bundled license locations, and source-package references.
 
 ## Desktop font

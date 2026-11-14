@@ -120,7 +120,8 @@
 
 ### 2B2. Block 非同步 request
 
-- 進度：2026-11-08 功能已實作，整合編譯成功，runtime NOT_RUN。Block／VM agents 按本檔末段演算法分工；先前暫停點為 pointer refactor。
+- 2026-11-14：2B2 已通過 QEMU WUFS／Swap 驗收，含單次 swap write EIO 還原 PTE。詳見本檔「2B2、2C 執行驗收」。
+- 2026-11-08：Block／VM agents 按本檔末段演算法分工；先前暫停點為 pointer refactor。
 - 已完成方法與編譯：移除 `active` selector 與欄位 alias macros；`init_device`、`transfer`、flush helper 明確使用 `BlockDevice *`，各裝置 queue index/header/status 由自身物件持有。`make build/obj/drivers/virtio/block.o` 成功。
 - 本輪成果：per-device Gate／completion event／bounce buffer、request state、scheduler poll、runtime no-wait guard 與 VM swap PTE 撤銷／回復皆已實作；提交 `7e0f826`、`eb84ff7`，故障隔離另見 `19be53a`。只完成編譯與靜態 review，未跑 async runtime／QEMU／GDB 驗收。
 - 後續限制：boot 保留同步 fallback，每裝置一次一筆請求；不是多 queue block scheduler。安全 reset 後隔離裝置，不自動重試或 runtime remount；已換出且只存在故障 Swap 裝置的頁面仍可能無法讀回。
@@ -130,7 +131,7 @@
 
 ### 2C. GPU 非阻塞 present
 
-- 進度：2026-11-08 已實作（`ea6671e`），整合編譯成功，runtime NOT_RUN；CPU shadow 與 DMA backing 分離，poll 驅動 transfer／flush，後續 dirty 合併待下一次。
+- 2026-11-14：2C 已通過 QEMU 正常 present 路徑驗收。現有程式已在 `gpu_present()` 合併 pending dirty rectangle，poll 負責 transfer／flush，CPU shadow 與 DMA backing 分離。
 - 實作內容：將 GPU transfer/flush 拆成 request state machine，由 UI 保留 dirty 區域直到 completion，GPU command/response buffer 在完成前有明確 owner。
 - 方法與完成判準：scheduler/UI poll 不 busy-wait；錯誤及 timeout 時不重用 DMA 仍可存取的記憶體。本步只實作安全非阻塞與錯誤傳遞，不宣稱 device reset 復原；復原策略屬第 3 階段。
 
@@ -278,7 +279,7 @@
 
 - Spec：依使用者最新完整需求，改版首頁、12 個主章、4 個既有 labs、導覽、共用視覺／播放與 source mapping；只修改 docs／網站與計畫，不修改 kernel、driver、syscall。保留長篇文字、欄位表、歷史 spec、媒體、特殊事蹟與 portable v1 邊界。
 - 最新驗證授權：Phase 5 明確要求網站視覺／互動／響應式驗收，取代前次「不做瀏覽器測試」在本輪網站上的限制；仍不跑 OS 測試、不新增測試程式碼。
-- Phase 1 研究：已閱讀指定 xv6、OSTEP、1,000 Lines、VizTools、OS Lab 網頁／相關章節，對照本地 notes 與 source；研究矩陣見 [docs/redesign.md](./docs/redesign.md)，呈現規範見 [docs/visual-system.md](./docs/visual-system.md)。COD 僅確認官方 companion 與筆記／source 對照，不冒稱讀取受限內頁。所有圖原創，不直接複製教材圖。
+- Phase 1 研究：已閱讀指定 xv6、OSTEP、1,000 Lines、VizTools、OS Lab 網頁／相關章節，對照本地 notes 與 source；研究矩陣見 [docs/redesign.md](../docs/redesign.md)，呈現規範見 [docs/visual-system.md](../docs/visual-system.md)。COD 僅確認官方 companion 與筆記／source 對照，不冒稱讀取受限內頁。所有圖原創，不直接複製教材圖。
 - Phase 2：先做首頁 clickable architecture／roadmap、RR ready queue＋Gantt（教學 quantum 與 OS 50 ms 分開）、Sv39 bit layout／三級 walk／PTE／frame 組合（BigInt 計算索引、只模擬合法教學映射）；共用 theme tokens 與控制介面。
 - Phase 3：提取 usePlayback／PlaybackControls，重畫四 labs 的系統圖，保留全部舊情境與重要文字；step arrays 表示資料、DOM/SVG 表示流程，不依賴動畫時序。
 - Phase 4：其餘主章加入 A/B/C 適用原創圖，保留七段結構與 source／notes／外部閱讀；大型 SVG 支援局部放大，非所有圖都做 simulator。
@@ -334,6 +335,21 @@
 - 驗證：Chrome 實際操作 1440 light/dark、390 light/dark、320 light；每種檢查 16 步、播放／暫停、重設、鍵盤 Enter，無 page error／頁面水平溢出，元件可見文字最小 14px，axe 元件範圍無違規。修正後說明區各 viewport 高度不隨 frame 改變；確認隱藏 frame 無可見連結。另檢查 processes／scheduling 在 320px 無頁面水平溢出。截圖／檢查輸出留在系統 TEMP，不新增 repo 測試碼。不宣稱完整 WCAG 或效能指標。
 - 發布：來源 a7a5ab0 已推送 main；最終 publish-docs.ps1 建置成功（32.01 秒，既有 bundle size 提示），gh-pages ab002612da6cdaf9fb80a38a8115bf8f66cbbde2。[Pages 工作 43168921351](https://github.com/johnson931128/WUWAOS/actions/runs/43168921351) completed/success。公開 topics/threads.html 與 SPEC-34-threads.html 回傳 HTTP 200，核對到新版 ThreadFlow、退出回收情境與規格排程章節。
 - 本輪預覽與瀏覽器已關閉，未操作使用者 QEMU。OS／CLI／多 Thread runtime 依既有界線 NOT_RUN。網站驗收不代表核心驗收。
+
+## 2B2、2C 執行驗收（2026-11-14）
+
+- WSL Ubuntu、QEMU 8.2.2、單 hart、128 MiB。對 `8199e9b` 執行 `make -j4 -B all build/kernel-disk.elf` 成功，記錄在 `build/phase2bc-build.log`。測試均使用新建 WUFS／swap 映像。
+- 2B2 WUFS：GDB 於實際檔案讀取看到 Block request 仍在 IN_FLIGHT 且抵達 `thread_wait_event()` 呼叫點（`build/phase2bc-event-0b20gaai/gdb.log`）。經 shell pipeline 複製核心 ELF，停機後驗證 WUFS metadata 並逐位元組比對 189,120 bytes。WUFS 提交／完成各 76,367 筆，I/O 與 protocol 錯誤都是 0。
+- 2B2 Swap：常駐頁框上限 10，寫入 12 頁並讀回，換入 7 次、換出 15 次，io_errors=0。另以 blkdebug 對 swap LBA 8 注入單次 EIO，GDB 觀察到失敗分支的 PTE 與事前值相同，RAM 保留且 dirty=1。12 頁的首、中、尾 byte 均相符，換入 20 次、換出 17 次，io_errors=1（`build/phase2bc-rollback-ju55e9hj/`）。GDB 無法讀取最佳化後的區域變數 slot。
+- 2C GPU：以 QMP 開啟 Terminal 並送出 `echo gpu2c`，擷取桌面、Terminal 和輸入後的三張 1280×720 scanout。QEMU trace 記錄 22 次 transfer 與 22 次 flush（含局部矩形），同一 session 完成上述正常 WUFS／swap 操作。序列、trace 與畫面保存於 `build/phase2bc-gonto50m/`。
+- 驗收邊界：裝置 timeout／reset／GPU 復原屬第 3 階段，仍為 NOT_RUN。本輪未刻意延遲 GPU completion 以觀察 in-flight 期間的 dirty 合併，亦未測量畫面延遲。
+
+## Windows 預編譯 CLI 發行包（2026-11-14）
+
+- 使用者先安裝含 RV64 與 OpenSBI 的 Windows QEMU，解壓 GitHub Release 後在 CMD 輸入 `WUWAOS` 即可啟動 CLI。PowerShell 入口為 `./WUWAOS.cmd`。
+- 開發機執行 `wsl -d Ubuntu -- python3 tools/package-cli.py` 產生 ZIP 與 SHA-256。ZIP 包含 Windows 啟動器、唯讀 flash 映像、全新可寫的 WUFS 映像與授權。OpenSBI 交接給既有 flash loader，再從 WUFS 載入 `/boot/kernel.elf`；沿用單顆磁碟、無 swap、journal 須乾淨的限制。
+- Windows 原生 QEMU 11.1.0 驗收通過。ZIP 解壓到含空白的目錄，CMD 使用只含 QEMU 與 Windows 系統工具的 PATH，成功開機、執行 `echo`、寫檔、離開 QEMU，重啟後以 `cat` 讀回檔案。紀錄位於 `build/cli-verification/`。
+- 發行版本見 [Windows CLI v1](https://github.com/johnson931128/WUWAOS/releases/tag/cli-windows-v1)。後續里程碑是在 WUWAOS 內用 `fan` 編輯 C、在客體內編譯成相容 ELF，再用 `run` 執行，見 [Spec 21](../docs/SPEC-21-native-compilation.md)。
 
 ## 進度維護
 

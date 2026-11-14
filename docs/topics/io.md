@@ -30,7 +30,7 @@ TTY 與 pipe 的阻塞讀寫保留在原 syscall/kernel stack：呼叫端先讀 
 
 每個 OFD 的可重入 Gate 保護共享 file offset／資料操作；每個 pipe 的 Gate 保護 ring copy/commit。FS scope 涵蓋 metadata／交易 staging，Block 每裝置亦有獨立 Gate。取得順序為 OFD/Pipe → FS → VM → Block。scheduler/UI poll 是 no-wait context，不等待 Gate，也不能提交可能睡眠的 Block 操作。
 
-沒有 Ready 行程而存在 event/UI/Block poll work 時，scheduler 以有限的絕對 SBI timer deadline、SIE=0/STIE=1 與 WFI 等待；醒來後停止/確認 timer、輪詢並檢查 timeout。UART／VirtIO 完成仍由輪詢觀察，不是裝置中斷驅動。事件框架與目前實作進度見[後續計畫](https://github.com/johnson931128/WUWAOS/blob/main/plan.md#2-統一事件等待與非同步-io)。
+沒有 Ready 行程而存在 event/UI/Block poll work 時，scheduler 以有限的絕對 SBI timer deadline、SIE=0/STIE=1 與 WFI 等待；醒來後停止/確認 timer、輪詢並檢查 timeout。UART／VirtIO 完成仍由輪詢觀察，不是裝置中斷驅動。事件框架與目前實作進度見[後續計畫](https://github.com/johnson931128/WUWAOS/blob/main/planning/plan.md#2-統一事件等待與非同步-io)。
 
 ## 真實的位元組管道
 
@@ -53,7 +53,7 @@ TTY 與 pipe 的阻塞讀寫保留在原 syscall/kernel stack：呼叫端先讀 
 
 每筆請求預設超過 5 秒未完成，或收到不合法的完成資訊時，會要求裝置 reset。poll 每次只查一次狀態，設定 100 ms 的 reset acknowledgement 期限，實際檢查時機依 scheduler poll；確認 status=0 後將該裝置隔離為 offline，回錯並喚醒 caller，不自動重試寫入或重新掛載。若逾期仍無法確認 reset，保留 DMA storage 並停止核心。一次頁面交換含八筆磁區請求，不共用一個 5 秒總預算。[Spec 12](../SPEC-12-block-timeout.md) 保存舊版直接 fail-stop 的歷史設計。
 
-上述非同步與 reset 流程於 2026-11-08 實作；依使用者指示未執行 runtime／故障注入測試（NOT_RUN）。實際演算法與限制見[詳細計畫](https://github.com/johnson931128/WUWAOS/blob/main/plan.md)。
+上述非同步與 reset 流程於 2026-11-08 實作；依使用者指示未執行 runtime／故障注入測試（NOT_RUN）。實際演算法與限制見[詳細計畫](https://github.com/johnson931128/WUWAOS/blob/main/planning/plan.md)。
 
 ## 在 QEMU 觀察
 

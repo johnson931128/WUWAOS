@@ -29,7 +29,7 @@ WUWAOS focuses on fundamental operating system mechanisms and is not Linux-compa
 
 The 2026-11-08 implementation adds asynchronous Block requests and swap PTE rollback, nonblocking GPU presentation with bounded recovery, kernel stack guard pages, four independent Terminal windows, and atomic file replacement used by `fan`. Existing isolated TTY sessions, event waits, and owner-aware gates protect shared state. Kernel code can cooperatively sleep and resume its caller stack; timer preemption still applies only to user mode.
 
-These new paths have not been runtime-tested at the user's direction. Boot device setup still polls synchronously. Block reset acknowledgement permits isolating a failed disk; an unconfirmed reset still stops the kernel. GPU recovery can disable the GUI, and stack guards do not provide an emergency trap stack. See the [detailed implementation plan](plan.md) and [compact progress list](plan_current.md) for algorithms, build results, and limits. The existing portable v1 ZIP does not include these source changes.
+QEMU validation covered asynchronous Block I/O, swap PTE rollback after an injected write error, and normal GPU presentation. Boot device setup still polls synchronously. Block reset acknowledgement permits isolating a failed disk; an unconfirmed reset still stops the kernel. GPU recovery can disable the GUI, and stack guards do not provide an emergency trap stack. See the [detailed implementation plan](planning/plan.md) and [compact progress list](planning/plan_current.md) for validation boundaries. The existing portable v1 ZIP predates these changes.
 
 ## Demo Video
 
@@ -187,6 +187,27 @@ In the guest, run `ps`, `ls /`, then `ps`. Confirm `PLIC=enabled`, an increase i
 
 The local [per-device request ownership prototype](docs/SPEC-33-block-request-ownership.md) has been integrated into the upstream asynchronous implementation. Requests now retain an explicit device pointer and share one completion validator between polling and IRQ notification. In `ps`, each disk should show `state=idle`, matching `submitted` / `completed`, and zero `io_errors` / `protocol_errors`. Runtime waits suspend the caller; polling remains available at boot and in the scheduler. See the [merge record](docs/merge-2026-11-10.md) for integration decisions and verification scope.
 
+## Prebuilt Windows CLI
+
+1. Install [QEMU for Windows](https://www.qemu.org/download/#windows) with
+   `qemu-system-riscv64.exe` and OpenSBI. The launcher checks PATH and the
+   default installation directory under Program Files.
+2. Download `WUWAOS-cli-windows-x64.zip` from the [Windows CLI release](https://github.com/johnson931128/WUWAOS/releases/tag/cli-windows-v1)
+   and extract it into a writable directory.
+3. Open CMD in the extracted folder and enter `WUWAOS`. In PowerShell,
+   use `./WUWAOS.cmd`. The `wuwaos/>` prompt appears in the same terminal.
+
+To quit QEMU, press **Ctrl+A**, release the keys, then press **X**. The
+`wuwaos-cli.img` file stores guest files across launches. Keep that image
+when backing up your work and use only one QEMU session per disk image.
+The CLI release boots through OpenSBI and the WUWAOS flash loader. This
+disk boot mode runs with swap disabled and requires a clean WUFS journal.
+
+To build the release on a development machine, run
+`wsl -d Ubuntu -- python3 tools/package-cli.py` from the repository root.
+The host toolchain builds the flash loader and kernel, then the packaging
+script creates a fresh WUFS image, ZIP and SHA-256 sidecar under `build/`.
+
 ## Running a WUFS ELF Program
 
 With QEMU stopped, use PowerShell in the project root to install the existing shell ELF into the CLI disk.
@@ -216,4 +237,4 @@ The documentation and course notes linked below are currently written in Traditi
 
 ## License
 
-WUWAOS's original source code is licensed under the [MIT License](LICENSE). The desktop font uses the [SIL Open Font License 1.1](licenses/Cascadia-OFL.txt). Tools bundled in portable releases retain their individual licenses; see [third-party notices](THIRD_PARTY_NOTICES.md) and the release's package manifest for details.
+WUWAOS's original source code is licensed under the [MIT License](LICENSE). The desktop font uses the [SIL Open Font License 1.1](licenses/Cascadia-OFL.txt). Tools bundled in portable releases retain their individual licenses; see [third-party notices](licenses/THIRD_PARTY_NOTICES.md) and the release's package manifest for details.

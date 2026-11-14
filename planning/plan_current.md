@@ -1,11 +1,12 @@
 - 詳細步驟與方法：[plan.md](./plan.md)
+- Windows 預編譯 CLI 已完成打包與原生 QEMU 開機驗收。Windows 使用者安裝 QEMU、解壓 [CLI v1](https://github.com/johnson931128/WUWAOS/releases/tag/cli-windows-v1) 後可在 CMD 輸入 `WUWAOS`，重啟可讀回已寫入的檔案。下一個里程碑為 WUWAOS 內編譯 C。
 - 網站總覽與〈開始使用〉已發布至 GitHub Pages（`55585cc`）。公開頁通過桌機、320px 窄螢幕與鍵盤導覽檢查，本機通過 Chrome 200% 縮放檢查。詳見 [本輪網站改版](./plan.md#網站總覽與開始使用2026-11-11)。
-- Thread 階段 A 保留既有基本回歸；目前 B（共享位址／stack、create／join／exit）與 C（FD pin、cwd snapshot、group exit、child wait claim、fork／exec 排他）皆已實作。2026-11-12 補齊建立取消錯誤傳遞、退出 scope 防護、channel 等待取消結果與退出期間的新 wait／join 拒絕，移除過時階段 A 註解。詳見 [B/C 紀錄](docs/thread-stage-b.md) 與 [Spec 34](docs/SPEC-34-threads.md)。本輪缺少 Clang／Make／可用 WSL 或 portable 工具鏈，編譯 NOT_RUN；QEMU／CLI runtime NOT_RUN，不沿用先前編譯結果宣稱本次通過。D（demo／專用清單）未實作。
+- Thread 階段 A 保留既有基本回歸；目前 B（共享位址／stack、create／join／exit）與 C（FD pin、cwd snapshot、group exit、child wait claim、fork／exec 排他）皆已實作。2026-11-12 補齊建立取消錯誤傳遞、退出 scope 防護、channel 等待取消結果與退出期間的新 wait／join 拒絕，移除過時階段 A 註解。詳見 [B/C 紀錄](../docs/thread-stage-b.md) 與 [Spec 34](../docs/SPEC-34-threads.md)。本輪缺少 Clang／Make／可用 WSL 或 portable 工具鏈，編譯 NOT_RUN；QEMU／CLI runtime NOT_RUN，不沿用先前編譯結果宣稱本次通過。D（demo／專用清單）未實作。
 - CLI 磁碟開機已驗收。PowerShell 在專案根目錄執行 `wsl -d Ubuntu -- make run-disk`，由 OpenSBI 與 flash 載入器從一顆 WUFS 磁碟啟動至 `wuwaos/>`。已驗證新磁碟、重啟後讀回檔案及缺少磁碟時停止開機。詳見 [CLI 磁碟開機](./plan.md#cli-磁碟開機2026-11-09)。
 - CLI 文件已同步並通過 VitePress 建置。來源 `8b8ce26` 已推送至 `main`，`gh-pages` `4725bb6` 部署成功，已核對公開首頁、入門、開機、歷程與 journal 復原頁的更新內容。 [部署紀錄](https://github.com/johnson931128/WUWAOS/actions/runs/42569717948)
-- 整體進度：第 1 階段、2A、2B1 保留既有驗收；2026-11-08 的 2B2、2C 與第 3–6 階段已實作、整合編譯成功，runtime NOT_RUN。
+- 整體進度：第 1 階段、2A、2B1 保留既有驗收；2026-11-08 的 2B2、2C 與第 3–6 階段已實作、整合編譯成功。2B2、2C 已補驗收；第 3–6 階段的執行驗收仍為 NOT_RUN。
 - 第 1 階段：多 TTY/session 已完成並有既有 QEMU/GDB 驗收；後續四視窗見第 5 階段。
-- 第 2 階段：已實作 Block gate/event/bounce 非同步請求、Swap PTE 撤銷／回復、GPU shadow/backing 與非阻塞 present；runtime NOT_RUN。
+- 第 2 階段：2026-11-14 完成 2B2、2C QEMU 驗收。Block event wait、WUFS pipeline、Swap 換入／換出與單次 EIO 還原 PTE 通過；GPU 正常 present 完成 22 組 transfer／flush。確認範圍見 [2B2、2C 執行驗收](./plan.md#_2b2、2c-執行驗收2026-11-14)。
 - 第 3 階段：已實作 Block 安全 reset／offline 與 GPU 有界復原／降級；故障路徑 NOT_RUN。
 - 第 4 階段：已實作 process/scheduler 真實 guard page，生命週期靜態 review；尚無 emergency trap stack，runtime NOT_RUN。
 - 第 5 階段：已實作四視窗、焦點／z-order／拖曳／viewport resize／session close；VT 仍固定 100×30，GUI NOT_RUN。

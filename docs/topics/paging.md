@@ -129,7 +129,7 @@ vmstat limit 64
 
 ## 錯誤與限制
 
-非法缺頁回 -14，沒有資源回 -12，Swap I/O 失敗回 -5；無法補頁就結束該行程。runtime 磁碟等待會讓出 CPU；逾時後先要求 reset，確認安全停止才隔離裝置並回錯，不能確認則停機保留 DMA storage。Swap-out 失敗會恢復 victim 的 RAM 映射，但裝置 offline 後，已經只存在 Swap 的其他頁仍可能無法換入。2026-11-08 的非同步換頁與故障路徑未執行 runtime 驗證（NOT_RUN）；詳見[實作計畫](https://github.com/johnson931128/WUWAOS/blob/main/plan.md)。
+非法缺頁回 -14，沒有資源回 -12，Swap I/O 失敗回 -5；無法補頁就結束該行程。runtime 磁碟等待會讓出 CPU；逾時後先要求 reset，確認安全停止才隔離裝置並回錯，不能確認則停機保留 DMA storage。Swap-out 失敗會恢復 victim 的 RAM 映射，但裝置 offline 後，已經只存在 Swap 的其他頁仍可能無法換入。2026-11-08 的非同步換頁與故障路徑未執行 runtime 驗證（NOT_RUN）；詳見[實作計畫](https://github.com/johnson931128/WUWAOS/blob/main/planning/plan.md)。
 
 沒有 COW、mmap、共享頁與動態核心 heap。縮小 heap 只釋放不再涵蓋的整頁；部分頁縮小再擴張不保證清零。常駐頁保留交換區副本、空 heap L0 表保留至空間銷毀，都是仍有所有權的資源。
 

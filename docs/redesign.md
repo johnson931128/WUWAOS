@@ -35,4 +35,4 @@
 
 所有圖以 Vue/SVG/CSS 重新繪製，來源僅作概念與圖像結構參考。課程筆記可依使用者授權引用敘述，但其中第三方圖片仍需獨立確認授權。靜態向量圖由 source 管理，文字可搜尋／放大；沒有搬運教材截圖、未授權圖像或將外部模擬器嵌入本站。
 
-一般教材概念、WUWAOS source 行為、網站的簡化假設各自標示。網站互動驗證與 OS runtime 驗證分開記錄，參見[詳細計畫](https://github.com/johnson931128/WUWAOS/blob/main/plan.md)。
+一般教材概念、WUWAOS source 行為、網站的簡化假設各自標示。網站互動驗證與 OS runtime 驗證分開記錄，參見[詳細計畫](https://github.com/johnson931128/WUWAOS/blob/main/planning/plan.md)。

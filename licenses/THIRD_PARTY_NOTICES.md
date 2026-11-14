@@ -1,6 +1,6 @@
 # Third-party notices
 
-WUWAOS's original source code is licensed under the [MIT License](LICENSE).
+WUWAOS's original source code is licensed under the [MIT License](../LICENSE).
 That license does not replace the licenses of third-party components shipped
 in the repository or in a portable release.
 
@@ -8,9 +8,9 @@ in the repository or in a portable release.
 
 `kernel/font_terminal.h` contains **WUWAOS Terminal**, a renamed rasterized
 ASCII subset derived from Microsoft Cascadia Mono Regular v2407.24. This
-font data is licensed under the [SIL Open Font License 1.1](licenses/Cascadia-OFL.txt).
+font data is licensed under the [SIL Open Font License 1.1](./Cascadia-OFL.txt).
 The upstream copyright and reserved font name notice are retained there.
-See [font generation details](licenses/README.md).
+See [font generation details](./README.md).
 
 `kernel/font8x8_basic.h` contains the previous public-domain bitmap font.
 

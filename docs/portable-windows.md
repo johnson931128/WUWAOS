@@ -87,7 +87,7 @@ OpenSBI -> Flash Bootloader -> WUFS: /boot/kernel.elf
 
 WUWAOS 原創程式碼使用 MIT 授權；桌面字型使用 SIL OFL 1.1。隨附的 MSYS2 與開發工具各自依其原有授權散布，不能把整個發行包一概視為 MIT 授權。
 
-完整說明見原始碼根目錄的 `THIRD_PARTY_NOTICES.md`、`licenses/README.md` 及發行包內的 `PORTABLE-MANIFEST.json`。套件清單記錄版本、授權、上游與原始碼套件連結，並保留工具原本附帶的授權文件。再次散布工具時，仍需遵循各套件的授權條款與適用的對應原始碼要求。
+完整說明見原始碼的 `licenses/THIRD_PARTY_NOTICES.md`、`licenses/README.md` 及發行包內的 `PORTABLE-MANIFEST.json`。套件清單記錄版本、授權、上游與原始碼套件連結，並保留工具原本附帶的授權文件。再次散布工具時，仍需遵循各套件的授權條款與適用的對應原始碼要求。
 
 ## 重新打包
 

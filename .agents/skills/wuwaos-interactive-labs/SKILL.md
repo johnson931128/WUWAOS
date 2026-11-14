@@ -8,7 +8,7 @@ description: Design or rebuild state-driven Vue/VitePress interactive learning l
 ## Scope and evidence
 
 - Scope changes to `docs/` unless the task explicitly requires OS source changes. Do not silently alter `kernel/`, `arch/`, `drivers/`, or `user/`.
-- Before implementation, read the relevant `docs/topics/*.md`, `docs/CODE_GUIDE.md`, and real OS code; consult `plan_current.md` for verified versus NOT_RUN boundaries.
+- Before implementation, read the relevant `docs/topics/*.md`, `docs/CODE_GUIDE.md`, and real OS code; consult `planning/plan_current.md` for verified versus NOT_RUN boundaries.
 - Use `references/OS-LAB-CONTRACT.md` as the checklist for the four labs. This is a design contract, not proof of kernel behavior; resolve discrepancies in favor of the current source, and document them.
 - Distinguish simulated teaching states, source-derived behavior, and actual QEMU trace. Never portray a model as live telemetry.
 
