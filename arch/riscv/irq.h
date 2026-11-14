@@ -14,6 +14,7 @@ uintptr_t irq_mmio_base(unsigned int index);
 /* Boot-time registration only, before irq_start enables external interrupts. */
 int irq_register_mmio(uintptr_t base, IrqService service, void *device, const char *name);
 void irq_start(void);
+int irq_enabled(void);
 void irq_dispatch(void);
 int irq_in_handler(void);
 /* Called from ordinary kernel diagnostic paths with interrupts disabled. */

@@ -2,6 +2,9 @@
 #include "kernel/io/console.h"
 #include "arch/riscv/timer.h"
 #include "arch/riscv/irq.h"
+#include "kernel/fs/fs.h"
+#include "arch/riscv/hart.h"
+#include "arch/riscv/trap.h"
 #include "drivers/virtio/block.h"
 
 typedef struct {
@@ -98,5 +101,8 @@ void scheduler_print_ready(void) {
     }
     console_putc('\n');
     irq_print_stats();
+    fs_print_cache_stats();
+    console_puts("Online hart mask="); console_hex(hart_online_mask());
+    console_puts(" kernel_preemptions="); console_number(trap_kernel_preemptions()); console_putc('\n');
     block_print_stats();
 }

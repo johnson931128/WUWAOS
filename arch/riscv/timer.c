@@ -1,10 +1,11 @@
 #include "arch/riscv/timer.h"
 #include "arch/riscv/clock.h"
 #include "arch/riscv/sbi.h"
+#include "arch/riscv/hart.h"
 #include "kernel/io/console.h"
 
 static uint64_t interrupts;
-static int armed;
+static int armed[HART_LIMIT];
 
 static void set_deadline(uint64_t deadline) {
     const long error = sbi_set_timer(deadline);
@@ -17,9 +18,9 @@ static void set_deadline(uint64_t deadline) {
 }
 
 void timer_stop(void) {
-    if (armed) {
+    if (armed[hart_id()]) {
         set_deadline(UINT64_MAX);
-        armed = 0;
+        armed[hart_id()] = 0;
     }
 }
 
@@ -39,12 +40,12 @@ void timer_start_slice(unsigned long milliseconds) {
 
 void timer_start_deadline(uint64_t deadline) {
     set_deadline(deadline);
-    armed = 1;
+    armed[hart_id()] = 1;
 }
 
 void timer_interrupt(void) {
     set_deadline(UINT64_MAX); /* Acknowledge even an unexpected pending interrupt. */
-    armed = 0;
+    armed[hart_id()] = 0;
     ++interrupts;
 }
 

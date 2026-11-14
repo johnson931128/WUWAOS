@@ -29,6 +29,8 @@ long read(long fd, char *buffer, unsigned long length);
 long open(const char *path, long flags);
 long close(long fd);
 long fstat(long fd, WuwaFileInfo *info);
+long fs_link(const char *source, const char *destination);
+long mknod(const char *path, unsigned device);
 long dup2(long oldfd, long newfd);
 long dup(long oldfd);
 long is_console(long fd);

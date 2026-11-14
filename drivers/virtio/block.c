@@ -467,9 +467,10 @@ static int submit_request(BlockDevice *target, uint32_t sector, const void *buff
     if (target == 0 || target->registers == 0 || target->offline ||
         (operation != BLOCK_OP_FLUSH && (buffer == 0 || sector >= target->capacity)) ||
         (operation == BLOCK_OP_FLUSH && !target->flush_supported)) return ERR_IO;
-    if (process_runtime_started() && !thread_wait_allowed()) return ERR_BUSY;
+    const int maintenance = process_runtime_started() && !thread_current_or_null() && !irq_in_handler();
+    if (process_runtime_started() && !thread_wait_allowed() && !maintenance) return ERR_BUSY;
 
-    const int gate_result = kernel_gate_enter(&target->gate);
+    const int gate_result = maintenance ? kernel_gate_try_enter(&target->gate) : kernel_gate_enter(&target->gate);
     if (gate_result < 0) return gate_result;
     const int defer_result = thread_cancel_defer_enter();
     if (defer_result < 0) {
@@ -521,7 +522,7 @@ static int submit_request(BlockDevice *target, uint32_t sector, const void *buff
     __asm__ volatile("fence w, o" : : : "memory");
     target->registers[VIRTIO_QUEUE_NOTIFY / 4] = 0;
     while (target->request_state != BLOCK_REQUEST_DONE) {
-        if (!process_runtime_started()) {
+        if (!process_runtime_started() || maintenance) {
             poll_device(target);
             continue;
         }
@@ -576,7 +577,7 @@ int block_init_from_fdt(const void *fdt) {
                 kernel_idle();
             }
             swap_disk = target;
-        } else if (has_magic(header, "WUFS0001") || has_magic(header, "WUFS0002")) {
+        } else if (has_magic(header, "WUFS0001") || has_magic(header, "WUFS0002") || has_magic(header, "WUFS0003")) {
             if (filesystem != 0) {
                 console_puts("[block] Duplicate WUFS disks; refusing boot\n");
                 kernel_idle();

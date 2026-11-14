@@ -1,16 +1,17 @@
 #include "kernel/proc/thread.h"
+#include "arch/riscv/hart.h"
 #include "kernel/proc/process.h"
 #include "kernel/mm/vm.h"
 #include "kernel/io/console.h"
 #include <limits.h>
 
 #define THREAD_KERNEL_STACK_SIZE (16UL * 1024UL)
-#define THREAD_STACK_REGION_SIZE (PAGE_SIZE + THREAD_KERNEL_STACK_SIZE)
+#define THREAD_STACK_REGION_SIZE (2 * PAGE_SIZE + THREAD_KERNEL_STACK_SIZE)
 
 static Thread threads[THREAD_LIMIT];
 static unsigned char kernel_stacks[THREAD_LIMIT][THREAD_STACK_REGION_SIZE]
     __attribute__((aligned(PAGE_SIZE)));
-static Thread *current;
+static Thread *current[HART_LIMIT];
 static long next_tid = 1;
 
 static _Noreturn void thread_panic(const char *message) {
@@ -60,7 +61,7 @@ Thread *thread_allocate_extra(Process *process, int stack_slot) {
 }
 
 void thread_release(Thread *thread) {
-    if (!thread || thread == current || thread->ready_queued ||
+    if (!thread || thread == current[hart_id()] || thread->ready_queued ||
         (thread->state != THREAD_NEW && thread->state != THREAD_ZOMBIE) ||
         thread->internal_gate_depth || thread->cancel_defer_depth ||
         thread->sync_wait_handle || thread->kernel_locks || thread->kernel_waiting ||
@@ -86,12 +87,12 @@ void thread_release(Thread *thread) {
 Thread *thread_slot(int slot) {
     return slot >= 0 && slot < THREAD_LIMIT ? &threads[slot] : 0;
 }
-Thread *thread_current_or_null(void) { return current; }
+Thread *thread_current_or_null(void) { return current[hart_id()]; }
 Thread *thread_current(void) {
-    if (!current) thread_panic("No running thread");
-    return current;
+    if (!current[hart_id()]) thread_panic("No running thread");
+    return current[hart_id()];
 }
-void thread_set_current(Thread *thread) { current = thread; }
+void thread_set_current(Thread *thread) { current[hart_id()] = thread; }
 
 int thread_stack_guard_bounds(uintptr_t address, uintptr_t *bottom, uintptr_t *top) {
     if (!bottom || !top) return 0;

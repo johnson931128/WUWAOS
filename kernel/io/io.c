@@ -16,7 +16,7 @@
 #define CONSOLE_OUT (-2)
 #define CONSOLE_ERR (-3)
 
-typedef enum { OFD_RESERVED, OFD_FILE, OFD_DIRECTORY, OFD_PIPE_READ, OFD_PIPE_WRITE, OFD_TTY } OfdType;
+typedef enum { OFD_RESERVED, OFD_FILE, OFD_DIRECTORY, OFD_DEVICE, OFD_PIPE_READ, OFD_PIPE_WRITE, OFD_TTY } OfdType;
 typedef struct {
     int used;
     OfdType type;
@@ -124,6 +124,7 @@ static void ofd_release(int index) {
             *pipe = (Pipe){ .generation = generation, .event = event };
         } else event_source_notify(&pipe->event, 0);
     } else if (ofd->type == OFD_TTY) tty_release(ofd->tty);
+    else if (ofd->type == OFD_FILE || ofd->type == OFD_DEVICE) fs_note_inode_closed(ofd->inode);
     *ofd = (OpenFile){0};
 }
 
@@ -139,7 +140,7 @@ static void close_slot(Process *process, int fd) {
 
 int io_inode_is_open(uint32_t inode) {
     for (int i = 0; i < OFD_LIMIT; ++i)
-        if (open_files[i].used && (open_files[i].type == OFD_FILE || open_files[i].type == OFD_DIRECTORY) && open_files[i].inode == inode) return 1;
+        if (open_files[i].used && (open_files[i].type == OFD_FILE || open_files[i].type == OFD_DIRECTORY || open_files[i].type == OFD_DEVICE) && open_files[i].inode == inode) return 1;
     return 0;
 }
 
@@ -256,6 +257,7 @@ long io_open(const char *path, long flags) {
     uint32_t inode, type;
     long result = fs_open_inode(path, !!(flags & FD_O_CREAT), &inode, &type);
     if (result < 0) goto open_failed;
+    if (type == WUWA_FILE_DEVICE) flags &= 3; /* Creation/truncate/append do not affect a device. */
     if (type == WUWA_FILE_DIRECTORY && flags != FD_O_RDONLY) { result = ERR_INVALID; goto open_failed; }
     if ((flags & FD_O_TRUNC) && io_inode_is_open(inode)) { result = ERR_BUSY; goto open_failed; }
     OpenFile *ofd = &open_files[index];
@@ -272,7 +274,8 @@ long io_open(const char *path, long flags) {
         if (result < 0) goto open_failed;
         ofd->offset = (size_t)result;
     }
-    ofd->type = type == WUWA_FILE_DIRECTORY ? OFD_DIRECTORY : OFD_FILE;
+    ofd->type = type == WUWA_FILE_DIRECTORY ? OFD_DIRECTORY :
+                type == WUWA_FILE_DEVICE ? OFD_DEVICE : OFD_FILE;
     process->fd_table[fd] = index;
     scope_error = fs_scope_leave();
     if (scope_error < 0) return scope_error;
@@ -290,7 +293,7 @@ long io_fstat(long fd, uintptr_t output) {
     const int value = fd_pin(process, fd);
     const OpenFile *file = get_ofd(value);
     long result = ERR_BAD_FD;
-    if (file && (file->type == OFD_FILE || file->type == OFD_DIRECTORY)) {
+    if (file && (file->type == OFD_FILE || file->type == OFD_DIRECTORY || file->type == OFD_DEVICE)) {
         WuwaFileInfo info;
         result = fs_inode_info(file->inode, &info);
         if (result == 0) result = user_copy_to(process->page_table, output, &info, sizeof(info));
@@ -470,8 +473,8 @@ static long io_read_pinned(Process *process, int value, uintptr_t buffer, size_t
         length > LONG_MAX) return ERR_BAD_FD;
     if (!user_writable(process->page_table, buffer, length)) return ERR_ADDRESS;
     if (length == 0) return 0;
-    if (fd_tty_readable(value)) {
-        const TtyId id = fd_tty_id(value);
+    if (fd_tty_readable(value) || (ofd && ofd->type == OFD_DEVICE)) {
+        const TtyId id = ofd && ofd->type == OFD_DEVICE ? tty_uart_id() : fd_tty_id(value);
         if (!tty_session_active(id)) return ERR_IO;
         const long owner = tty_raw_owner(id);
         if (owner < 0) return owner;
@@ -534,12 +537,12 @@ static long io_write_pinned(Process *process, int value, uintptr_t buffer, size_
         (ofd && !ofd->writable) || length > LONG_MAX) return ERR_BAD_FD;
     if (!user_readable(process->page_table, buffer, length)) return ERR_ADDRESS;
     if (length == 0) return 0;
-    if (fd_tty_writable(value)) {
+    if (fd_tty_writable(value) || (ofd && ofd->type == OFD_DEVICE)) {
         unsigned char staging[256];
         if (length > sizeof(staging)) length = sizeof(staging);
         const int error = user_copy_from(process->page_table, staging, buffer, length);
         if (error < 0) return error;
-        const TtyId id = fd_tty_id(value);
+        const TtyId id = ofd && ofd->type == OFD_DEVICE ? tty_uart_id() : fd_tty_id(value);
         return tty_output_write(id, staging, length);
     }
     if (ofd && ofd->type == OFD_PIPE_WRITE) {
@@ -574,7 +577,7 @@ static long io_write_pinned(Process *process, int value, uintptr_t buffer, size_
         } else if (ofd->offset > SIZE_MAX - length) {
             result = ERR_INVALID;
         } else {
-            result = fs_write_inode(ofd->inode, ofd->offset, staging, length);
+            result = fs_queue_inode_write(ofd->inode, ofd->offset, staging, length);
             if (result > 0) ofd->offset += (size_t)result;
         }
         const int leave_error = kernel_gate_leave(&ofd_gates[value]);

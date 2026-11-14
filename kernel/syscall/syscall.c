@@ -242,6 +242,14 @@ void syscall_dispatch(TrapFrame *frame) {
         }
         break;
     }
+    case SYS_MKNOD: {
+        char path[FS_PATH_MAX];
+        result = copy_fs_path(process_current()->page_table, frame->registers[10], path);
+        if (result == 0) result = frame->registers[11] == WUWA_DEVICE_CONSOLE ?
+                                 fs_mknod(path, WUWA_DEVICE_CONSOLE) : ERR_INVALID;
+        break;
+    }
+    case SYS_FS_LINK:
     case SYS_FS_COPY: {
         char source[FS_PATH_MAX], destination[FS_PATH_MAX];
         char cwd[FS_PATH_MAX];
@@ -249,7 +257,7 @@ void syscall_dispatch(TrapFrame *frame) {
         for (size_t i = 0; i < sizeof(cwd); ++i) cwd[i] = process->cwd[i];
         result = copy_fs_path_from(process->page_table, frame->registers[10], cwd, source);
         if (result == 0) result = copy_fs_path_from(process->page_table, frame->registers[11], cwd, destination);
-        if (result == 0) result = fs_copy(source, destination);
+        if (result == 0) result = number == SYS_FS_LINK ? fs_link(source, destination) : fs_copy(source, destination);
         break;
     }
     case SYS_FS_READ: {

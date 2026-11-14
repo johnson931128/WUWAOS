@@ -16,6 +16,7 @@ DIRECT = 8
 INDIRECT = 8
 NAME_SIZE = 24
 MAGIC = b"WUFS0002"
+LINK_MAGIC = b"WUFS0003"
 LEGACY_MAGIC = b"WUFS0001"
 JOURNAL_START = 1
 JOURNAL_CAPACITY = 1152
@@ -27,6 +28,7 @@ JOURNAL_HEADER_OFFSET = JOURNAL_START * SECTOR
 class WufsImage:
     def __init__(self, image: bytearray):
         self.image = image
+        self.link_format = image[:8] == LINK_MAGIC
         self.sectors, self.inodes, self.ibitmap, self.bbitmap, self.bbitmap_len, self.itable, self.itable_len, self.data_start, self.root = struct.unpack_from("<9I", image, 8)
         self.validate_layout()
 
@@ -45,9 +47,9 @@ class WufsImage:
                 self.data_start != expected_data or self.root != 0 or self.data_start >= self.sectors or
                 self.sectors > 32768 or journal != (JOURNAL_START, JOURNAL_SECTORS, JOURNAL_CAPACITY) or
                 any(self.image[14 * 4:SECTOR])):
-            raise RuntimeError("invalid or unsupported WUFS0002 layout")
+            raise RuntimeError("invalid or unsupported WUFS journal layout")
         if any(self.image[JOURNAL_HEADER_OFFSET:JOURNAL_HEADER_OFFSET + SECTOR]):
-            raise RuntimeError("journal header is nonzero (pending or damaged); boot WUFS0002 for recovery before host updates")
+            raise RuntimeError("journal header is nonzero (pending or damaged); boot the volume for recovery before host updates")
 
     def validate_metadata(self):
         used_blocks = set()
@@ -64,7 +66,10 @@ class WufsImage:
                     raise RuntimeError(f"unused inode {number} contains metadata")
                 continue
             allocated_inodes.add(number)
-            if any(reserved) or kind not in (1, 2) or size > (DIRECT + INDIRECT * 128) * SECTOR:
+            links, device = reserved
+            if ((not self.link_format and (links or kind == 3)) or
+                    device != (1 if kind == 3 else 0) or kind not in (1, 2, 3) or
+                    (kind == 3 and (size or any(blocks) or any(tables)))) or size > (DIRECT + INDIRECT * 128) * SECTOR:
                 raise RuntimeError(f"invalid inode {number}")
             if kind == 1 and size % (NAME_SIZE + 4):
                 raise RuntimeError(f"directory inode {number} has a partial entry")
@@ -92,7 +97,7 @@ class WufsImage:
             if self.bit(self.bbitmap, sector) != (sector in used_blocks):
                 raise RuntimeError(f"block bitmap disagrees with inode ownership at sector {sector}")
 
-        reached = {0}
+        reached = {0: 1}
         queue = [0]
         while queue:
             parent = queue.pop(0)
@@ -108,16 +113,22 @@ class WufsImage:
                 if name in directory_names:
                     raise RuntimeError(f"directory inode {parent} contains duplicate name {name!r}")
                 directory_names.add(name)
-                if child in reached:
+                kind = self.read_inode(child)[0]
+                if child in reached and (not self.link_format or kind == 1):
                     raise RuntimeError("directory tree contains a cycle or multiply linked inode")
-                reached.add(child)
-                if self.read_inode(child)[0] == 1:
+                reached[child] = reached.get(child, 0) + 1
+                if kind == 1:
                     child_entries = self.read_dir(child)
                     if len(child_entries) < 2 or child_entries[1][0] != ".." or child_entries[1][1] != parent:
                         raise RuntimeError(f"directory inode {child} has an invalid parent entry")
                     queue.append(child)
-        if reached != allocated_inodes:
+        if not self.link_format and set(reached) != allocated_inodes:
             raise RuntimeError("directory tree does not reach every allocated inode")
+        if self.link_format:
+            for number in allocated_inodes:
+                kind, *_, links, _device = self.read_inode(number)
+                if links != reached.get(number, 0) or (kind == 1 and links != 1):
+                    raise RuntimeError(f"incorrect link count in inode {number}")
 
     def _claim_block(self, block, used_blocks):
         if block < self.data_start or block >= self.sectors or not self.bit(self.bbitmap, block) or block in used_blocks:
@@ -163,7 +174,8 @@ class WufsImage:
 
     def write_inode(self, number, kind, size, direct, indirect):
         values = [kind, size] + list(direct[:DIRECT]) + [0] * (DIRECT - len(direct))
-        values += list(indirect[:INDIRECT]) + [0] * (INDIRECT - len(indirect)) + [0, 0]
+        links = (self.read_inode(number)[18] if self.read_inode(number)[0] else 1) if self.link_format and kind else 0
+        values += list(indirect[:INDIRECT]) + [0] * (INDIRECT - len(indirect)) + [links, 0]
         struct.pack_into("<20I", self.image, self.inode_offset(number), *values)
 
     def bit(self, start, number):
@@ -315,14 +327,50 @@ class WufsImage:
         self.write_data(inode_number, kernel)
 
 
+def convert_links(volume):
+    for number in range(volume.inodes):
+        if volume.bit(volume.ibitmap, number):
+            struct.pack_into("<I", volume.image, volume.inode_offset(number) + 72, 1)
+    volume.image[:8] = LINK_MAGIC
+
+
+def upgrade_links(source, destination):
+    image = bytearray(source.read_bytes())
+    if image[:8] != MAGIC:
+        raise RuntimeError("upgrade source must be WUFS0002")
+    original = WufsImage(image)
+    original.validate_metadata()
+    convert_links(original)
+    upgraded = WufsImage(image)
+    upgraded.validate_metadata()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    atomic_replace(destination, image, create_only=True)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--image", required=True, type=pathlib.Path)
-    parser.add_argument("--kernel", required=True, type=pathlib.Path)
+    parser.add_argument("--kernel", type=pathlib.Path)
+    parser.add_argument("--upgrade-from", type=pathlib.Path, metavar="WUFS0002_IMAGE",
+                        help="copy a clean WUFS0002 volume to a new WUFS0003 image")
+    parser.add_argument("--wufs3", action="store_true", help="create a new WUFS0003 image")
     parser.add_argument("--install", nargs=2, action="append", default=[],
                         metavar=("HOST_FILE", "WUFS_PATH"),
                         help="install a new file; destination must not exist")
     args = parser.parse_args()
+    if args.upgrade_from:
+        if args.kernel or args.install or args.wufs3:
+            parser.error("upgrade and file installation must run separately")
+        try:
+            upgrade_links(args.upgrade_from, args.image)
+        except (OSError, RuntimeError, ValueError, struct.error) as error:
+            parser.error(f"upgrade failed: {error}")
+        print(f"WUFS0003 copy ready: {args.image}")
+        return
+    if not args.kernel:
+        parser.error("--kernel is required unless --upgrade-from is used")
+    if args.wufs3 and args.image.exists():
+        parser.error("--wufs3 requires a new image path")
     if args.image.exists():
         image = bytearray(args.image.read_bytes())
         if image[:8] == LEGACY_MAGIC:
@@ -330,12 +378,12 @@ def main():
                 parser.error("WUFS0001 is preserved read-only; choose a fresh --image path for WUFS0002 installs")
             print("Legacy WUFS0001 preserved; kernel will attempt read-only validation; use a fresh DISK_IMAGE for WUFS0002")
             return
-        if image[:8] == MAGIC:
+        if image[:8] in (MAGIC, LINK_MAGIC):
             try:
                 fs = WufsImage(image)
                 fs.validate_metadata()
             except (OSError, RuntimeError, ValueError, struct.error) as error:
-                parser.error(f"invalid WUFS0002 image; left unchanged: {error}")
+                parser.error(f"invalid WUFS image; left unchanged: {error}")
         else:
             # The launcher runs this tool before the guest kernel can inspect
             # the disk. Apply the same preservation rule here: missing magic
@@ -346,6 +394,9 @@ def main():
     else:
         args.image.parent.mkdir(parents=True, exist_ok=True)
         fs = WufsImage.format()
+        if args.wufs3:
+            convert_links(fs)
+            fs = WufsImage(fs.image)
     try:
         kernel = args.kernel.read_bytes()
         fs.add_kernel(kernel)
@@ -361,7 +412,7 @@ def main():
     except (OSError, RuntimeError, ValueError, struct.error) as error:
         parser.error(f"refusing to publish invalid WUFS image: {error}")
     try:
-        atomic_replace(args.image, fs.image)
+        atomic_replace(args.image, fs.image, create_only=args.wufs3)
     except OSError as error:
         parser.error(f"cannot atomically update image {args.image}: {error}")
     for source, destination in args.install:
@@ -369,7 +420,7 @@ def main():
     print(f"WUFS disk ready: {args.image} ({len(fs.image)} bytes), /boot/kernel.elf ({len(kernel)} bytes)")
 
 
-def atomic_replace(path, contents):
+def atomic_replace(path, contents, create_only=False):
     path = path.resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
@@ -378,7 +429,11 @@ def atomic_replace(path, contents):
             output.write(contents)
             output.flush()
             os.fsync(output.fileno())
-        os.replace(temporary, path)
+        if create_only:
+            os.link(temporary, path)
+            os.unlink(temporary)
+        else:
+            os.replace(temporary, path)
         if os.name == "posix":
             directory = os.open(path.parent, os.O_RDONLY)
             try:

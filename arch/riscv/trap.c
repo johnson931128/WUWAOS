@@ -12,6 +12,16 @@
 #define SUPERVISOR_TIMER ((1UL << 63) | 5UL)
 
 extern void trap_entry(void);
+static uint64_t kernel_preemptions;
+
+uint64_t trap_kernel_preemptions(void) { return kernel_preemptions; }
+
+void trap_preemption_point(void) {
+    Thread *thread = thread_current();
+    if (thread->internal_gate_depth || thread->cancel_defer_depth || thread->kill_pending) return;
+    /* Only this instruction window accepts an S-mode interrupt. */
+    __asm__ volatile("csrsi sstatus, 2\nnop\ncsrci sstatus, 2" : : : "memory");
+}
 
 void trap_init(void) {
     __asm__ volatile("csrw stvec, %0\ncsrw sscratch, zero"
@@ -48,6 +58,12 @@ TrapFrame *trap_handler(TrapFrame *frame) {
         thread_kernel_call_return();
         return resume; /* External IRQs preserve sepc. */
     }
+    if (!from_user && frame->scause == SUPERVISOR_TIMER) {
+        timer_interrupt();
+        ++kernel_preemptions;
+        thread_preempt();
+        return frame;
+    }
     if (from_user && frame->scause == SUPERVISOR_TIMER) {
         thread_kernel_call_enter();
         timer_interrupt();
@@ -60,6 +76,7 @@ TrapFrame *trap_handler(TrapFrame *frame) {
         thread_kernel_call_enter();
         frame->sepc += 4; /* ECALL is a 32-bit instruction. */
         syscall_dispatch(frame);
+        trap_preemption_point();
         TrapFrame *resume = thread_resume();
         thread_kernel_call_return();
         return resume;

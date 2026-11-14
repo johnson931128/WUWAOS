@@ -19,6 +19,11 @@ static Thread *owner, *waiter;
 static KernelGate gate;
 static long mutex;
 
+void fs_print_cache_stats(void) {}
+unsigned long hart_online_mask(void) { return 1; }
+uint64_t trap_kernel_preemptions(void) { return 0; }
+void console_hex(unsigned long value) { (void)value; }
+
 void console_puts(const char *s) { (void)s; }
 void console_putc(char c) { (void)c; }
 void console_number(long n) { (void)n; }

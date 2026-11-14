@@ -23,11 +23,11 @@ WUWAOS is a small operating system written in **C and RISC-V assembly** that boo
 | File system | Event-waiting VirtIO block requests, WUFS redo journal, atomic file replacement, shared open-file offsets, and shell redirection |
 | User interface | UART shell, `fan` and `workstate`; optional VirtIO desktop with up to four independent Terminal windows, focus, dragging, and viewport resizing |
 
-WUWAOS focuses on fundamental operating system mechanisms and is not Linux-compatible. `make run-disk` boots the UART shell from a WUFS disk. A restricted static RV64 ELF loader can run compatible WUWAOS programs from WUFS; general ELF/Linux compatibility, external ELF arguments, networking, and a file manager are not supported. Window resizing changes the viewport of a fixed 100×30 terminal model; it does not resize the TTY or reflow text. Development uses host-side cross-compilation. See the [documentation](https://johnson931128.github.io/WUWAOS/).
+WUWAOS focuses on fundamental operating system mechanisms and is not Linux-compatible. `make run-disk` boots the UART shell from a WUFS disk. A restricted static RV64 ELF loader can run compatible WUWAOS programs from WUFS; general ELF/Linux compatibility, networking, and a file manager are not supported. Window resizing changes the viewport of a fixed 100×30 terminal model; it does not resize the TTY or reflow text. Development uses host-side cross-compilation. See the [documentation](https://johnson931128.github.io/WUWAOS/).
 
 ## Current Development Status
 
-The 2026-11-08 implementation adds asynchronous Block requests and swap PTE rollback, nonblocking GPU presentation with bounded recovery, kernel stack guard pages, four independent Terminal windows, and atomic file replacement used by `fan`. Existing isolated TTY sessions, event waits, and owner-aware gates protect shared state. Kernel code can cooperatively sleep and resume its caller stack; timer preemption still applies only to user mode.
+The 2026-11-08 implementation adds asynchronous Block requests and swap PTE rollback, nonblocking GPU presentation with bounded recovery, kernel stack guard pages, four independent Terminal windows, and atomic file replacement used by `fan`. Existing isolated TTY sessions, event waits, and owner-aware gates protect shared state. Kernel code can cooperatively sleep and resume its caller stack. The CLI also supports multi-hart scheduling and timer preemption at designated kernel checkpoints.
 
 QEMU validation covered asynchronous Block I/O, swap PTE rollback after an injected write error, and normal GPU presentation. Boot device setup still polls synchronously. Block reset acknowledgement permits isolating a failed disk; an unconfirmed reset still stops the kernel. GPU recovery can disable the GUI, and stack guards do not provide an emergency trap stack. See the [detailed implementation plan](planning/plan.md) and [compact progress list](planning/plan_current.md) for validation boundaries. The existing portable v1 ZIP predates these changes.
 
@@ -155,6 +155,17 @@ CPU -> OpenSBI -> Flash Bootloader -> read /boot/kernel.elf
 
 The loader reads the kernel from disk; the running kernel then initializes its own drivers and mounts WUFS. Direct boot (`make run` and GUI targets) instead uses QEMU `-kernel` to load `build/kernel.elf`. See the [ASCII boot diagrams and explanation](docs/topics/boot.md) for the host preparation, firmware handoff, and Flash/disk/RAM relationship.
 
+## WUFS0003 and multi-hart CLI
+
+The CLI supports `wait` for any direct child, `wait <pid>` for a specific child, and `run <path> [args]` for compatible static RV64 programs. A WUFS0003 disk enables `ln <source> <destination>` and console device nodes. With QEMU stopped, copy a clean WUFS0002 image to a separate WUFS0003 image.
+
+```powershell
+wsl -d Ubuntu -- python3 tools/make_disk.py --upgrade-from build/wuwaos-cli.img --image build/wuwaos-cli-v3.img
+wsl -d Ubuntu -- make run-disk BOOT_DISK_IMAGE=build/wuwaos-cli-v3.img CLI_HARTS=3
+```
+
+To create a fresh WUFS0003 disk, use `tools/make_disk.py --wufs3 --image <new-image> --kernel build/kernel-disk.elf`. Run the UART regression from WSL with `python3 -B tools/test_kernel_cli.py`.
+
 ## Filesystem Initialization Checks
 
 The current source preserves legacy `WUFS0001` images read-only and formats confirmed blank media as `WUFS0002`. WUFS0002 uses a bounded full-sector redo journal with flush barriers and boot-time replay. Unknown nonblank images and images with a pending or invalid journal are never rewritten by the host image tool. These changes postdate portable v1; the existing release ZIP does not include WUFS0002 or the journal and is not rebuilt by this source update. Details, new-disk commands, recovery steps, and scratch QEMU fault-injection results are in [Spec 32](docs/SPEC-32-wufs-redo-journal.md); the older initialization guard is in [Spec 31](docs/SPEC-31-filesystem-initialization-guard.md).
@@ -223,7 +234,7 @@ This first loader accepts a restricted static ELF64 RV64 layout and the WUWAOS s
 
 ## Documentation
 
-The scheduler uses separate TCBs and supports multiple user threads per process through `thread_create`/`thread_join`/`thread_exit`/`gettid`. [Stage A](docs/thread-stage-a.md) records the initial PCB/TCB split; [Stage B/C](docs/thread-stage-b.md) records the multi-thread implementation and its compile-only evidence. Multi-thread runtime verification is still NOT_RUN. The [Thread specification](docs/SPEC-34-threads.md) defines the contract, and the [OS and hardware explainer](docs/topics/threads.md) distinguishes software threads, RISC-V harts, CPU cores, and SMT.
+The scheduler uses separate TCBs and supports multiple user threads per process through `thread_create`/`thread_join`/`thread_exit`/`gettid`. [Stage A](docs/thread-stage-a.md) records the initial PCB/TCB split; [Stage B/C](docs/thread-stage-b.md) records the original implementation. The current UART regression exercises multi-thread process lifecycle and scheduling on QEMU. The [Thread specification](docs/SPEC-34-threads.md) defines the contract, and the [OS and hardware explainer](docs/topics/threads.md) distinguishes software threads, RISC-V harts, CPU cores, and SMT.
 
 The documentation and course notes linked below are currently written in Traditional Chinese.
 

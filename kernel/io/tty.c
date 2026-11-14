@@ -1,6 +1,7 @@
 #include "kernel/io/tty.h"
 #include "drivers/uart/uart.h"
 #include "syscall_numbers.h"
+#include "arch/riscv/irq.h"
 
 #define TTY_ENDPOINT_LIMIT 16U
 #define INPUT_CAPACITY 1024U
@@ -25,6 +26,7 @@ typedef struct {
 
 static TtyEndpoint endpoints[TTY_ENDPOINT_LIMIT];
 static int initialized;
+static int uart_irq;
 
 static TtyId make_id(unsigned slot, uint32_t generation) {
     return ((uint64_t)generation << 32) | (uint64_t)(slot + 1U);
@@ -61,17 +63,35 @@ void tty_init(void) {
     (void)event_source_init(&uart->input_event, uart->generation);
 }
 
-void tty_poll(void) {
+static int uart_receive(int drain) {
     tty_init();
     TtyEndpoint *uart = &endpoints[TTY_UART_SLOT];
     size_t copied = 0;
-    while (uart->input_write - uart->input_read < INPUT_CAPACITY) {
+    for (unsigned i = 0; i < 64; ++i) {
+        const int full = uart->input_write - uart->input_read == INPUT_CAPACITY;
+        if (full && !drain) break;
         const int character = uart_getc_raw();
         if (character < 0) break;
-        uart->input[uart->input_write++ % INPUT_CAPACITY] = (unsigned char)character;
+        if (!full) uart->input[uart->input_write++ % INPUT_CAPACITY] = (unsigned char)character;
         ++copied;
     }
     if (copied) event_source_notify(&uart->input_event, 0);
+    return copied != 0;
+}
+
+static int uart_rx_irq(void *endpoint) {
+    (void)endpoint;
+    return uart_receive(1);
+}
+
+void tty_register_irq(void) {
+    uart_irq = irq_register_mmio(UART_MMIO_BASE, uart_rx_irq, &endpoints[TTY_UART_SLOT], "UART") == 0;
+    if (uart_irq) uart_enable_rx_irq();
+}
+
+void tty_poll(void) {
+    if (uart_irq && irq_enabled()) irq_dispatch();
+    else (void)uart_receive(0);
 }
 
 TtyId tty_uart_id(void) {

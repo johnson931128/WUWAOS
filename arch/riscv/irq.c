@@ -113,19 +113,20 @@ int irq_probe(const void *blob, unsigned long hart_id) {
 
     /* Bind routes by their interrupt-parent phandle, never by VirtIO slot order. */
     for (unsigned int i = 0; i < tree.count; ++i) {
-        if (!fdt_compatible(&tree, i, "virtio,mmio")) continue;
+        const int uart = fdt_compatible(&tree, i, "ns16550a");
+        if (!uart && !fdt_compatible(&tree, i, "virtio,mmio")) continue;
         uint32_t parent, length;
         if (interrupt_parent(&tree, i, &parent) < 0 || fdt_phandle(&tree, parent) != selected) continue;
         const uint8_t *interrupt = fdt_property(&tree, i, "interrupts", &length);
         uint64_t address, span;
         if (!interrupt || length != 4U || fdt_reg(&tree, i, &address, &span) < 0 ||
-            (address & (PAGE_BYTES - 1U)) || address >= (1UL << 38) || span < 0x100U) {
-            return unavailable("Unsupported VirtIO interrupt route");
+            (address & (PAGE_BYTES - 1U)) || address >= (1UL << 38) || span < (uart ? 8U : 0x100U)) {
+            return unavailable("Unsupported MMIO interrupt route");
         }
         const uint32_t source = fdt_be32(interrupt);
-        if (!source || source > source_count || route_count == IRQ_ROUTE_LIMIT) return unavailable("Invalid VirtIO IRQ ID");
+        if (!source || source > source_count || route_count == IRQ_ROUTE_LIMIT) return unavailable("Invalid MMIO IRQ ID");
         for (unsigned int j = 0; j < route_count; ++j) {
-            if (routes[j].base == address || routes[j].source == source) return unavailable("Shared/duplicate VirtIO route unsupported");
+            if (routes[j].base == address || routes[j].source == source) return unavailable("Shared/duplicate MMIO route unsupported");
         }
         routes[route_count++] = (IrqRoute){ (uintptr_t)address, source };
     }
@@ -154,6 +155,8 @@ int irq_register_mmio(uintptr_t base, IrqService service, void *device, const ch
     }
     return -1;
 }
+
+int irq_enabled(void) { return enabled; }
 
 void irq_start(void) {
     if (!available || enabled) return;
@@ -212,7 +215,7 @@ static void dispatch_sources(void) {
     }
     ++budget_exhausted;
     /*
-     * With only disk sources and non-preemptible dispatch, a full batch indicates a stuck or
+     * With bounded dispatch, a full batch can indicate a stuck or
      * flooding line. A per-entry limit alone would immediately retrap forever.
      * Keep the fallback polling path usable and expose the fault through ps.
      */

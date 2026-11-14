@@ -36,13 +36,13 @@ def connect(port):
 
 
 class Guest:
-    def __init__(self, qemu, folder, disk, swap, label, flash=False, gui=False):
+    def __init__(self, qemu, folder, disk, swap, label, flash=False, gui=False, harts=1):
         self.log = folder / (label + '.log')
         self.data = bytearray()
         serial_port, qmp_port = free_port(), free_port()
         while qmp_port == serial_port:
             qmp_port = free_port()
-        args = [qemu, '-machine', 'virt', '-smp', '1', '-m', '128M',
+        args = [qemu, '-machine', 'virt', '-smp', str(harts), '-m', '128M',
                 '-display', 'none', '-monitor', 'none', '-bios', 'default',
                 '-serial', f'tcp:127.0.0.1:{serial_port},server=on,wait=on',
                 '-qmp', f'tcp:127.0.0.1:{qmp_port},server=on,wait=off',

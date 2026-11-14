@@ -14,6 +14,7 @@ typedef void (*TtyOutputConsumer)(TtyId id, void *context,
 
 void tty_init(void);
 void tty_poll(void);
+void tty_register_irq(void);
 TtyId tty_uart_id(void);
 KernelEventSource *tty_input_event(TtyId id, uint32_t *generation);
 TtyId tty_session_create(TtyOutputConsumer consumer, void *context);

@@ -28,6 +28,8 @@ _Static_assert(offsetof(TrapFrame, scause) == TF_SCAUSE, "scause offset");
 _Static_assert(offsetof(TrapFrame, stval) == TF_STVAL, "stval offset");
 
 void trap_init(void);
+void trap_preemption_point(void);
+uint64_t trap_kernel_preemptions(void);
 TrapFrame *trap_handler(TrapFrame *frame);
 _Noreturn void user_enter(TrapFrame *frame);
 #endif

@@ -505,11 +505,14 @@ static int command(int count, char *words[4]) {
         filesystem_command(words[0], words[1], words[2]);
         return 1;
     }
-    if (count == 3 && equal(words[0], "cp")) {
+    if (count == 3) {
+        if (equal(words[0], "ln")) { result_line("ln=", fs_link(words[1], words[2])); return 1; }
+        if (!equal(words[0], "cp")) goto invalid_command;
         result_line("cp bytes=", fs_copy(words[1], words[2]));
         return 1;
     }
-    user_puts("Invalid command or argument. Type help.\n");
+invalid_command:
+    user_puts("Invalid command\n");
     return 1;
 }
 

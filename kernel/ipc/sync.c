@@ -64,7 +64,7 @@ static void wake_one(SyncObject *object) {
     thread_wake_sync(next);
 }
 
-/* Entered only in a non-preemptible, single-hart kernel. */
+/* Entered with interrupts masked and the shared kernel lock held. */
 static long acquire(SyncObject *object) {
     Thread *current = thread_current();
     for (;;) {

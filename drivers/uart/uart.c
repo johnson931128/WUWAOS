@@ -1,8 +1,13 @@
 #include "drivers/uart/uart.h"
 
-#define UART_BASE 0x10000000UL
+#define UART_BASE UART_MMIO_BASE
 #define UART_LINE_STATUS 5
 #define UART_TRANSMIT_READY (1U << 5)
+
+void uart_enable_rx_irq(void) {
+    volatile unsigned char *uart = (volatile unsigned char *)UART_BASE;
+    uart[1] = 1U;
+}
 
 void uart_putc_raw(char character) {
     volatile unsigned char *uart = (volatile unsigned char *)UART_BASE;

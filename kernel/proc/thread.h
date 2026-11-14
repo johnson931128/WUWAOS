@@ -21,6 +21,7 @@ typedef struct ThreadControlBlock {
     ThreadState state;
     struct ThreadControlBlock *ready_next;
     int ready_queued;
+    unsigned last_hart;
     uint64_t dispatches, preemptions, cpu_ticks, run_started;
     struct ThreadControlBlock *sync_next;
     long sync_wait_handle;

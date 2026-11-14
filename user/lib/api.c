@@ -65,6 +65,12 @@ long read(long fd, char *buffer, unsigned long length) {
 }
 
 long open(const char *path, long flags) { return syscall3(SYS_OPEN, (long)path, flags, 0); }
+long mknod(const char *path, unsigned device) {
+    return syscall3(SYS_MKNOD, (long)path, device, 0);
+}
+long fs_link(const char *source, const char *destination) {
+    return syscall3(SYS_FS_LINK, (long)source, (long)destination, 0);
+}
 long fstat(long fd, WuwaFileInfo *info) { return syscall3(SYS_FSTAT, fd, (long)info, 0); }
 long close(long fd) { return syscall3(SYS_CLOSE, fd, 0, 0); }
 long dup2(long oldfd, long newfd) { return syscall3(SYS_DUP2, oldfd, newfd, 0); }

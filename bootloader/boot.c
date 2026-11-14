@@ -10,7 +10,7 @@
 #define LOAD_BUFFER ((uint8_t *)(uintptr_t)0x81010000UL)
 #define LOAD_BUFFER_SIZE (640U * 1024U)
 #define KERNEL_LOW 0x80200000UL
-#define KERNEL_HIGH 0x80400000UL
+#define KERNEL_HIGH 0x80500000UL
 #define VIRTIO_MAGIC 0x000U
 #define VIRTIO_VERSION 0x004U
 #define VIRTIO_DEVICE_ID 0x008U
@@ -370,7 +370,7 @@ void boot_main(uintptr_t hartid, uintptr_t fdt) {
     print("boot: superblock read failed\n");
     return;
   }
-  if (!bytes_eq(sector_buffer, "WUFS0002", 8)) {
+  if (!bytes_eq(sector_buffer, "WUFS0002", 8) && !bytes_eq(sector_buffer, "WUFS0003", 8)) {
     print("boot: unsupported WUFS disk\n");
     return;
   }

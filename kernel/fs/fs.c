@@ -6,11 +6,13 @@
 #include "kernel/io/io.h"
 #include "kernel/io/diagnostic.h"
 #include "kernel/mm/page.h"
+#include "arch/riscv/clock.h"
 #include "syscall_numbers.h"
 #include <stdint.h>
 
 #define FS_MAGIC "WUFS0001"
 #define FS_MAGIC_V2 "WUFS0002"
+#define FS_MAGIC_V3 "WUFS0003"
 #define FS_SECTOR_SIZE 512U
 #define FS_INODE_COUNT 128U
 #define FS_INODE_SIZE 80U
@@ -46,7 +48,7 @@ typedef struct {
     uint32_t size;
     uint32_t direct[FS_DIRECT];
     uint32_t indirect[FS_INDIRECT];
-    uint32_t reserved[2];
+    uint32_t links, device;
 } Inode;
 
 typedef struct {
@@ -60,6 +62,28 @@ _Static_assert(sizeof(DirectoryEntry) == FS_NAME_SIZE + sizeof(uint32_t), "WUFS 
 static Superblock superblock;
 static int mounted;
 static int read_only;
+static int inode_links_enabled;
+#define FS_CACHE_SLOTS 64U
+static struct {
+    uint32_t sector;
+    unsigned valid;
+    uint8_t data[FS_SECTOR_SIZE];
+} sector_cache[FS_CACHE_SLOTS];
+static unsigned long cache_hits, cache_misses, write_batches, batched_writes;
+#define FS_BATCH_LIMIT 8U
+typedef struct BatchWrite {
+    struct BatchWrite *next;
+    uint32_t inode;
+    size_t offset, length;
+    const void *buffer;
+    long result;
+    int done;
+} BatchWrite;
+static BatchWrite *batch_head, *batch_tail;
+static unsigned batch_count;
+static uint64_t batch_deadline;
+static KernelEventSource batch_event;
+static unsigned char orphan_candidates[FS_INODE_COUNT];
 static int offline;
 static uint32_t transaction_depth;
 static uint32_t transaction_count;
@@ -79,7 +103,17 @@ static long fs_scope_finish(long result) {
 }
 
 static int raw_read_sector(uint32_t sector, void *buffer) { return block_read(sector, buffer); }
-static int raw_write_sector(uint32_t sector, const void *buffer) { return block_write(sector, buffer); }
+static int raw_write_sector(uint32_t sector, const void *buffer) {
+    sector_cache[sector % FS_CACHE_SLOTS].valid = 0;
+    return block_write(sector, buffer);
+}
+
+void fs_print_cache_stats(void) {
+    console_puts("WUFS cache hits="); console_number(cache_hits);
+    console_puts(" misses="); console_number(cache_misses);
+    console_puts(" write_batches="); console_number(write_batches);
+    console_puts(" batched_writes="); console_number(batched_writes); console_putc('\n');
+}
 
 static int read_sector(uint32_t sector, void *buffer);
 static int write_sector(uint32_t sector, const void *buffer);
@@ -220,8 +254,19 @@ static int read_sector(uint32_t sector, void *buffer) {
             return 0;
         }
     }
+    const unsigned index = sector % FS_CACHE_SLOTS;
+    if (sector_cache[index].valid && sector_cache[index].sector == sector) {
+        ++cache_hits;
+        for (size_t i = 0; i < FS_SECTOR_SIZE; ++i) ((uint8_t *)buffer)[i] = sector_cache[index].data[i];
+        return 0;
+    }
+    ++cache_misses;
     const int result = raw_read_sector(sector, buffer);
-    if (result < 0 && transaction_depth && !transaction_error) transaction_error = -5;
+    if (result == 0) {
+        sector_cache[index].sector = sector;
+        sector_cache[index].valid = 1;
+        for (size_t i = 0; i < FS_SECTOR_SIZE; ++i) sector_cache[index].data[i] = ((uint8_t *)buffer)[i];
+    } else if (transaction_depth && !transaction_error) transaction_error = -5;
     return result;
 }
 
@@ -345,7 +390,7 @@ static long inode_allocate(uint32_t type) {
         const int used = bitmap_get(superblock.inode_bitmap_sector, i);
         if (used < 0) return -5;
         if (used == 0) {
-            Inode inode = { .type = type };
+            Inode inode = { .type = type, .links = inode_links_enabled ? 1U : 0U };
             if (bitmap_set(superblock.inode_bitmap_sector, i, 1) < 0 || inode_write(i, &inode) < 0) return -5;
             return (long)i;
         }
@@ -459,7 +504,7 @@ static int dir_find(const Inode *directory, const char *name, uint32_t *inode_nu
     const uint32_t count = directory->size / (uint32_t)sizeof(DirectoryEntry);
     for (uint32_t i = 0; i < count; ++i) {
         DirectoryEntry entry;
-        if (dir_entry_read(directory, i, &entry) < 0) return -1;
+        if (dir_entry_read(directory, i, &entry) < 0) return ERR_IO;
         uint32_t at = 0;
         while (at < FS_NAME_SIZE && entry.name[at] == name[at] && name[at] != 0) ++at;
         if (at < FS_NAME_SIZE && entry.name[at] == 0 && name[at] == 0) {
@@ -467,7 +512,7 @@ static int dir_find(const Inode *directory, const char *name, uint32_t *inode_nu
             return 0;
         }
     }
-    return -1;
+    return -2;
 }
 
 static int path_lookup(const char *path, uint32_t *number) {
@@ -486,7 +531,8 @@ static int path_lookup(const char *path, uint32_t *number) {
         while (*cursor == '/') ++cursor;
         Inode directory;
         if (inode_read(current, &directory) < 0 || directory.type != FS_TYPE_DIRECTORY) return -20;
-        if (dir_find(&directory, name, &current) < 0) return -2;
+        const int result = dir_find(&directory, name, &current);
+        if (result < 0) return result;
     }
     *number = current;
     return 0;
@@ -547,7 +593,8 @@ static long create_node(const char *path, uint32_t type) {
     Inode parent;
     if (inode_read(parent_number, &parent) < 0 || parent.type != FS_TYPE_DIRECTORY) return -20;
     uint32_t existing;
-    if (dir_find(&parent, name, &existing) == 0) return -17;
+    const int lookup = dir_find(&parent, name, &existing);
+    if (lookup != -2) return lookup == 0 ? -17 : lookup;
     const long node_number = inode_allocate(type);
     if (node_number < 0) return node_number;
     if (type == FS_TYPE_DIRECTORY) {
@@ -653,15 +700,21 @@ static int filesystem_validate(void) {
         if (allocated < 0) return -1;
         Inode inode;
         if (inode_read(number, &inode) < 0) return -1;
-        if (inode.reserved[0] || inode.reserved[1]) return -1;
+        if ((!inode_links_enabled && inode.links) ||
+            (inode.type == WUWA_FILE_DEVICE ? inode.device != WUWA_DEVICE_CONSOLE : inode.device != 0)) return -1;
         if (!allocated) {
-            if (inode.type || inode.size) return -1;
+            if (inode.type || inode.size || inode.links) return -1;
             for (uint32_t i = 0; i < FS_DIRECT; ++i) if (inode.direct[i]) return -1;
             for (uint32_t i = 0; i < FS_INDIRECT; ++i) if (inode.indirect[i]) return -1;
             continue;
         }
+        if (inode.type == WUWA_FILE_DEVICE) {
+            for (uint32_t i = 0; i < FS_DIRECT; ++i) if (inode.direct[i]) return -1;
+            for (uint32_t i = 0; i < FS_INDIRECT; ++i) if (inode.indirect[i]) return -1;
+        }
         if ((number == superblock.root_inode && inode.type != FS_TYPE_DIRECTORY) ||
-            (inode.type != FS_TYPE_DIRECTORY && inode.type != FS_TYPE_FILE) || inode.size > max_file ||
+            (inode.type != FS_TYPE_DIRECTORY && inode.type != FS_TYPE_FILE &&
+             !(inode_links_enabled && inode.type == WUWA_FILE_DEVICE && !inode.size)) || inode.size > max_file ||
             (inode.type == FS_TYPE_DIRECTORY && inode.size % sizeof(DirectoryEntry))) return -1;
         for (uint32_t i = 0; i < FS_DIRECT; ++i)
             if (inode.direct[i] && claim_block(inode.direct[i], seen) < 0) return -1;
@@ -691,7 +744,8 @@ static int filesystem_validate(void) {
                 for (size_t j = 0; j < length; ++j) if (entry.name[j] == '/') return -1;
                 Inode child;
                 if (inode_read(entry.inode, &child) < 0 ||
-                    (child.type != FS_TYPE_DIRECTORY && child.type != FS_TYPE_FILE)) return -1;
+                    (child.type != FS_TYPE_DIRECTORY && child.type != FS_TYPE_FILE &&
+                     !(inode_links_enabled && child.type == WUWA_FILE_DEVICE))) return -1;
                 if (i == 0 && (!bytes_equal(entry.name, ".", 2) || entry.name[1] != 0 || entry.inode != number)) return -1;
                 if (i == 1 && (!bytes_equal(entry.name, "..", 3) || entry.name[2] != 0)) return -1;
             }
@@ -708,7 +762,7 @@ static int filesystem_validate(void) {
     }
     /* Every directory must be reachable exactly once from root, with a correct '..'. */
     uint32_t queue[FS_INODE_COUNT];
-    uint8_t reached[FS_INODE_COUNT] = {0};
+    uint32_t reached[FS_INODE_COUNT] = {0};
     uint32_t head = 0, tail = 1;
     queue[0] = superblock.root_inode;
     reached[superblock.root_inode] = 1;
@@ -721,7 +775,7 @@ static int filesystem_validate(void) {
             DirectoryEntry entry;
             Inode child;
             if (dir_entry_read(&parent, i, &entry) < 0 || inode_read(entry.inode, &child) < 0) return -1;
-            if (reached[entry.inode]) return -1;
+            if (reached[entry.inode] && (!inode_links_enabled || child.type == FS_TYPE_DIRECTORY)) return -1;
             for (uint32_t j = 2; j < i; ++j) {
                 DirectoryEntry previous;
                 if (dir_entry_read(&parent, j, &previous) < 0) return -1;
@@ -729,7 +783,7 @@ static int filesystem_validate(void) {
                 while (k < FS_NAME_SIZE && previous.name[k] == entry.name[k] && entry.name[k]) ++k;
                 if (k < FS_NAME_SIZE && previous.name[k] == 0 && entry.name[k] == 0) return -1;
             }
-            reached[entry.inode] = 1;
+            ++reached[entry.inode];
             if (child.type != FS_TYPE_DIRECTORY) continue;
             if (tail >= FS_INODE_COUNT) return -1;
             DirectoryEntry dotdot;
@@ -740,7 +794,10 @@ static int filesystem_validate(void) {
     for (uint32_t number = 0; number < superblock.inode_count; ++number) {
         Inode inode;
         if (inode_read(number, &inode) < 0) return -1;
-        if (inode.type && !reached[number]) return -1;
+        if (inode_links_enabled && inode.type != FS_TYPE_DIRECTORY && inode.type != 0) {
+            if (inode.links != reached[number]) return -1;
+            if (!inode.links) orphan_candidates[number] = 1;
+        } else if (inode.type && (!reached[number] || (inode_links_enabled && inode.links != 1))) return -1;
     }
     return bitmap_get(superblock.inode_bitmap_sector, superblock.root_inode) == 1 ? 0 : -1;
 }
@@ -762,7 +819,8 @@ int fs_init(void) {
         return -1;
     }
     int v1 = bytes_equal(sector, FS_MAGIC, 8);
-    int v2 = bytes_equal(sector, FS_MAGIC_V2, 8);
+    inode_links_enabled = bytes_equal(sector, FS_MAGIC_V3, 8);
+    int v2 = inode_links_enabled || bytes_equal(sector, FS_MAGIC_V2, 8);
     if (!v1 && !v2) {
         /*
          * Missing magic can mean an unsupported format or damaged WUFS, not
@@ -831,7 +889,7 @@ int fs_init(void) {
                 for (size_t i = 0; i < FS_SECTOR_SIZE; ++i)
                     if (journal_header[i]) { offline = 1; console_puts("[fs] Pending journal requires FLUSH support; refusing mount\n"); return -1; }
                 read_only = 1;
-                console_puts("[fs] Device lacks FLUSH; WUFS0002 mounted read-only\n");
+                console_puts("[fs] Device lacks FLUSH; WUFS mounted read-only\n");
             } else {
                 const int recovered = journal_recover(superblock.sector_count);
                 if (recovered < 0) { offline = 1; console_puts("[fs] Invalid or unrecoverable journal; volume unavailable, journal retained when possible\n"); return -1; }
@@ -948,6 +1006,93 @@ static int inode_release(uint32_t number, Inode *inode) {
     return 0;
 }
 
+static long drop_name(uint32_t number, Inode *inode) {
+    if (!inode_links_enabled || inode->type == FS_TYPE_DIRECTORY) return inode_release(number, inode);
+    if (!inode->links) return ERR_IO;
+    if (--inode->links || io_inode_is_open(number)) return inode_write(number, inode);
+    return inode_release(number, inode);
+}
+
+void fs_note_inode_closed(uint32_t number) {
+    if (inode_links_enabled && number < FS_INODE_COUNT) orphan_candidates[number] = 1;
+}
+
+void fs_reap_orphans(void) {
+    if (!mounted || read_only || !inode_links_enabled ||
+        kernel_gate_try_enter(&filesystem_gate) < 0) return;
+    int batch = 0;
+    long result = 0;
+    for (uint32_t number = 0; number < superblock.inode_count; ++number) {
+        if (!orphan_candidates[number] || io_inode_is_open(number)) continue;
+        Inode inode;
+        if (inode_read(number, &inode) < 0) break;
+        if ((inode.type == FS_TYPE_FILE || inode.type == WUWA_FILE_DEVICE) && !inode.links) {
+            if (!batch && transaction_begin() < 0) break;
+            ++batch;
+            result = inode_release(number, &inode);
+            if (result < 0) break;
+            continue;
+        }
+        orphan_candidates[number] = 0;
+    }
+    if (batch) (void)transaction_end(result);
+    (void)fs_scope_leave();
+}
+
+static long fs_link_impl(const char *source, const char *destination) {
+    if (!inode_links_enabled) return ERR_NO_SYSCALL;
+    uint32_t number, parent;
+    int error = path_lookup(source, &number);
+    if (error < 0) return error;
+    Inode inode;
+    if (inode_read(number, &inode) < 0) return ERR_IO;
+    if (inode.type != FS_TYPE_FILE || !inode.links || inode.links == UINT32_MAX) return ERR_INVALID;
+    char name[FS_NAME_SIZE];
+    error = parent_lookup(destination, &parent, name);
+    if (error < 0) return error;
+    if (special_name(name)) return ERR_INVALID;
+    Inode directory;
+    if (inode_read(parent, &directory) < 0) return ERR_IO;
+    if (directory.type != FS_TYPE_DIRECTORY) return -20;
+    uint32_t existing;
+    error = dir_find(&directory, name, &existing);
+    if (error != -2) return error == 0 ? -17 : error;
+    error = directory_add(parent, name, number);
+    if (error < 0) return error;
+    ++inode.links;
+    return inode_write(number, &inode);
+}
+
+long fs_link(const char *source, const char *destination) {
+    int error = fs_scope_enter();
+    if (error < 0) return error;
+    error = transaction_begin();
+    if (error < 0) return fs_scope_finish(error);
+    long result = fs_link_impl(source, destination);
+    error = transaction_end(result);
+    return fs_scope_finish(error < 0 ? error : result);
+}
+
+long fs_mknod(const char *path, unsigned device) {
+    if (device != WUWA_DEVICE_CONSOLE) return ERR_INVALID;
+    int error = fs_scope_enter();
+    if (error < 0) return error;
+    if (!inode_links_enabled) return fs_scope_finish(ERR_NO_SYSCALL);
+    error = transaction_begin();
+    if (error < 0) return fs_scope_finish(error);
+    long result = create_node(path, WUWA_FILE_DEVICE);
+    if (result >= 0) {
+        Inode inode;
+        if (inode_read((uint32_t)result, &inode) < 0) result = ERR_IO;
+        else {
+            inode.device = device;
+            result = inode_write((uint32_t)result, &inode);
+        }
+    }
+    error = transaction_end(result);
+    return fs_scope_finish(error < 0 ? error : result);
+}
+
 static long fs_remove_impl(const char *path) {
     if (!mounted) return -22;
     uint32_t parent_number, index;
@@ -961,8 +1106,8 @@ static long fs_remove_impl(const char *path) {
     error = directory_find_entry(&parent, name, &index, &entry);
     if (error < 0) return error;
     if (inode_read(entry.inode, &inode) < 0) return -5;
-    if (inode.type != FS_TYPE_FILE) return -21;
-    if (io_inode_is_open(entry.inode)) return -16;
+    if (inode.type != FS_TYPE_FILE && inode.type != WUWA_FILE_DEVICE) return -21;
+    if (!inode_links_enabled && io_inode_is_open(entry.inode)) return -16;
 
     const uint32_t count = parent.size / (uint32_t)sizeof(DirectoryEntry);
     const uint32_t new_size = parent.size - (uint32_t)sizeof(DirectoryEntry);
@@ -973,11 +1118,11 @@ static long fs_remove_impl(const char *path) {
     }
     parent.size = new_size;
     if (inode_write(parent_number, &parent) < 0) return -5;
-    return inode_release(entry.inode, &inode);
+    return drop_name(entry.inode, &inode);
 }
 
-/* Validate the whole tree before deleting: no root, cycles or live CWDs.
-   A bounded breadth-first list reversed for deletion gives child-before-parent. */
+/* Validate directory ownership and CWDs before modifying the tree. Files may
+   occur under several names, so only directories occupy traversal slots. */
 static long fs_remove_tree_impl(const char *path) {
     if (!mounted) return -22;
     uint32_t parent_number, index;
@@ -1003,7 +1148,6 @@ static long fs_remove_tree_impl(const char *path) {
     for (uint32_t i = 0; i < count; ++i) {
         if (inode_read(nodes[i], &inode) < 0) return -5;
         if (io_inode_is_open(nodes[i])) return -16;
-        if (inode.type == FS_TYPE_FILE) continue;
         if (inode.type != FS_TYPE_DIRECTORY || inode.size % sizeof(DirectoryEntry)) return -5;
         for (int slot = 0; slot < PROCESS_LIMIT; ++slot) {
             const Process *p = process_slot(slot);
@@ -1017,6 +1161,12 @@ static long fs_remove_tree_impl(const char *path) {
         for (uint32_t j = 0; j < entries; ++j) {
             if (dir_entry_read(&inode, j, &entry) < 0) return -5;
             if (special_name(entry.name)) continue;
+            Inode child;
+            if (inode_read(entry.inode, &child) < 0) return -5;
+            if (child.type != FS_TYPE_DIRECTORY) {
+                if (!inode_links_enabled && io_inode_is_open(entry.inode)) return ERR_BUSY;
+                continue;
+            }
             if (entry.inode >= FS_INODE_COUNT || seen[entry.inode] || count == FS_INODE_COUNT) return -5;
             seen[entry.inode] = 1;
             nodes[count] = entry.inode; parents[count++] = nodes[i];
@@ -1025,6 +1175,12 @@ static long fs_remove_tree_impl(const char *path) {
     while (count > 0) {
         --count;
         if (inode_read(parents[count], &parent) < 0 || inode_read(nodes[count], &inode) < 0) return -5;
+        uint32_t remaining = inode.size / (uint32_t)sizeof(DirectoryEntry);
+        for (uint32_t j = 2; j < remaining; ++j) {
+            Inode child;
+            if (dir_entry_read(&inode, j, &entry) < 0 || inode_read(entry.inode, &child) < 0 ||
+                child.type == FS_TYPE_DIRECTORY || drop_name(entry.inode, &child) < 0) return -5;
+        }
         uint32_t entries = parent.size / (uint32_t)sizeof(DirectoryEntry);
         uint32_t found = entries;
         for (uint32_t j = 0; j < entries; ++j) {
@@ -1070,7 +1226,7 @@ static long fs_copy_impl(const char *source, const char *destination) {
 
     const long allocated = inode_allocate(FS_TYPE_FILE);
     if (allocated < 0) return allocated;
-    Inode copy = { .type = FS_TYPE_FILE };
+    Inode copy = { .type = FS_TYPE_FILE, .links = inode_links_enabled ? 1U : 0U };
     for (uint32_t position = 0; position < original.size; position += FS_SECTOR_SIZE) {
         uint32_t from, to;
         uint8_t data[FS_SECTOR_SIZE];
@@ -1088,7 +1244,7 @@ static long fs_copy_impl(const char *source, const char *destination) {
         const uint32_t old_number = entry.inode;
         entry.inode = (uint32_t)allocated;
         if (dir_entry_write(&parent, index, &entry) < 0) return -5;
-        if (inode_release(old_number, &old) < 0) return -5;
+        if (drop_name(old_number, &old) < 0) return -5;
     } else {
         error = directory_add(parent_number, name, (uint32_t)allocated);
         if (error < 0) return error;
@@ -1126,7 +1282,7 @@ static long fs_replace_impl(const char *path, const void *buffer, size_t length)
 
     const long allocated = inode_allocate(FS_TYPE_FILE);
     if (allocated < 0) return allocated;
-    Inode fresh = { .type = FS_TYPE_FILE };
+    Inode fresh = { .type = FS_TYPE_FILE, .links = inode_links_enabled ? 1U : 0U };
     const uint8_t *source = buffer;
     for (size_t position = 0; position < length;) {
         uint32_t sector;
@@ -1164,7 +1320,7 @@ static long fs_replace_impl(const char *path, const void *buffer, size_t length)
             error = transaction_error ? transaction_error : ERR_IO;
             goto replace_abort;
         }
-        if (inode_release(old_number, &old) < 0) {
+        if (drop_name(old_number, &old) < 0) {
             error = transaction_error ? transaction_error : ERR_IO;
             goto replace_abort;
         }
@@ -1256,7 +1412,7 @@ static long fs_open_inode_impl(const char *path, int create, uint32_t *number, u
     if (found < 0) return found;
     Inode inode;
     if (inode_read(inode_number, &inode) < 0) return -5;
-    if (inode.type != FS_TYPE_FILE && inode.type != FS_TYPE_DIRECTORY) return -21;
+    if (inode.type != FS_TYPE_FILE && inode.type != FS_TYPE_DIRECTORY && inode.type != WUWA_FILE_DEVICE) return -21;
     *number = inode_number;
     *type = inode.type;
     return 0;
@@ -1397,6 +1553,57 @@ long fs_replace(const char *path, const void *buffer, size_t length) {
     return fs_scope_finish(error < 0 ? error : result);
 }
 
+void fs_commit_queued_writes(void) {
+    /* Only the scheduler submits a batch. The FS gate excludes direct writers. */
+    if (!batch_head || (batch_count < FS_BATCH_LIMIT &&
+        (int64_t)(clock_ticks() - batch_deadline) < 0)) return;
+    if (kernel_gate_try_enter(&filesystem_gate) < 0) return;
+    long commit = transaction_begin();
+    if (commit == 0) {
+        for (BatchWrite *entry = batch_head; entry; entry = entry->next) {
+            commit = fs_write_inode_impl(entry->inode, entry->offset, entry->buffer, entry->length);
+            entry->result = commit;
+            if (commit < 0) break;
+        }
+        commit = transaction_end(commit);
+    }
+    (void)fs_scope_leave();
+    if (commit == 0 && batch_count > 1) {
+        ++write_batches;
+        batched_writes += batch_count;
+    }
+    for (BatchWrite *entry = batch_head; entry; entry = entry->next) {
+        if (commit < 0) entry->result = commit;
+        entry->done = 1;
+    }
+    batch_head = batch_tail = 0;
+    batch_count = 0;
+    event_source_notify(&batch_event, 0);
+}
+
+long fs_queue_inode_write(uint32_t number, size_t offset, const void *buffer, size_t length) {
+    if (!thread_wait_allowed() || batch_count == FS_BATCH_LIMIT) return fs_write_inode(number, offset, buffer, length);
+    if (!batch_event.active && event_source_init(&batch_event, 1) < 0) return ERR_IO;
+    int error = thread_cancel_defer_enter();
+    if (error < 0) return error;
+    BatchWrite entry = { .inode = number, .offset = offset, .length = length, .buffer = buffer };
+    if (batch_tail) batch_tail->next = &entry;
+    else {
+        batch_head = &entry;
+        batch_deadline = clock_ticks() + clock_ms_ticks(2);
+    }
+    batch_tail = &entry;
+    ++batch_count;
+    while (!entry.done) {
+        uint32_t generation;
+        uint64_t sequence;
+        (void)event_source_snapshot(&batch_event, &generation, &sequence);
+        (void)thread_wait_event(&batch_event, generation, sequence, 0, ERR_TIMED_OUT);
+    }
+    (void)thread_cancel_defer_leave();
+    return entry.result;
+}
+
 long fs_write_inode(uint32_t number, size_t offset, const void *buffer, size_t length) {
     int error = fs_scope_enter();
     if (error < 0) return error;
@@ -1445,7 +1652,7 @@ long fs_open_inode(const char *path, int create, uint32_t *number, uint32_t *typ
 static long inode_info(uint32_t number, WuwaFileInfo *info) {
     Inode inode;
     if (inode_read(number, &inode) < 0) return ERR_IO;
-    *info = (WuwaFileInfo){ .size = inode.size, .inode = number, .type = inode.type, .links = 1 };
+    *info = (WuwaFileInfo){ .size = inode.size, .inode = number, .type = inode.type, .links = inode_links_enabled ? inode.links : 1, .device = inode.device };
     return 0;
 }
 

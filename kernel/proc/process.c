@@ -16,6 +16,7 @@
 #include "kernel/exec/elf.h"
 #include "drivers/virtio/block.h"
 #include "arch/riscv/irq.h"
+#include "arch/riscv/hart.h"
 #include <limits.h>
 
 static Process processes[PROCESS_LIMIT];
@@ -109,8 +110,8 @@ static uint64_t thread_event_deadline(uint64_t fallback) {
 }
 static long next_pid = 1;
 static int trace_enabled = 1;
-static unsigned char scheduler_stack[KERNEL_STACK_REGION_SIZE] __attribute__((aligned(PAGE_SIZE)));
-static KernelContext scheduler_context, boot_context;
+static unsigned char scheduler_stacks[HART_LIMIT][KERNEL_STACK_REGION_SIZE] __attribute__((aligned(PAGE_SIZE)));
+static KernelContext scheduler_contexts[HART_LIMIT], boot_contexts[HART_LIMIT];
 static void thread_cancel_wait(Thread *thread);
 static void request_group_exit(Process *process, long status, Thread *exiting);
 
@@ -130,7 +131,7 @@ static void suspend_current(void) {
     }
     timer_stop();
     workstate_pause(thread);
-    context_switch(&thread->context, &scheduler_context);
+    context_switch(&thread->context, &scheduler_contexts[hart_id()]);
     /* A later dispatch restores this very C call stack and its local variables. */
 }
 
@@ -400,12 +401,15 @@ int thread_kernel_stack_bounds(uintptr_t address, uintptr_t *bottom, uintptr_t *
         *scheduler = 0;
         return 1;
     }
-    const uintptr_t guard = (uintptr_t)scheduler_stack;
-    if ((address & ~(PAGE_SIZE - 1)) != guard) return 0;
-    *bottom = guard + PAGE_SIZE;
-    *top = *bottom + PROCESS_KERNEL_STACK_SIZE;
-    *scheduler = 1;
-    return 1;
+    for (unsigned i = 0; i < HART_LIMIT; ++i) {
+        const uintptr_t guard = (uintptr_t)scheduler_stacks[i];
+        if ((address & ~(PAGE_SIZE - 1)) != guard) continue;
+        *bottom = guard + PAGE_SIZE;
+        *top = *bottom + PROCESS_KERNEL_STACK_SIZE;
+        *scheduler = 1;
+        return 1;
+    }
+    return 0;
 }
 
 Process *process_slot(int slot) {
@@ -526,9 +530,11 @@ static long create_process(long program, long parent_pid, int publish) {
 }
 
 void process_init(void) {
-    if (vm_unmap_kernel_guard((uintptr_t)scheduler_stack) < 0) {
-        console_puts("[process] Cannot install scheduler stack guard\n");
-        kernel_idle();
+    for (unsigned i = 0; i < HART_LIMIT; ++i) {
+        if (vm_unmap_kernel_guard((uintptr_t)scheduler_stacks[i]) < 0) {
+            console_puts("[process] Cannot install scheduler stack guard\n");
+            kernel_idle();
+        }
     }
     thread_init();
     scheduler_init();
@@ -685,6 +691,7 @@ static long exec_stack(uintptr_t old_root, uintptr_t root, size_t argc, uintptr_
             if (error < 0) return error;
             strings[used++] = (char)byte;
         } while (byte);
+        trap_preemption_point();
     }
     const uintptr_t base = USER_STACK_TOP - used;
     for (size_t i = 0; i < argc; ++i) target[i] += base;
@@ -1265,6 +1272,7 @@ long process_inspect(long pid) {
     console_puts(process->cwd);
     console_puts("\ndispatches=");
     console_number((long)process->thread->dispatches);
+    console_puts(" hart="); console_number(process->thread->last_hart);
     console_puts(" preemptions=");
     console_number((long)process->thread->preemptions);
     console_puts("\npage_table=");
@@ -1348,6 +1356,8 @@ static _Noreturn void scheduler_loop(void) {
         vm_use_kernel();
         thread_set_current(0); /* Scheduler must not impersonate the last TCB. */
         finalize_dying_processes();
+        fs_commit_queued_writes();
+        fs_reap_orphans();
         thread_event_poll_timeouts();
         process_poll_sources();
         thread_event_poll_timeouts();
@@ -1360,10 +1370,20 @@ static _Noreturn void scheduler_loop(void) {
             thread_set_current(next);
             thread_transition(next, THREAD_RUNNING, "schedule");
             ++next->dispatches;
+            next->last_hart = hart_id();
+            *(uintptr_t *)next->kernel_stack_top = hart_id();
             vm_enable(next->process->page_table);
             timer_start_slice(SCHEDULER_QUANTUM_MS);
             workstate_dispatch(next);
-            context_switch(&scheduler_context, &next->context);
+            context_switch(&scheduler_contexts[hart_id()], &next->context);
+            continue;
+        }
+        if (hart_online_mask() & (hart_online_mask() - 1)) {
+            timer_start_deadline(thread_event_deadline(clock_ticks() + clock_ms_ticks(2)));
+            kernel_lock_release();
+            __asm__ volatile("wfi" : : : "memory");
+            kernel_lock_acquire();
+            timer_stop();
             continue;
         }
         if (thread_event_waiting() || process_ui_event_active() || block_poll_pending()) {
@@ -1397,9 +1417,10 @@ static _Noreturn void scheduler_loop(void) {
 
 _Noreturn void process_start(void) {
     runtime_started = 1;
-    scheduler_context.ra = (uintptr_t)scheduler_loop;
-    scheduler_context.sp = (uintptr_t)(scheduler_stack + PAGE_SIZE + PROCESS_KERNEL_STACK_SIZE);
-    console_puts("[context] RV64 swtch ready; dedicated scheduler stack\n");
-    context_switch(&boot_context, &scheduler_context);
+    KernelContext *context = &scheduler_contexts[hart_id()];
+    context->ra = (uintptr_t)scheduler_loop;
+    context->sp = (uintptr_t)(scheduler_stacks[hart_id()] + KERNEL_STACK_REGION_SIZE);
+    console_puts("[context] scheduler hart="); console_number(hart_id()); console_putc('\n');
+    context_switch(&boot_contexts[hart_id()], &scheduler_contexts[hart_id()]);
     kernel_idle();
 }

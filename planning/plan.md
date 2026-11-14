@@ -58,6 +58,15 @@
 - **工作**：先盤點何處可中斷、何處可排程，以及鎖、IRQ、trap frame 和核心堆疊的限制。此項與 SMP 各有獨立驗收，兩者共享鎖及中斷語意，須先界定這些語意再實作。
 - **驗收**：可搶占範圍內的長時間 syscall 可讓另一條 thread 繼續前進，原 syscall 恢復後結果正確。持鎖或不可搶占區段的時間片到期可安全延後，並回歸既有阻塞及使用者態時間片。
 
+### CLI 驗收結果（2026-11-15）
+
+- **WUFS0003**：inode 加入連結數與裝置編號。`ln`／`rm` 經 journal 更新名稱及引用。最後一份開啟引用釋放後由 scheduler 回收。主機工具另存 WUFS0002 到 WUFS0003，來源 SHA-256 一致。Flash CLI 驗證既有資料、雙名稱、開啟後 unlink、最後 close 後 inode 可重用，以及重啟後讀回資料。
+- **Cache 與 journal**：64-sector cache 跨操作重用已讀資料。非 append FD 寫入以最多 8 筆、2 ms 收集視窗合併提交，完成 flush 才喚醒寫入者。Append 與大型路徑式操作仍使用自己的交易。CLI 驗證 cache 命中、兩筆並行寫入合併成一次、重啟持久性和已提交 redo journal 重播。
+- **裝置檔與 UART**：`mknod` 可建立 WUFS0003 console 裝置節點。FDT 的 ns16550a 路由透過 PLIC 提供 UART RX 中斷，沿用 TTY 等待事件。早期啟動與 TX 保留輪詢。Flash CLI 通過裝置節點查詢、寫入和重啟驗證，`ps` 可觀察 UART 中斷及 VirtIO I/O。
+- **SMP 與核心態搶占**：OpenSBI HSM 啟動其他 hart，各 hart 有獨立的 current、scheduler context、stack 和 timer。共享核心鎖保護核心資料，SBI RFENCE 失效遠端 TLB，置換避開仍在其他 hart 執行的位址空間。QEMU 的 2／3 hart 直接與 Flash CLI 都通過共享位址空間並行測試。連續 syscall 觀察到核心態搶占，呼叫正常繼續。直接開機通過既有 pipe、等待取消、join 與 swap 回歸。
+- **驗證邊界**：實際斷電時點、journal 額滿、裝置故障注入、FD 繼承下 unlink 專項、UART 滿載、長時間 SMP 壓測及 GUI 為 `NOT_RUN`。
+- **重現**：`wsl -d Ubuntu -- python3 -B tools/test_kernel_cli.py`。既有單 hart 回歸入口為 `tools/test_thread_stage_a.py`。
+
 ## CLI 磁碟開機（2026-11-09）
 
 - 已實作，並在 Windows PowerShell、WSL Ubuntu、QEMU 8.2.2 與 OpenSBI 1.3 驗收。

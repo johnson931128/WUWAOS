@@ -1,11 +1,12 @@
 CC := clang
 QEMU := qemu-system-riscv64
+CLI_HARTS ?= 1
 OBJCOPY := llvm-objcopy
 TARGET := build/kernel.elf
 
 KERNEL_SOURCES := \
 	kernel/boot/main.c drivers/uart/uart.c kernel/io/console.c \
-	arch/riscv/trap.c arch/riscv/sbi.c arch/riscv/timer.c arch/riscv/fdt.c arch/riscv/irq.c \
+	arch/riscv/hart.c arch/riscv/trap.c arch/riscv/sbi.c arch/riscv/timer.c arch/riscv/fdt.c arch/riscv/irq.c \
 	kernel/mm/page.c kernel/mm/swap.c kernel/mm/vm.c \
 	kernel/proc/process.c kernel/proc/thread.c kernel/proc/event.c kernel/proc/gate.c kernel/proc/scheduler.c kernel/ipc/sync.c kernel/proc/workstate.c \
 	kernel/syscall/syscall.c kernel/exec/elf.c kernel/io/io.c ui/boot/splash.c \
@@ -87,11 +88,18 @@ $(TARGET): $(KERNEL_OBJECTS) arch/riscv/linker.ld
 build/user.elf: $(USER_OBJECTS) user/linker.ld
 	$(CC) $(LDFLAGS) -Wl,-T,user/linker.ld $(USER_OBJECTS) -o $@
 
-build/obj/tests/thread_stage_a_probe.o: tests/thread_stage_a_probe.c
+build/obj/tests/%.o: tests/%.c
 	mkdir -p $(@D)
 	$(CC) $(CFLAGS) -Oz -c $< -o $@
 
 build/thread-stage-a-probe.elf: build/obj/user/lib/entry.asm.o $(USER_COMMON_ASM) build/obj/user/lib/api.o build/obj/user/lib/print.o build/obj/tests/thread_stage_a_probe.o user/linker.ld
+	$(CC) $(LDFLAGS) -Wl,-T,user/linker.ld $(filter %.o,$^) -o $@
+
+CLI_PROBE_COMMON := build/obj/user/lib/entry.asm.o $(USER_COMMON_ASM) build/obj/user/lib/api.o build/obj/user/lib/print.o
+build/exec_fd_probe.elf: $(CLI_PROBE_COMMON) build/obj/tests/exec_fd_probe.o tests/exec_fd_probe.ld
+	$(CC) $(LDFLAGS) -Wl,-T,tests/exec_fd_probe.ld $(filter %.o,$^) -o $@
+
+build/%_probe.elf: $(CLI_PROBE_COMMON) build/obj/tests/%_probe.o user/linker.ld
 	$(CC) $(LDFLAGS) -Wl,-T,user/linker.ld $(filter %.o,$^) -o $@
 
 build/user.bin: build/user.elf
@@ -137,11 +145,11 @@ disk-image: build/kernel-disk.elf tools/make_disk.py tools/make_swap.py | build
 	python3 tools/make_swap.py --image $(SWAP_IMAGE)
 
 run: $(TARGET) disk-image
-	$(QEMU) -machine virt -smp 1 -m 128M -nographic -bios default -kernel $(TARGET) -global virtio-mmio.force-legacy=false -drive file=$(DISK_IMAGE),if=none,format=raw,id=wuwaos,cache=writeback -device virtio-blk-device,drive=wuwaos -drive file=$(SWAP_IMAGE),if=none,format=raw,id=swap,cache=writeback -device virtio-blk-device,drive=swap
+	$(QEMU) -machine virt -smp $(CLI_HARTS) -m 128M -nographic -bios default -kernel $(TARGET) -global virtio-mmio.force-legacy=false -drive file=$(DISK_IMAGE),if=none,format=raw,id=wuwaos,cache=writeback -device virtio-blk-device,drive=wuwaos -drive file=$(SWAP_IMAGE),if=none,format=raw,id=swap,cache=writeback -device virtio-blk-device,drive=swap
 
 run-disk: build/boot-flash.img build/kernel-disk.elf tools/make_disk.py
 	python3 tools/make_disk.py --image "$(BOOT_DISK_IMAGE)" --kernel build/kernel-disk.elf
-	$(QEMU) -machine virt -smp 1 -m 128M -nographic -bios default \
+	$(QEMU) -machine virt -smp $(CLI_HARTS) -m 128M -nographic -bios default \
 		-drive if=pflash,unit=0,format=raw,readonly=on,file=build/boot-flash.img \
 		-global virtio-mmio.force-legacy=false \
 		-drive file="$(BOOT_DISK_IMAGE)",if=none,format=raw,id=wuwaos,cache=writeback \
@@ -172,4 +180,4 @@ clean:
 	rm -f build/thread-stage-a-probe.elf
 
 -include $(patsubst %.o,%.d,$(KERNEL_OBJECTS) $(BOOT_OBJECTS) $(USER_OBJECTS) $(APP_OBJECTS) $(FAN_OBJECTS) $(WORKSTATE_OBJECTS))
--include build/obj/tests/thread_stage_a_probe.d
+-include $(wildcard build/obj/tests/*.d)

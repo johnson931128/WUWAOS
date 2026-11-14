@@ -12,7 +12,8 @@ typedef struct KernelGate {
 } KernelGate;
 
 /* Gate storage must be zero-initialized and outlive every waiter. Operations
-   run with SIE clear on the single hart; wait-capable callers use enter(). */
+   run with SIE clear and the shared kernel lock held at runtime.
+   Wait-capable callers use enter(). */
 int kernel_gate_init(KernelGate *gate);
 int kernel_gate_try_enter(KernelGate *gate);
 int kernel_gate_enter(KernelGate *gate);

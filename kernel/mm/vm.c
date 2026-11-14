@@ -1,4 +1,5 @@
 #include "kernel/mm/vm.h"
+#include "arch/riscv/hart.h"
 #include "kernel/io/console.h"
 #include "syscall_numbers.h"
 #include "process_limits.h"
@@ -46,7 +47,7 @@ typedef struct {
 /* Metadata only; physical user memory is never preallocated here. */
 static VmSpace spaces[PROCESS_LIMIT + 1];
 static uintptr_t kernel_root, mmio[16];
-static uintptr_t kernel_guard_pages[THREAD_LIMIT + 1];
+static uintptr_t kernel_guard_pages[THREAD_LIMIT + HART_LIMIT];
 static size_t kernel_guard_count;
 static size_t mmio_count, resident, frame_limit = VM_DEFAULT_FRAMES;
 static uint64_t next_arrival;
@@ -64,7 +65,10 @@ extern const unsigned char __workstate_image_start[], __workstate_image_end[];
 static _Noreturn void vm_panic(const char *message) {
     console_puts("[vm] "); console_puts(message); console_putc('\n'); kernel_idle();
 }
-static void flush(void) { __asm__ volatile("sfence.vma zero, zero" : : : "memory"); }
+static void flush(void) {
+    __asm__ volatile("fence rw, rw\nsfence.vma zero, zero" : : : "memory");
+    hart_invalidate_remote_tlbs();
+}
 static uint64_t table_entry(uintptr_t table) { return ((table >> 12) << 10) | PTE_V; }
 static uintptr_t entry_address(uint64_t entry) { return (entry >> 10) << 12; }
 static int evict_one(void);
@@ -149,6 +153,15 @@ static uint64_t permissions(const VmSpace *space, size_t index) {
 }
 
 /* FIFO among eligible pages. Hits never change arrival; pinned pages cannot move. */
+static int running_remotely(uintptr_t root) {
+    for (int i = 0; i < THREAD_LIMIT; ++i) {
+        const Thread *thread = thread_slot(i);
+        if (thread->state == THREAD_RUNNING && thread->last_hart != hart_id() &&
+            thread->process->page_table == root) return 1;
+    }
+    return 0;
+}
+
 static int evict_one(void) {
     if (thread_runtime_nonblocking()) return ERR_BUSY;
     uint64_t after = 0;
@@ -158,7 +171,7 @@ static int evict_one(void) {
         VmSpace *owner = 0;
         size_t selected = 0;
         for (size_t s = 0; s < PROCESS_LIMIT + 1; ++s) {
-            if (spaces[s].root == 0) continue;
+            if (spaces[s].root == 0 || running_remotely(spaces[s].root)) continue;
             for (size_t i = 0; i < SPACE_PAGES; ++i) {
                 VmPage *page = &spaces[s].pages[i];
                 if (page->physical && !page->pins && page->arrival > after &&
@@ -329,7 +342,6 @@ void vm_map_mmio(uintptr_t base) {
 
 void vm_enable(uintptr_t root) {
     const uint64_t satp = (8UL << 60) | (root >> 12);
-    flush();
     __asm__ volatile("csrw satp, %0\nsfence.vma zero, zero\nfence.i" : : "r"(satp) : "memory");
 }
 void vm_use_kernel(void) { vm_enable(kernel_root); }

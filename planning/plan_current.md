@@ -7,9 +7,9 @@
 - **程式執行**：`exec_argv`、CLI `run <path> [args]` 與 512 KiB 的靜態 ELF 載入區已實作。QEMU Flash CLI 通過參數、跨頁 BSS、失敗後保留原行程與 fork 繼承驗證。
 - **行程生命週期**：`wait(-1, &status)` 與 CLI `wait [pid]` 已實作。`kill` 沿用直接子行程限制及 PID 1 保護，孤兒由 scheduler 回收。QEMU 直接開機、Flash 磁碟開機及既有 Thread Stage A 回歸通過。
 - **FD**：`fstat` 和唯讀目錄 FD 已通過基本 QEMU Flash CLI 驗收。
-- **WUFS**：hard link、unlink 後保留開啟引用、跨操作 block cache、journal 批次提交待實作及驗收。
-- **驅動介面**：裝置檔與 UART 中斷。既有 TTY 和 VirtIO 中斷已提供部分基礎。
-- **排程**：多 hart 排程（SMP）、核心態計時器搶占。現有基線為單 hart 的多 thread 排程和使用者態搶占。
+- **WUFS**：WUFS0003 另存升級、hard link、unlink 後保留 FD、最後關閉回收、跨操作 cache 和有界 FD 寫入批次提交已通過 CLI 驗收。已驗證重啟持久性與 redo 重播。
+- **驅動介面**：WUFS0003 console 裝置節點與 PLIC UART RX 中斷已通過 CLI 驗收。
+- **排程**：共享核心鎖、多 hart 排程與安全檢查點的核心態搶占已實作。QEMU 2／3 hart 直接與 Flash CLI 驗收通過。GUI 和長時間壓測為 `NOT_RUN`。
 
 ## 既有實作與驗收
 

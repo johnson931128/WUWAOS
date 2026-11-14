@@ -1,6 +1,7 @@
 #include "kernel/io/console.h"
 #include "kernel/proc/process.h"
 #include "arch/riscv/trap.h"
+#include "arch/riscv/hart.h"
 #include "arch/riscv/irq.h"
 #include "kernel/mm/vm.h"
 #include "ui/boot/splash.h"
@@ -40,6 +41,7 @@ void kernel_main(unsigned long hart_id, const void *fdt) {
         console_puts("[fs] Disk present but WUFS could not be mounted\n");
     }
     block_register_irqs();
+    tty_register_irq();
     irq_start();
     timer_init();
     process_init();
@@ -47,5 +49,7 @@ void kernel_main(unsigned long hart_id, const void *fdt) {
         process_register_ui_events(desktop_poll, desktop_event_source_active);
         desktop_start_cursor();
     }
+    kernel_lock_acquire();
+    hart_start_others(fdt);
     process_start();
 }

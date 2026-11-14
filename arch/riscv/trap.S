@@ -57,6 +57,13 @@ trap_entry:
     csrr t0, stval
     sd t0, TF_STVAL(sp)
 
+    ld t0, TF_SSTATUS(sp)
+    andi t0, t0, 256
+    bnez t0, 5f
+    # The scheduler stores the current hart above the user trap frame.
+    ld tp, TF_SIZE(sp)
+    call kernel_lock_acquire
+5:
     mv a0, sp
     call trap_handler
     # C may suspend/resume its kernel stack; it returns this process's frame.
@@ -67,6 +74,12 @@ trap_entry:
 user_enter:
     mv sp, a0
 trap_restore:
+    # Returning to U-mode permits other harts to enter the kernel.
+    ld t0, TF_SSTATUS(sp)
+    andi t0, t0, 256
+    bnez t0, 6f
+    call kernel_lock_release
+6:
     ld t0, TF_SEPC(sp)
     csrw sepc, t0
     ld t0, TF_SSTATUS(sp)
@@ -81,7 +94,11 @@ trap_restore:
 4:
     ld ra, 8(sp)
     ld gp, 24(sp)
+    ld t0, TF_SSTATUS(sp)
+    andi t0, t0, 256
+    bnez t0, 7f
     ld tp, 32(sp)
+7:
     ld t0, 40(sp)
     ld t1, 48(sp)
     ld t2, 56(sp)

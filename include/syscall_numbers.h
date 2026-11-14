@@ -49,6 +49,8 @@
 #define SYS_GETTID 45
 #define SYS_EXEC_ARGV 46
 #define SYS_FSTAT 47
+#define SYS_FS_LINK 48
+#define SYS_MKNOD 49
 #define EXEC_MAX_ARGS 16U
 #define EXEC_ARG_BYTES 2048U
 

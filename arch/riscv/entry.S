@@ -1,7 +1,12 @@
+#include "arch/riscv/hart.h"
+
     .section .text.entry
     .globl _start
 _start:
     # OpenSBI enters in S-mode; timer interrupts stay masked until initialization.
+    li t0, HART_LIMIT
+    bgeu a0, t0, 3f
+    mv tp, a0
     csrw sie, zero
     csrci sstatus, 2
 
@@ -22,3 +27,16 @@ _start:
 3:
     wfi
     j 3b
+
+    .globl hart_secondary_entry
+    .balign 4
+hart_secondary_entry:
+    csrw sie, zero
+    csrci sstatus, 2
+    mv tp, a0
+    la sp, hart_boot_stacks
+    addi t0, a0, 1
+    li t1, HART_BOOT_STACK
+    mul t0, t0, t1
+    add sp, sp, t0
+    tail hart_secondary_main

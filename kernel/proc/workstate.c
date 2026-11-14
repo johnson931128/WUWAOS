@@ -54,7 +54,7 @@ long workstate_snapshot(uintptr_t address, size_t length) {
             const Thread *thread = thread_slot(t);
             if (thread->state == THREAD_UNUSED || thread->process != process) continue;
             row->cpu_ticks += thread->cpu_ticks;
-            if (thread == thread_current_or_null() && process == caller) {
+            if (thread->state == THREAD_RUNNING) {
                 const uint64_t pending = snapshot.ticks - thread->run_started;
                 row->cpu_ticks += pending;
                 snapshot.busy_ticks += pending;
