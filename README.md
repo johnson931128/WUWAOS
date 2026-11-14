@@ -23,7 +23,7 @@ WUWAOS is a small operating system written in **C and RISC-V assembly** that boo
 | File system | Event-waiting VirtIO block requests, WUFS redo journal, atomic file replacement, shared open-file offsets, and shell redirection |
 | User interface | UART shell, `fan` and `workstate`; optional VirtIO desktop with up to four independent Terminal windows, focus, dragging, and viewport resizing |
 
-WUWAOS focuses on fundamental operating system mechanisms and is not Linux-compatible. `make run-disk` boots the UART shell from a WUFS disk. A restricted static RV64 ELF loader can run compatible WUWAOS programs from WUFS; general ELF/Linux compatibility, external ELF arguments, compiling C inside WUWAOS, networking, and a file manager are not supported. Window resizing changes the viewport of a fixed 100×30 terminal model; it does not resize the TTY or reflow text. See the [documentation](https://johnson931128.github.io/WUWAOS/) and [Spec 21](docs/SPEC-21-native-compilation.md) for limitations and future plans.
+WUWAOS focuses on fundamental operating system mechanisms and is not Linux-compatible. `make run-disk` boots the UART shell from a WUFS disk. A restricted static RV64 ELF loader can run compatible WUWAOS programs from WUFS; general ELF/Linux compatibility, external ELF arguments, networking, and a file manager are not supported. Window resizing changes the viewport of a fixed 100×30 terminal model; it does not resize the TTY or reflow text. Development uses host-side cross-compilation. See the [documentation](https://johnson931128.github.io/WUWAOS/).
 
 ## Current Development Status
 

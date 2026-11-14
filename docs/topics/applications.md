@@ -79,7 +79,7 @@ flowchart LR
   C --> D[QEMU 載入核心並模擬 RISC-V CPU]
 ```
 
-`fan` 可以寫 `.c` 檔，但 WUWAOS 尚無系統內 C 編譯器。現已支援從 WUFS 執行符合固定布局的靜態 RV64 ELF；尚需補齊工具鏈與相關檔案介面，才可能在 WUWAOS 內編譯。設計與驗證見 [Spec 26](../SPEC-26-elf-exec.md)，長期規劃見 [Spec 21](../SPEC-21-native-compilation.md)。
+`fan` 可以編輯 `.c` 檔。使用者程式由主機交叉編譯成符合固定布局的靜態 RV64 ELF，匯入 WUFS 後由 `run` 執行。執行檔規格見 [Spec 26](../SPEC-26-elf-exec.md)。
 
 ## 從 WUFS 載入 ELF
 

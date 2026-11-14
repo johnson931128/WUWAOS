@@ -48,7 +48,9 @@ Process: Unused → New → Live → Dying → Zombie → wait → Unused
 
 Thread Zombie 保留 Thread 結果並占用 slot，供同 Process 的另一 Thread join。Process Zombie 則是在群組資源清理完成後保留 PID／結束結果，供父 Process wait；此時頁表與 TCB 已釋放。兩種 Zombie 都不再執行，也不在 Ready queue 裡。
 
-`kill(pid)` 對整個 Process 請求群組退出，向其餘 live Thread 設 `kill_pending`；可取消的 event、channel、child、join 或 sync wait 會喚醒原 stack 供其 unwind。cancel-defer 保護 cleanup、已提交 Block request 與 VM swap-out 的撤銷／回復範圍，須到裝置完成或確認 reset、釋放 Gate 並完成清理後，才在安全返回邊界退出。尚未首次執行的 Thread 則在 first_run 檢查取消。這不是可隨時中斷 DMA 的任意取消機制。
+`kill(pid)` 對直接子行程請求群組退出，向尚未退出的 Thread 設 `kill_pending`，並保護 PID 1。可取消的 event、channel、child、join 或 sync wait 會喚醒原 stack 供其 unwind。cancel-defer 保護 cleanup、已提交 Block request 與 VM swap-out 的撤銷／回復範圍，須到裝置完成或確認 reset、釋放 Gate 並完成清理後，才在安全返回邊界退出。尚未首次執行的 Thread 則在 first_run 檢查取消。
+
+CLI `wait <pid>` 等待指定的直接子行程，`wait` 等待任一直接子行程，對應 syscall `wait(-1, &status)`。成功時可取得 PID 和退出狀態。若兩條 Thread 同時等待，只有取得該子行程回收權的 Thread 能領取結果。父行程已退出的子行程會改為 PPID 0，由 scheduler 在它成為 zombie 後回收。
 
 Guard page 命中且成功進入 C trap handler 時會印 PID／stack 範圍並停機；若 stack 已不足以讓 `trap.S` 保存 TrapFrame，仍可能再次 fault，尚未設 emergency trap stack。這項保護及本輪取消路徑只完成實作，runtime 驗證為 NOT_RUN。
 

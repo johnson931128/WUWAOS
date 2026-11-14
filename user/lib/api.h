@@ -22,6 +22,7 @@ long spawn(long program);
 long yield(void);
 long sleep(long channel);
 long wakeup(long channel);
+/* Pass -1 to collect any direct child, or a positive PID for a specific child. */
 long wait(long pid, long *status);
 long read(long fd, char *buffer, unsigned long length);
 long open(const char *path, long flags);

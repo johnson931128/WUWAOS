@@ -1,7 +1,21 @@
-- 詳細步驟與方法：[plan.md](./plan.md)
-- Windows 預編譯 CLI 已完成打包與原生 QEMU 開機驗收。Windows 使用者安裝 QEMU、解壓 [CLI v1](https://github.com/johnson931128/WUWAOS/releases/tag/cli-windows-v1) 後可在 CMD 輸入 `WUWAOS`，重啟可讀回已寫入的檔案。下一個里程碑為 WUWAOS 內編譯 C。
+# 目前進度
+
+## 核心路線圖
+
+核心與使用者程式繼續由主機交叉編譯。以下項目來自 [xv6-riscv 核心對照](./plan.md#核心路線圖2026-11-15)。行程生命週期已通過 CLI 驗收，其餘項目待實作及驗收。
+
+- **程式執行**：外部 ELF 的 `argc`／`argv`，以及放寬固定段布局的評估。
+- **行程生命週期**：`wait(-1, &status)` 與 CLI `wait [pid]` 已實作。`kill` 沿用直接子行程限制及 PID 1 保護，孤兒由 scheduler 回收。QEMU 直接開機、Flash 磁碟開機及既有 Thread Stage A 回歸通過。
+- **WUFS 與 FD**：hard link、unlink 後保留開啟引用、`fstat` 資訊與目錄讀取、跨操作 block cache、journal 批次提交。
+- **驅動介面**：裝置檔與 UART 中斷。既有 TTY 和 VirtIO 中斷已提供部分基礎。
+- **排程**：多 hart 排程（SMP）、核心態計時器搶占。現有基線為單 hart 的多 thread 排程和使用者態搶占。
+
+## 既有實作與驗收
+
+- 多執行緒 B／C 已補代表性 QEMU 驗收，含同一行程時間片搶占、阻塞 join、pipe 恢復與回收。Windows CLI 已驗證用主機工具更新原磁碟的核心並從備份回復。見 [驗收紀錄](./plan.md#多執行緒與核心更新驗收)。
+- Windows 預編譯 CLI 已完成打包與原生 QEMU 開機驗收。Windows 使用者安裝 QEMU、解壓 [CLI v1](https://github.com/johnson931128/WUWAOS/releases/tag/cli-windows-v1) 後可在 CMD 輸入 `WUWAOS`，重啟可讀回已寫入的檔案。
 - 網站總覽與〈開始使用〉已發布至 GitHub Pages（`55585cc`）。公開頁通過桌機、320px 窄螢幕與鍵盤導覽檢查，本機通過 Chrome 200% 縮放檢查。詳見 [本輪網站改版](./plan.md#網站總覽與開始使用2026-11-11)。
-- Thread 階段 A 保留既有基本回歸；目前 B（共享位址／stack、create／join／exit）與 C（FD pin、cwd snapshot、group exit、child wait claim、fork／exec 排他）皆已實作。2026-11-12 補齊建立取消錯誤傳遞、退出 scope 防護、channel 等待取消結果與退出期間的新 wait／join 拒絕，移除過時階段 A 註解。詳見 [B/C 紀錄](../docs/thread-stage-b.md) 與 [Spec 34](../docs/SPEC-34-threads.md)。本輪缺少 Clang／Make／可用 WSL 或 portable 工具鏈，編譯 NOT_RUN；QEMU／CLI runtime NOT_RUN，不沿用先前編譯結果宣稱本次通過。D（demo／專用清單）未實作。
+- Thread 階段 A 保留既有基本回歸；目前 B（共享位址／stack、create／join／exit）與 C（FD pin、cwd snapshot、group exit、child wait claim、fork／exec 排他）皆已實作。2026-11-12 補齊建立取消錯誤傳遞、退出 scope 防護、channel 等待取消結果與退出期間的新 wait／join 拒絕，移除過時階段 A 註解。詳見 [B/C 紀錄](../docs/thread-stage-b.md) 與 [Spec 34](../docs/SPEC-34-threads.md)。本輪缺少 Clang／Make／可用 WSL 或 portable 工具鏈，編譯 NOT_RUN；QEMU／CLI runtime 當時 NOT_RUN，不沿用先前編譯結果宣稱本次通過。D（demo／專用清單）未實作。
 - CLI 磁碟開機已驗收。PowerShell 在專案根目錄執行 `wsl -d Ubuntu -- make run-disk`，由 OpenSBI 與 flash 載入器從一顆 WUFS 磁碟啟動至 `wuwaos/>`。已驗證新磁碟、重啟後讀回檔案及缺少磁碟時停止開機。詳見 [CLI 磁碟開機](./plan.md#cli-磁碟開機2026-11-09)。
 - CLI 文件已同步並通過 VitePress 建置。來源 `8b8ce26` 已推送至 `main`，`gh-pages` `4725bb6` 部署成功，已核對公開首頁、入門、開機、歷程與 journal 復原頁的更新內容。 [部署紀錄](https://github.com/johnson931128/WUWAOS/actions/runs/42569717948)
 - 整體進度：第 1 階段、2A、2B1 保留既有驗收；2026-11-08 的 2B2、2C 與第 3–6 階段已實作、整合編譯成功。2B2、2C 已補驗收；第 3–6 階段的執行驗收仍為 NOT_RUN。

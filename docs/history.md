@@ -63,7 +63,6 @@ Spec 33 以前的歷史 source link 若指向舊 `kernel/` 或 `user/` 路徑，
 | 18 | [檔案命令與 cls](./SPEC-18-file-commands.md)，刪除、複製、畫面與捲動歷史 |
 | 19 | [工作目錄與 shell 命令處理](./SPEC-19-cwd-shell.md)，每行程目錄、相對路徑 |
 | 20 | [資料夾刪除與確認](./SPEC-20-directory-removal.md)，子目錄與檔案回收 |
-| 21 | [系統內編譯 C 程式的長期目標](./SPEC-21-native-compilation.md)，目前為規劃、尚未實作 |
 | 22 | [自製 Mutex 與 Semaphore](./SPEC-22-synchronization.md)，單核心同步與驗證範圍 |
 | 23 | [同步工具互動示範](./SPEC-23-sync-demo.md)，實際行程與等待狀態 |
 | 24 | [功能示範影片](./SPEC-24-demo-video.md)，QEMU 實際操作與影片驗證 |

@@ -1,6 +1,60 @@
 # 後續實作計畫
 
-目前整體狀態：第 1 階段、2A 與 2B1 有既有驗收紀錄；2026-11-08 的 2B2、2C 與第 3–6 階段已實作並完成一次必要整合編譯，未經 runtime 驗證。依使用者指示不執行測試、不撰寫測試程式碼，不以編譯成功代替功能驗收。演算法、各階段提交及限制見本檔末段。Spec 33 的原始碼分層工作已完成。
+目前開發重心是作業系統核心。核心與使用者程式由主機交叉編譯，相容的靜態 RV64 ELF 可匯入 WUFS 後執行。歷史實作及驗收保留在下方，各項最新狀態見 [plan_current.md](./plan_current.md)。
+
+## 核心路線圖（2026-11-15）
+
+比較基準是 WUWAOS `2e385e2` 與 [MIT xv6-riscv `fa2ddcb`](https://github.com/mit-pdos/xv6-riscv/tree/fa2ddcb7ca87a77af579380a6eafd5aff163b44f) 的核心原始碼，範圍涵蓋排程、記憶體、檔案系統、驅動與 syscall。各節現況記錄比較當時的基線。驗收尚無結果的項目為 `NOT_RUN`。具體 ABI、鎖定策略與磁碟格式取捨於實作前確認。
+
+現有基線包括 `fork`、pipe、FD/OFD 共用 offset、Sv39、缺頁配置、WUFS redo journal 和重播。WUWAOS 另有 swap 和同一行程內由核心排程的多個使用者 thread，兩者都要納入後續核心變更的回歸範圍。 [VM](../kernel/mm/vm.c) · [Swap](../kernel/mm/swap.c) · [Thread 規格](../docs/SPEC-34-threads.md) · [WUFS journal](../docs/SPEC-32-wufs-redo-journal.md)
+
+### 外部 ELF 與 exec 參數
+
+- **現況**：`exec_path` 可從 WUFS 載入固定布局的靜態 RV64 ELF，入口 `a0`／`a1` 為零。xv6 的 `exec(path, argv)` 會在新位址空間建立參數字串和指標表，由 `main(argc, argv)` 讀取。 [WUWAOS Spec 26](../docs/SPEC-26-elf-exec.md) · [xv6 exec.c](https://github.com/mit-pdos/xv6-riscv/blob/fa2ddcb/kernel/exec.c)
+- **工作**：定義外部程式的參數傳遞、參數數量與總大小上限、指標檢查和堆疊配置。先驗證並建好新映像及其參數，成功後再替換舊位址空間。另行評估如何放寬固定段布局，以及對 VM、權限、fork 和 swap 的影響。
+- **驗收**：交叉編譯的 ELF 收到正確的零或多筆參數，字串、尾端空指標與堆疊對齊符合 ABI。非法指標、引數超限或載入失敗時，原行程可繼續執行，新資源可回收。多 thread 下保有既有 `ERR_BUSY` 行為，並回歸 fork／exec／swap。
+
+### 行程等待、終止與孤兒回收
+
+- **現況**：WUWAOS 的 `wait(pid, ...)` 需指定子行程，`kill(pid)` 限自己的子行程。孤兒可交給 PID 1，無收養者時由 scheduler 回收。xv6 有等待任意一個子行程的 `wait()`，`kill` 查找目標 PID 時沒有父子限制，並由 `init` 持續等待和回收收養的子行程。 [WUWAOS process.c](../kernel/proc/process.c) · [xv6 proc.c](https://github.com/mit-pdos/xv6-riscv/blob/fa2ddcb/kernel/proc.c) · [xv6 init.c](https://github.com/mit-pdos/xv6-riscv/blob/fa2ddcb/user/init.c)
+- **已實作**：`wait(-1, &status)` 在現有 `SYS_WAIT` 上等待任一直接子行程。CLI `wait` 使用這個模式，`wait <pid>` 等指定子行程。任一等待由 scheduler 喚醒後重掃，只有可回收且未被 claim 的子行程能被領取。失敗釋放 claim，並通知其他等待者重掃。`kill` 保留直接子行程限制及 PID 1 保護。父行程退出後將孤兒的 PPID 設為 `0`，由 scheduler 回收。
+- **CLI 驗收通過**：QEMU 直接開機的 ELF 探針覆蓋先退出的子行程、錯誤 status 指標後重試、兩條 thread 同時回收、指定 PID、阻塞的子行程取消、PID 1／自身保護與活行程／zombie 孤兒回收。Flash 磁碟開機驗證 `spawn worker`、`spawn quick`、`wait`、`kill <pid>`、`wait <pid>`、無子行程回 `-10` 以及恢復 15 個 PCB／31 個 TCB 空槽。序列記錄在 `build/thread-stage-a-hxc2bghx/direct.log` 和 `wait-shell.log`。
+
+### WUFS hard link、unlink 與 inode 生命週期
+
+- **現況**：WUFS 沒有 hard link，刪除已開啟檔案會回 busy。xv6 可讓多個檔名指向同一 inode，最後一個名稱移除後仍可用既有 FD 讀寫，最後一份引用釋放後才回收，重開機也能清理遺留的零連結 inode。 [WUWAOS fs.c](../kernel/fs/fs.c) · [xv6 sysfile.c](https://github.com/mit-pdos/xv6-riscv/blob/fa2ddcb/kernel/sysfile.c) · [xv6 fs.c](https://github.com/mit-pdos/xv6-riscv/blob/fa2ddcb/kernel/fs.c)
+- **工作**：定義磁碟上的連結數和核心中的開啟引用如何分工。規格須涵蓋舊映像、主機磁碟工具和唯讀開機載入器的相容方式，以及目錄項目、連結數、區塊回收如何經過 journal 一致地更新。
+- **驗收**：兩個名稱讀寫同一份內容，移除名稱後原 FD 仍有效，重新開啟已移除的路徑失敗。最後一次 close 或重開機復原後可回收資源。驗證斷電重播、FD 繼承、重複建立／刪除與既有磁碟資料。
+
+### FD 檔案資訊與目錄讀取
+
+- **現況**：WUWAOS 提供路徑式 `fs_list`，一般 WUFS `open` 只接受普通檔案。xv6 提供 `fstat(fd)`，也能開啟並讀取目錄項目。 [WUWAOS fs.c](../kernel/fs/fs.c) · [xv6 file.c](https://github.com/mit-pdos/xv6-riscv/blob/fa2ddcb/kernel/file.c) · [xv6 sysfile.c](https://github.com/mit-pdos/xv6-riscv/blob/fa2ddcb/kernel/sysfile.c)
+- **工作**：定義 FD 查詢可回傳的類型、大小與 inode 編號，以及目錄讀取的資料格式、位置和存取規則。連結數與 unlink 後仍持有 FD 的查詢行為，需與 inode 生命週期規格一致。
+- **驗收**：可從 FD 查到正確 metadata 並逐筆讀完目錄。驗證唯讀開啟、錯誤 FD、非法使用者緩衝區及並行關閉。若支援連結數，須能觀察到 link／unlink 後的正確值。
+
+### Block cache 與 journal 批次提交
+
+- **現況**：WUFS 可重用當次交易的暫存 sector，交易外讀取走裝置 I/O，FS 由全域 gate 序列化。xv6 的 block cache 可跨操作重用已讀 block，journal 可把同時進行的多個操作併入一次提交。 [WUWAOS fs.c](../kernel/fs/fs.c) · [xv6 bio.c](https://github.com/mit-pdos/xv6-riscv/blob/fa2ddcb/kernel/bio.c) · [xv6 log.c](https://github.com/mit-pdos/xv6-riscv/blob/fa2ddcb/kernel/log.c)
+- **工作**：先定義 block cache 對同一裝置和區塊的唯一性、引用、淘汰與 journal 暫存的可見性。批次提交依賴已明確的 buffer 所有權、鎖順序、log 空間預留、I/O 錯誤及 replay 規則。
+- **驗收**：重複讀同一 block 可觀察到 cache 命中及裝置讀取次數下降。驗證正在使用或待提交的 buffer 不會被提前重用，並以重疊寫入、log 空間不足、I/O 錯誤和重啟比對磁碟結果。
+
+### 裝置檔與 UART 中斷
+
+- **現況**：WUWAOS 由核心直接將 TTY 接到 FD，VirtIO 已有外部中斷，UART 由 `tty_poll()` 輪詢。xv6 可用 `mknod` 建立裝置節點，FD 的讀寫會依裝置編號交給驅動，UART 使用中斷。 [WUWAOS tty.c](../kernel/io/tty.c) · [WUWAOS irq.c](../arch/riscv/irq.c) · [xv6 sysfile.c](https://github.com/mit-pdos/xv6-riscv/blob/fa2ddcb/kernel/sysfile.c) · [xv6 uart.c](https://github.com/mit-pdos/xv6-riscv/blob/fa2ddcb/kernel/uart.c)
+- **工作**：裝置檔需定義節點類型、裝置編號到驅動的對應和 FD 的生命週期。UART 需定義 PLIC 路由、中斷與等候佇列的交接、緩衝區滿載、早期開機及診斷輸出。兩項可各自驗收。
+- **驗收**：從裝置節點開啟的 FD 可交由正確驅動讀寫。UART 接收中斷能喚醒原先阻塞的 `read`，連續收發有明確的滿載處理。回歸 UART CLI、GUI TTY 和 VirtIO 中斷。
+
+### 多 hart 排程（SMP）
+
+- **現況**：WUWAOS 在一個 hart 上排程多個 thread，`current` 仍是全域狀態，部分核心 gate／mutex 依賴單 hart 與關中斷假設。xv6 維護 per-hart 狀態，能在多個 hart 同時執行行程。 [WUWAOS thread.c](../kernel/proc/thread.c) · [WUWAOS kmutex.h](../kernel/proc/kmutex.h) · [xv6 main.c](https://github.com/mit-pdos/xv6-riscv/blob/fa2ddcb/kernel/main.c) · [xv6 proc.c](https://github.com/mit-pdos/xv6-riscv/blob/fa2ddcb/kernel/proc.c)
+- **工作**：釐清次要 hart 啟動、per-hart current／scheduler stack／timer、就緒佇列的所有權與記憶體順序。逐一列出需要跨 hart 保護的 thread／process、FD、VM、FS 和裝置狀態，以及共享位址空間的 TLB 失效範圍。
+- **驗收**：在兩個以上 hart 觀察到不同 thread 真正同時執行，同一 TCB 只可由一個 hart 執行。壓測 pipe 喚醒、join／exit、共享位址空間與裝置完成事件，覆蓋遺失喚醒、重複回收和舊 TLB 映射。保留單 hart 回歸。
+
+### 核心態計時器搶占
+
+- **現況**：WUWAOS 在使用者態因時間片搶占，核心僅在既有阻塞點切換。xv6 在核心允許中斷、且正在執行行程時，也能由 timer 觸發 `yield()`。 [WUWAOS trap.c](../arch/riscv/trap.c) · [xv6 trap.c](https://github.com/mit-pdos/xv6-riscv/blob/fa2ddcb/kernel/trap.c)
+- **工作**：先盤點何處可中斷、何處可排程，以及鎖、IRQ、trap frame 和核心堆疊的限制。此項與 SMP 各有獨立驗收，兩者共享鎖及中斷語意，須先界定這些語意再實作。
+- **驗收**：可搶占範圍內的長時間 syscall 可讓另一條 thread 繼續前進，原 syscall 恢復後結果正確。持鎖或不可搶占區段的時間片到期可安全延後，並回歸既有阻塞及使用者態時間片。
 
 ## CLI 磁碟開機（2026-11-09）
 
@@ -12,7 +66,7 @@
 
 ### 文件與網站同步
 
-- 更新 README、入門與開機章、首頁架構圖、程式碼導覽與歷程。標明 `run-disk` 的磁碟開機與 `run`／GUI 的直接開機，舊規格保留當時驗收。同步移除現行文件對磁碟核心與系統內編譯的過時說明。
+- 更新 README、入門與開機章、首頁架構圖、程式碼導覽與歷程。標明 `run-disk` 的磁碟開機與 `run`／GUI 的直接開機，舊規格保留當時驗收。
 - 驗收範圍是來源差異、網站建置、關鍵連結及 GitHub Pages。從乾淨的來源提交發布，避免將既有未提交的文件修改帶入網站。
 - VitePress 發布設定下的本機建置通過。修正排程與記憶體兩章的課程筆記連結，改指 GitHub 上對應檔案，保留 VitePress 的死連結檢查。這次文件同步沿用 2026-11-09 的 OS 驗收紀錄。
 - 文件來源提交 `8b8ce26` 已推送至 `main`。從該提交的乾淨工作樹建置並推送 `gh-pages` `4725bb6`，GitHub Pages 部署成功。公開首頁、入門、開機、歷程及 journal 復原頁均回傳 HTTP 200，並核對更新內容及歷程／復原錨點。 [部署紀錄](https://github.com/johnson931128/WUWAOS/actions/runs/42569717948)
@@ -349,7 +403,12 @@
 - 使用者先安裝含 RV64 與 OpenSBI 的 Windows QEMU，解壓 GitHub Release 後在 CMD 輸入 `WUWAOS` 即可啟動 CLI。PowerShell 入口為 `./WUWAOS.cmd`。
 - 開發機執行 `wsl -d Ubuntu -- python3 tools/package-cli.py` 產生 ZIP 與 SHA-256。ZIP 包含 Windows 啟動器、唯讀 flash 映像、全新可寫的 WUFS 映像與授權。OpenSBI 交接給既有 flash loader，再從 WUFS 載入 `/boot/kernel.elf`；沿用單顆磁碟、無 swap、journal 須乾淨的限制。
 - Windows 原生 QEMU 11.1.0 驗收通過。ZIP 解壓到含空白的目錄，CMD 使用只含 QEMU 與 Windows 系統工具的 PATH，成功開機、執行 `echo`、寫檔、離開 QEMU，重啟後以 `cat` 讀回檔案。紀錄位於 `build/cli-verification/`。
-- 發行版本見 [Windows CLI v1](https://github.com/johnson931128/WUWAOS/releases/tag/cli-windows-v1)。後續里程碑是在 WUWAOS 內用 `fan` 編輯 C、在客體內編譯成相容 ELF，再用 `run` 執行，見 [Spec 21](../docs/SPEC-21-native-compilation.md)。
+- 發行版本見 [Windows CLI v1](https://github.com/johnson931128/WUWAOS/releases/tag/cli-windows-v1)。
+
+## 多執行緒與核心更新驗收
+
+- Thread B／C：在 QEMU 8.2.2 的獨立 WUFS／swap 映像跑暫存探針。PID 2 的 TID 2、3 在不呼叫 `yield()` 時各有時間片到期紀錄，也確認不同堆疊、共享資料、`join` 喚醒與回傳值、pipe 阻塞後恢復、重複建立和回收，以及多執行緒時 `fork`／`exec` 回 `ERR_BUSY`。最後剩 15 個 PCB、31 個 TCB 空槽。紀錄在 `build/thread-bc-acceptance-7299c5df/thread-bc.log`。這是代表性驗收，Spec 34 的並行 close/reopen、群組退出、DMA 取消等邊界尚未覆蓋。
+- Windows CLI 核心更新：解壓 v1 ZIP 後在原核心寫入 `/keep.txt`，關閉 QEMU 並備份映像，用主機端 `make_disk.py --kernel` 安裝只改啟動文字的測試核心，以同一套啟動器和 flash loader 重啟。確認新版文字及舊檔案均可讀取，再還原更新前的磁碟備份，確認舊核心和舊檔案。原生 QEMU 11.1.0 的三次開機紀錄在 `build/cli-update-acceptance-86ef1bb9/verified/`。
 
 ## 進度維護
 

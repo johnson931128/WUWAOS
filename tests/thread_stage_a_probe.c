@@ -12,6 +12,13 @@
 static long private_data = 10;
 static WorkstateSnapshot snapshot;
 
+static long wait_any_probe(void *argument) {
+    (void)argument;
+    long status = 0;
+    const long pid = wait(WAIT_ANY_CHILD, &status);
+    return pid > 0 && status != 17 ? ERR_INVALID : pid;
+}
+
 static void collected(long pid, long expected) {
     long status = 12345;
     CHECK(pid > 0 && wait(pid, &status) == pid && status == expected);
@@ -44,6 +51,39 @@ long user_main(long unused) {
     CHECK(sleep_ms(20) == 0);
     CHECK(wakeup(7) == 1); collected(pid, 0);
     user_puts("PASS: exec, spawn, channel wake and child wait\n");
+
+    long slow = spawn(PROGRAM_WORKER); CHECK(slow > 0);
+    long fast = spawn(PROGRAM_QUICK); CHECK(fast > 0);
+    long status = 0;
+    CHECK(wait(WAIT_ANY_CHILD, &status) == fast && status == 40);
+    CHECK(kill(slow) == 0);
+    CHECK(wait(WAIT_ANY_CHILD, (long *)(uintptr_t)1) == ERR_ADDRESS);
+    CHECK(wait(WAIT_ANY_CHILD, &status) == slow && status == -9);
+    CHECK(wait(WAIT_ANY_CHILD, 0) == ERR_NO_CHILD);
+
+    pid = fork(); CHECK(pid >= 0);
+    if (!pid) { CHECK(sleep_ms(250) == 0); exit(17); }
+    const long waiter = thread_create(wait_any_probe, 0); CHECK(waiter > 0);
+    const long other = wait_any_probe(0);
+    CHECK(thread_join(waiter, &status) == waiter);
+    CHECK((status == pid && other == ERR_NO_CHILD) || (status == ERR_NO_CHILD && other == pid));
+    user_puts("PASS: wait-any selection, retry after bad pointer and concurrent reaping\n");
+
+    pid = fork(); CHECK(pid >= 0);
+    if (!pid) {
+        long orphan = fork(); CHECK(orphan >= 0);
+        if (!orphan) exit(21);
+        CHECK(sleep_ms(100) == 0); /* Leave a zombie under the exiting parent. */
+        orphan = fork(); CHECK(orphan >= 0);
+        if (!orphan) { CHECK(sleep_ms(250) == 0); exit(22); }
+        exit(0);
+    }
+    collected(pid, 0);
+    CHECK(wait(WAIT_ANY_CHILD, 0) == ERR_NO_CHILD);
+    CHECK(sleep_ms(400) == 0);
+    CHECK(workstate_snapshot(&snapshot) == 0 && snapshot.count == 2);
+    CHECK(kill(1) == ERR_INVALID && kill(getpid()) == ERR_INVALID);
+    user_puts("PASS: scheduler reaps live and zombie orphans; kill protects PID 1 and self\n");
 
     long ends[2]; CHECK(pipe(ends) == 0);
     pid = fork(); CHECK(pid >= 0);
@@ -85,9 +125,9 @@ long user_main(long unused) {
     user_puts("PASS: sync waiter cancellation and mutex owner death\n");
 
     pid = fork(); CHECK(pid >= 0);
-    if (!pid) { busy(); exit(0); }
+    if (!pid) { busy(); CHECK(pcb(getpid()) == 0); exit(0); }
     busy(); CHECK(sleep_ms(250) == 0);
-    CHECK(pcb(getpid()) == 0 && pcb(pid) == 0); /* Host checks nonzero preemptions. */
+    CHECK(pcb(getpid()) == 0); /* Host checks both counters while their TCBs exist. */
     collected(pid, 0);
     CHECK(workstate_snapshot(&snapshot) == 0 && snapshot.version == WORKSTATE_VERSION);
     CHECK(snapshot.count == 2); /* UART shell + this probe; all children reaped. */

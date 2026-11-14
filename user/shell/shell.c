@@ -305,7 +305,7 @@ static void help(void) {
               "syncbg sem wait|post <id>       Run semaphore operation in child.\n"
               "syncbg mutex hold <id>          Hold in child until wakeup 7.\n"
               "wakeup <channel>                Wake processes waiting on an event.\n"
-              "wait <pid>                      Wait for and collect a direct child.\n"
+              "wait [pid]                      Collect a child.\n"
               "kill <pid>                      Terminate a direct child process.\n"
               "trace on                        Enable thread/exec/exit/wait traces.\n"
               "trace off                       Disable thread/exec/exit/wait traces.\n"
@@ -434,6 +434,8 @@ static int command(int count, char *words[4]) {
             run_workstate();
         } else if (equal(words[0], "fork")) {
             fork_shell();
+        } else if (equal(words[0], "wait")) {
+            wait_child(WAIT_ANY_CHILD);
         } else if (equal(words[0], "yield")) {
             yield();
         } else if (equal(words[0], "exit")) {

@@ -27,4 +27,4 @@
 
 使用 WSL／Clang 和獨立 QEMU 磁碟，將既有 `build/user.elf` 及 `build/app.elf` 匯入 `/bin`：`run /bin/shell.elf` 成功執行外部 shell；在執行中刪除該 ELF、把常駐預算調到 8 並操作 12 頁 heap，之後 swap_in=22、swap_out=18，讀回第 0 頁三處皆為 65；該外部 shell 進一步 fork，子行程與父行程資料分離且均能結束回收。不存在檔案回 -2、目錄回 -21、一般文字或不符合使用者位址配置的核心 ELF 回 -8；shell 能繼續。相對路徑 `run app.elf` 成功載入既有 app 映像，但 app 的內建角色參數為 0 時自行回 -22，並非載入器失敗。`run quick`、pipe 和 demo sync 保持可用；host 匯入既有路徑拒絕，映像 SHA-256 前後相同。
 
-無 swap、使用者常駐預算 8 頁時，載入 shell ELF 回 -12，子行程被回收且父 shell 可繼續；恢復 64 頁後成功執行。另一次無 swap、預算 8 頁下填寫多個 heap 頁，父 shell 在取指缺頁時因無可用頁以 -12 結束，屬目前 VM 的資源不足行為。仍未逐項注入毀損 ELF 標頭、裝置失敗、物理 RAM 完全耗盡，或測試所有 16 個行程額滿時載入；不能保證所有不支援指令可在載入時識別。首版程式入口 a0=0、a1=0，無 argc/argv；僅使用 WUWAOS 自訂 syscall ABI，Linux ELF 不能因此視為可用。客戶端沒有自動編譯器或通用動態連結器。
+無 swap、使用者常駐預算 8 頁時，載入 shell ELF 回 -12，子行程被回收且父 shell 可繼續；恢復 64 頁後成功執行。另一次無 swap、預算 8 頁下填寫多個 heap 頁，父 shell 在取指缺頁時因無可用頁以 -12 結束，屬目前 VM 的資源不足行為。仍未逐項注入毀損 ELF 標頭、裝置失敗、物理 RAM 完全耗盡，或測試所有 16 個行程額滿時載入；不能保證所有不支援指令可在載入時識別。首版程式入口 a0=0、a1=0，無 argc/argv；僅使用 WUWAOS 自訂 syscall ABI，Linux ELF 不能因此視為可用。

@@ -48,6 +48,8 @@
 #define SYS_THREAD_EXIT 44
 #define SYS_GETTID 45
 
+#define WAIT_ANY_CHILD (-1L)
+
 #define FD_O_RDONLY 0x01
 #define FD_O_WRONLY 0x02
 #define FD_O_RDWR 0x03

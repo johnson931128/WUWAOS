@@ -818,11 +818,58 @@ static long collect_child(Process *parent, Process *child, uintptr_t status) {
     return pid;
 }
 
+static void wake_child_waiters(Process *parent, long child_pid) {
+    if (!parent || parent->state != PROCESS_LIVE) return;
+    for (int i = 0; i < THREAD_LIMIT; ++i) {
+        Thread *waiter = thread_slot(i);
+        if (waiter->state == THREAD_WAITING && waiter->process == parent &&
+            waiter->wait_reason == WAIT_CHILD &&
+            (waiter->wait_pid == WAIT_ANY_CHILD || waiter->wait_pid == child_pid)) {
+            thread_transition(waiter, THREAD_READY, "child wait changed");
+        }
+    }
+}
+
+static void release_wait_claim(Process *child, Thread *caller) {
+    if (!child || child->wait_claim_tid != caller->tid) return;
+    child->wait_claimed = 0;
+    child->wait_claim_tid = 0;
+    wake_child_waiters(caller->process, child->pid);
+}
+
+static long wait_any_child(Process *parent, Thread *caller, uintptr_t status_address) {
+    for (;;) {
+        if (caller->kill_pending || parent->state != PROCESS_LIVE) return ERR_INTERRUPTED;
+        int have_child = 0;
+        for (int i = 0; i < PROCESS_LIMIT; ++i) {
+            Process *child = &processes[i];
+            if (child->state == PROCESS_UNUSED || child->parent_pid != parent->pid) continue;
+            have_child = 1;
+            if (child->state != PROCESS_ZOMBIE || child->wait_claimed) continue;
+            const long pid = child->pid;
+            child->wait_claimed = 1;
+            child->wait_claim_tid = caller->tid;
+            const long result = collect_child(parent, child, status_address);
+            if (result < 0) release_wait_claim(child, caller);
+            else wake_child_waiters(parent, pid);
+            return result;
+        }
+        if (!have_child) return ERR_NO_CHILD;
+        caller->wait_reason = WAIT_CHILD;
+        caller->wait_pid = WAIT_ANY_CHILD;
+        thread_transition(caller, THREAD_WAITING, "wait any child");
+        suspend_current();
+        caller->wait_reason = WAIT_NONE;
+        caller->wait_pid = 0;
+    }
+}
+
 long process_wait(long pid, uintptr_t status_address) {
     Process *parent = process_current();
     Thread *caller = thread_current();
     if (parent->state != PROCESS_LIVE) return ERR_BUSY;
     if (caller->kill_pending) return ERR_INTERRUPTED;
+    if (pid == WAIT_ANY_CHILD) return wait_any_child(parent, caller, status_address);
     Process *child = find_pid(pid);
     if (child == 0 || child->parent_pid != parent->pid) {
         return ERR_NO_CHILD;
@@ -831,16 +878,12 @@ long process_wait(long pid, uintptr_t status_address) {
     child->wait_claimed = 1; child->wait_claim_tid = caller->tid;
     if (status_address != 0 &&
         !user_writable(parent->page_table, status_address, sizeof(long))) {
-        if (child->pid == pid && child->wait_claim_tid == caller->tid) {
-            child->wait_claimed = 0; child->wait_claim_tid = 0;
-        }
+        if (child->pid == pid) release_wait_claim(child, caller);
         return ERR_ADDRESS;
     }
     if (caller->kill_pending || parent->state != PROCESS_LIVE || find_pid(pid) != child ||
         child->parent_pid != parent->pid) {
-        if (child->pid == pid && child->wait_claim_tid == caller->tid) {
-            child->wait_claimed = 0; child->wait_claim_tid = 0;
-        }
+        if (child->pid == pid) release_wait_claim(child, caller);
         return caller->kill_pending || parent->state != PROCESS_LIVE ? ERR_INTERRUPTED : ERR_NO_CHILD;
     }
     if (child->state != PROCESS_ZOMBIE) {
@@ -850,10 +893,7 @@ long process_wait(long pid, uintptr_t status_address) {
         thread_transition(caller, THREAD_WAITING, "wait child");
         suspend_current();
         if (caller->kill_pending || parent->state != PROCESS_LIVE) {
-            Process *claimed = find_pid(pid);
-            if (claimed && claimed->wait_claim_tid == caller->tid) {
-                claimed->wait_claimed = 0; claimed->wait_claim_tid = 0;
-            }
+            release_wait_claim(find_pid(pid), caller);
             caller->wait_reason = WAIT_NONE; caller->wait_pid = 0; caller->wait_status = 0;
             return ERR_INTERRUPTED;
         }
@@ -863,14 +903,13 @@ long process_wait(long pid, uintptr_t status_address) {
     caller->wait_status = 0;
     child = find_pid(pid);
     if (child == 0 || child->parent_pid != parent->pid || child->state != PROCESS_ZOMBIE) {
-        if (child) { child->wait_claimed = 0; child->wait_claim_tid = 0; }
+        release_wait_claim(child, caller);
         return ERR_NO_CHILD;
     }
     const long result = collect_child(parent, child, status_address);
     /* A successful reap zeroes the child slot. Otherwise the result remains retryable. */
-    if (child->pid == pid && child->state != PROCESS_UNUSED && child->wait_claim_tid == caller->tid) {
-        child->wait_claimed = 0; child->wait_claim_tid = 0;
-    }
+    if (result < 0) release_wait_claim(child, caller);
+    else wake_child_waiters(parent, pid);
     return result;
 }
 
@@ -889,21 +928,13 @@ static void request_group_exit(Process *process, long status, Thread *exiting) {
 }
 
 static void notify_process_exit(Process *process) {
-    Process *init = find_pid(1);
-    const long adopter = init != 0 && init != process &&
-        init->state != PROCESS_ZOMBIE ? 1 : 0;
     for (int i = 0; i < PROCESS_LIMIT; ++i) {
         Process *child = &processes[i];
         if (child->state != PROCESS_UNUSED && child->parent_pid == process->pid) {
-            child->parent_pid = adopter;
+            child->parent_pid = 0; /* The scheduler owns orphan reclamation. */
         }
     }
-    for (int i = 0; i < THREAD_LIMIT; ++i) {
-        Thread *waiter = thread_slot(i);
-        if (waiter->state != THREAD_WAITING || waiter->process != find_pid(process->parent_pid) ||
-            waiter->wait_reason != WAIT_CHILD || waiter->wait_pid != process->pid) continue;
-        thread_transition(waiter, THREAD_READY, "child exited");
-    }
+    wake_child_waiters(find_pid(process->parent_pid), process->pid);
 }
 
 _Noreturn void process_exit(long status) {
@@ -936,12 +967,7 @@ static void thread_cancel_wait(Thread *thread) {
         if (thread->state == THREAD_WAITING) thread_transition(thread, THREAD_READY, "wait cancelled");
         break;
     case WAIT_CHILD:
-        if (thread->wait_pid) {
-            Process *child = find_pid(thread->wait_pid);
-            if (child && child->wait_claim_tid == thread->tid) {
-                child->wait_claimed = 0; child->wait_claim_tid = 0;
-            }
-        }
+        if (thread->wait_pid > 0) release_wait_claim(find_pid(thread->wait_pid), thread);
         thread->wait_pid = 0;
         thread->wait_status = 0;
         thread->wait_reason = WAIT_NONE;
