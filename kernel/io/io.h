@@ -1,11 +1,13 @@
 #ifndef WUWAOS_IO_H
 #define WUWAOS_IO_H
 #include "kernel/proc/process.h"
+#include "file_info.h"
 
 long io_read(long fd, uintptr_t buffer, size_t length);
 long io_write(long fd, uintptr_t buffer, size_t length);
 long io_open(const char *path, long flags);
 long io_close(long fd);
+long io_fstat(long fd, uintptr_t output);
 long io_dup2(long oldfd, long newfd);
 long io_dup(long oldfd);
 long io_is_console(long fd);

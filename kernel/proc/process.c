@@ -663,7 +663,39 @@ long process_exec(long program, const char *argument) {
     return process_install_image(process, root, program, USER_ENTRY, stack);
 }
 
-long process_exec_path(const char *path) {
+static long exec_stack(uintptr_t old_root, uintptr_t root, size_t argc, uintptr_t user_argv,
+                       uintptr_t *stack) {
+    if (!argc && !user_argv) return 0; /* Preserve the legacy entry ABI. */
+    uintptr_t source[EXEC_MAX_ARGS];
+    uintptr_t target[EXEC_MAX_ARGS + 1] = {0};
+    char strings[EXEC_ARG_BYTES];
+    if (argc) {
+        int error = user_copy_from(old_root, source, user_argv, argc * sizeof(source[0]));
+        if (error < 0) return error;
+    }
+    size_t used = 0;
+    for (size_t i = 0; i < argc; ++i) {
+        target[i] = used;
+        unsigned char byte;
+        do {
+            if (used == sizeof(strings)) return ERR_INVALID;
+            size_t offset = used - target[i];
+            if (source[i] > UINTPTR_MAX - offset) return ERR_ADDRESS;
+            int error = user_read_byte(old_root, source[i] + offset, &byte);
+            if (error < 0) return error;
+            strings[used++] = (char)byte;
+        } while (byte);
+    }
+    const uintptr_t base = USER_STACK_TOP - used;
+    for (size_t i = 0; i < argc; ++i) target[i] += base;
+    const size_t vector_size = (argc + 1) * sizeof(target[0]);
+    *stack = (base - vector_size) & ~(uintptr_t)15;
+    int error = user_copy_to(root, base, strings, used);
+    return error < 0 ? error : user_copy_to(root, *stack, target, vector_size);
+}
+
+long process_exec_path(const char *path, size_t argc, uintptr_t user_argv) {
+    if (argc > EXEC_MAX_ARGS) return ERR_INVALID;
     Process *process = process_current();
     if (process->state != PROCESS_LIVE || process->image_changing || thread_process_slot_count(process) != 1)
         return ERR_BUSY;
@@ -674,7 +706,15 @@ long process_exec_path(const char *path) {
     if (process->state != PROCESS_LIVE || thread_current()->kill_pending) {
         (void)vm_destroy(root); process->image_changing = 0; return ERR_INTERRUPTED;
     }
-    return process_install_image(process_current(), root, PROGRAM_ELF, entry, USER_STACK_TOP);
+    uintptr_t stack = USER_STACK_TOP;
+    result = exec_stack(process->page_table, root, argc, user_argv, &stack);
+    if (result < 0) { (void)vm_destroy(root); process->image_changing = 0; return result; }
+    result = process_install_image(process, root, PROGRAM_ELF, entry, stack);
+    if (result == 0 && stack != USER_STACK_TOP) {
+        thread_current()->frame->registers[10] = argc;
+        thread_current()->frame->registers[11] = stack;
+    }
+    return result;
 }
 
 static long process_install_image(Process *process, uintptr_t root, long program, uintptr_t entry, uintptr_t stack) {

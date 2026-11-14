@@ -9,6 +9,10 @@
 #define USER_ENTRY 0x400000UL
 #define USER_CODE_SIZE (4 * PAGE_SIZE)
 #define USER_DATA (USER_ENTRY + USER_CODE_SIZE)
+#define USER_ELF_IMAGE_END (USER_ENTRY + 128 * PAGE_SIZE)
+#define VM_ELF_READ 4U
+#define VM_ELF_WRITE 2U
+#define VM_ELF_EXEC 1U
 #define USER_STACK 0x800000UL
 #define USER_STACK_TOP (USER_STACK + PAGE_SIZE)
 #define USER_THREAD_STACK_BASE 0x900000UL
@@ -24,7 +28,7 @@ int vm_scope_enter(void);
 int vm_scope_leave(void);
 void vm_map_mmio(uintptr_t base);
 uintptr_t vm_create(long program);
-int vm_elf_allow(uintptr_t root, uintptr_t address, size_t length);
+int vm_elf_allow(uintptr_t root, uintptr_t address, size_t length, unsigned flags);
 int vm_elf_write(uintptr_t root, uintptr_t address, const void *buffer, size_t length);
 int vm_clone(uintptr_t destination, uintptr_t source);
 int vm_destroy(uintptr_t root);

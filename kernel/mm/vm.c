@@ -19,7 +19,8 @@
 #define KERNEL_BASE 0x80200000UL
 #define UART_BASE 0x10000000UL
 #define USER_LIMIT (1UL << 38)
-#define FIXED_PAGES (USER_CODE_SIZE / PAGE_SIZE + 2)
+#define ELF_IMAGE_PAGES ((USER_ELF_IMAGE_END - USER_ENTRY) / PAGE_SIZE)
+#define FIXED_PAGES (ELF_IMAGE_PAGES + 1)
 #define EXTRA_STACK_PAGES (THREAD_EXTRA_STACK_SLOTS * 8UL)
 #define STACK_FIRST_PAGE FIXED_PAGES
 #define HEAP_FIRST_PAGE (FIXED_PAGES + EXTRA_STACK_PAGES)
@@ -37,7 +38,7 @@ typedef struct {
     uintptr_t root, heap_end;
     long program;
     size_t faults;
-    unsigned int elf_pages;
+    unsigned char elf_permissions[ELF_IMAGE_PAGES];
     unsigned int stack_slots;
     VmPage pages[SPACE_PAGES];
 } VmSpace;
@@ -118,9 +119,10 @@ static uintptr_t page_address(size_t index) {
 
 static int page_index(const VmSpace *space, uintptr_t address) {
     if (space == 0) return -1;
-    if (address >= USER_ENTRY && address < USER_DATA + PAGE_SIZE) {
+    const uintptr_t image_end = space->program == PROGRAM_ELF ? USER_ELF_IMAGE_END : USER_DATA + PAGE_SIZE;
+    if (address >= USER_ENTRY && address < image_end) {
         const int index = (int)((address - USER_ENTRY) / PAGE_SIZE);
-        if (space->program == PROGRAM_ELF && !(space->elf_pages & (1U << index))) return -1;
+        if (space->program == PROGRAM_ELF && !space->elf_permissions[index]) return -1;
         return index;
     }
     if (address >= USER_STACK && address < USER_STACK_TOP) return FIXED_PAGES - 1;
@@ -140,7 +142,9 @@ static int page_index(const VmSpace *space, uintptr_t address) {
     return -1;
 }
 
-static uint64_t permissions(size_t index) {
+static uint64_t permissions(const VmSpace *space, size_t index) {
+    if (space->program == PROGRAM_ELF && index < ELF_IMAGE_PAGES)
+        return space->elf_permissions[index];
     return PTE_U | PTE_R | (index < USER_CODE_SIZE / PAGE_SIZE ? PTE_X : PTE_W);
 }
 
@@ -280,7 +284,7 @@ static int resident_page(VmSpace *space, size_t index, int write, uintptr_t *phy
         page->arrival = ++next_arrival;
         page->dirty = 0;
         ++resident;
-        *entry = ((frame >> 12) << 10) | permissions(index) | PTE_V | PTE_A;
+        *entry = ((frame >> 12) << 10) | permissions(space, index) | PTE_V | PTE_A;
     }
     if (write) { page->dirty = 1; *entry |= PTE_D; }
     *entry |= PTE_A;
@@ -294,7 +298,7 @@ static int vm_handle_fault_impl(uintptr_t root, uintptr_t address, unsigned long
     VmSpace *space = find_space(root);
     const int index = page_index(space, address);
     const uint64_t needed = cause == 12 ? PTE_X : cause == 13 ? PTE_R : PTE_W;
-    if (index < 0 || (permissions((size_t)index) & needed) != needed) {
+    if (index < 0 || (permissions(space, (size_t)index) & needed) != needed) {
         ++stats.invalid;
         return ERR_ADDRESS;
     }
@@ -303,9 +307,9 @@ static int vm_handle_fault_impl(uintptr_t root, uintptr_t address, unsigned long
        Otherwise a full swap disk can cause code/data faults to evict each other forever. */
     const int instruction = page_index(space, pc);
     const int fragment = pc <= UINTPTR_MAX - 3 ? page_index(space, pc + 3) : -1;
-    VmPage *first = instruction >= 0 && (permissions((size_t)instruction) & PTE_X)
+    VmPage *first = instruction >= 0 && (permissions(space, (size_t)instruction) & PTE_X)
         ? &space->pages[instruction] : 0;
-    VmPage *second = fragment >= 0 && fragment != instruction && (permissions((size_t)fragment) & PTE_X)
+    VmPage *second = fragment >= 0 && fragment != instruction && (permissions(space, (size_t)fragment) & PTE_X)
         ? &space->pages[fragment] : 0;
     if (first != 0) ++first->pins;
     if (second != 0) ++second->pins;
@@ -454,7 +458,8 @@ static int vm_clone_impl(uintptr_t destination, uintptr_t source) {
     VmSpace *to = find_space(destination), *from = find_space(source);
     if (to == 0 || from == 0) return ERR_ADDRESS;
     to->heap_end = from->heap_end;
-    to->elf_pages = from->elf_pages;
+    for (size_t i = 0; i < ELF_IMAGE_PAGES; ++i)
+        to->elf_permissions[i] = from->elf_permissions[i];
     to->stack_slots = from->stack_slots;
     for (size_t i = 0; i < SPACE_PAGES; ++i) {
         VmPage *page = &from->pages[i];
@@ -483,16 +488,19 @@ static int vm_clone_impl(uintptr_t destination, uintptr_t source) {
 
 /* Install only validated ELF pages; private bytes are marked dirty so eviction
    preserves them in swap even if the original file is changed or removed. */
-static int vm_elf_allow_impl(uintptr_t root, uintptr_t address, size_t length) {
+static int vm_elf_allow_impl(uintptr_t root, uintptr_t address, size_t length, unsigned flags) {
     VmSpace *space = find_space(root);
     if (!space || space->program != PROGRAM_ELF || !length || address < USER_ENTRY ||
-        address >= USER_DATA + PAGE_SIZE || length > USER_DATA + PAGE_SIZE - address) return ERR_ADDRESS;
+        address >= USER_ELF_IMAGE_END || length > USER_ELF_IMAGE_END - address) return ERR_ADDRESS;
     size_t first = (address - USER_ENTRY) / PAGE_SIZE;
     size_t last = (address + length - 1 - USER_ENTRY) / PAGE_SIZE;
-    for (size_t i = first; i <= last; ++i) {
-        if (space->elf_pages & (1U << i)) return ERR_INVALID;
-        space->elf_pages |= 1U << i;
-    }
+    unsigned flags_pte = PTE_U | PTE_R;
+    if (flags & VM_ELF_WRITE) flags_pte |= PTE_W;
+    if (flags & VM_ELF_EXEC) flags_pte |= PTE_X;
+    for (size_t i = first; i <= last; ++i)
+        if (space->elf_permissions[i]) return ERR_INVALID;
+    for (size_t i = first; i <= last; ++i)
+        space->elf_permissions[i] = (unsigned char)flags_pte;
     return 0;
 }
 
@@ -545,7 +553,7 @@ static int accessible(uintptr_t root, uintptr_t address, size_t length, uint64_t
     const uintptr_t last = address + length - 1;
     for (;;) {
         const int index = page_index(space, address);
-        if (index < 0 || (permissions((size_t)index) & permission) != permission) return 0;
+        if (index < 0 || (permissions(space, (size_t)index) & permission) != permission) return 0;
         if ((address >> 12) == (last >> 12)) return 1;
         address = (address & ~(PAGE_SIZE - 1)) + PAGE_SIZE;
     }
@@ -677,10 +685,10 @@ int vm_clone(uintptr_t destination, uintptr_t source) {
     return leave_error < 0 ? leave_error : result;
 }
 
-int vm_elf_allow(uintptr_t root, uintptr_t address, size_t length) {
+int vm_elf_allow(uintptr_t root, uintptr_t address, size_t length, unsigned flags) {
     const int error = vm_scope_enter();
     if (error < 0) return error;
-    const int result = vm_elf_allow_impl(root, address, length);
+    const int result = vm_elf_allow_impl(root, address, length, flags);
     const int leave_error = vm_scope_leave();
     return leave_error < 0 ? leave_error : result;
 }

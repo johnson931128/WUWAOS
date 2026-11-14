@@ -42,7 +42,7 @@ long process_chdir_from(const char *path, const char *cwd_snapshot);
 long process_spawn(long program);
 long process_fork(void);
 long process_exec(long program, const char *argument);
-long process_exec_path(const char *path);
+long process_exec_path(const char *path, size_t argc, uintptr_t user_argv);
 long process_wait(long pid, uintptr_t status_address);
 _Noreturn void process_exit(long status);
 long process_kill(long pid);

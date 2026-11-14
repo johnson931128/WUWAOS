@@ -127,9 +127,6 @@ static void run_program(const char *name) {
     const int external = program < 0;
     const long child = fork();
     if (child == 0) {
-        user_puts("[run child] fork returned 0; PID=");
-        user_number(getpid());
-        user_puts("; calling exec\n");
         result_line("exec error: ", external ? exec_path(name) : exec(program));
         exit(127);
     }
@@ -297,7 +294,7 @@ static void help(void) {
               "run worker                      Fork/exec worker; wakeup 7, then wait.\n"
               "run quick                       Fork/exec quick; wait <pid> to collect.\n"
               "run counter                     Fork/exec counter; wakeup 9, then wait.\n"
-              "run <path>                      Execute a WUFS ELF file in foreground.\n"
+              "run <path> [args]               Execute a WUFS ELF.\n"
               "yield                           Let the next ready process run.\n"
               "sync mutex create|lock <id>|unlock <id>  Manage a mutex.\n"
               "sync sem create <n>|wait <id>|post <id> Manage a semaphore.\n"

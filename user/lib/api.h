@@ -1,6 +1,7 @@
 #ifndef WUWAOS_USER_API_H
 #define WUWAOS_USER_API_H
 #include "workstate_info.h"
+#include "file_info.h"
 
 long write(long fd, const char *buffer, unsigned long length);
 long getpid(void);
@@ -27,6 +28,7 @@ long wait(long pid, long *status);
 long read(long fd, char *buffer, unsigned long length);
 long open(const char *path, long flags);
 long close(long fd);
+long fstat(long fd, WuwaFileInfo *info);
 long dup2(long oldfd, long newfd);
 long dup(long oldfd);
 long is_console(long fd);
@@ -39,6 +41,7 @@ long trace(long enabled);
 long fork(void);
 long exec(long program);
 long exec_path(const char *path);
+long exec_argv(const char *path, unsigned long argc, const char *const argv[]);
 long exec_arg(long program, const char *argument);
 long console_mode(long raw);
 long sbrk(long increment);

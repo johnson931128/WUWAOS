@@ -16,7 +16,7 @@
 #define CONSOLE_OUT (-2)
 #define CONSOLE_ERR (-3)
 
-typedef enum { OFD_RESERVED, OFD_FILE, OFD_PIPE_READ, OFD_PIPE_WRITE, OFD_TTY } OfdType;
+typedef enum { OFD_RESERVED, OFD_FILE, OFD_DIRECTORY, OFD_PIPE_READ, OFD_PIPE_WRITE, OFD_TTY } OfdType;
 typedef struct {
     int used;
     OfdType type;
@@ -139,7 +139,7 @@ static void close_slot(Process *process, int fd) {
 
 int io_inode_is_open(uint32_t inode) {
     for (int i = 0; i < OFD_LIMIT; ++i)
-        if (open_files[i].used && open_files[i].type == OFD_FILE && open_files[i].inode == inode) return 1;
+        if (open_files[i].used && (open_files[i].type == OFD_FILE || open_files[i].type == OFD_DIRECTORY) && open_files[i].inode == inode) return 1;
     return 0;
 }
 
@@ -253,9 +253,10 @@ long io_open(const char *path, long flags) {
     process->fd_table[fd] = FD_RESERVED;
     int scope_error = fs_scope_enter();
     if (scope_error < 0) { process->fd_table[fd] = -99; ofd_release(index); return scope_error; }
-    uint32_t inode;
-    long result = fs_open_inode(path, !!(flags & FD_O_CREAT), &inode);
+    uint32_t inode, type;
+    long result = fs_open_inode(path, !!(flags & FD_O_CREAT), &inode, &type);
     if (result < 0) goto open_failed;
+    if (type == WUWA_FILE_DIRECTORY && flags != FD_O_RDONLY) { result = ERR_INVALID; goto open_failed; }
     if ((flags & FD_O_TRUNC) && io_inode_is_open(inode)) { result = ERR_BUSY; goto open_failed; }
     OpenFile *ofd = &open_files[index];
     ofd->inode = inode;
@@ -271,7 +272,7 @@ long io_open(const char *path, long flags) {
         if (result < 0) goto open_failed;
         ofd->offset = (size_t)result;
     }
-    ofd->type = OFD_FILE;
+    ofd->type = type == WUWA_FILE_DIRECTORY ? OFD_DIRECTORY : OFD_FILE;
     process->fd_table[fd] = index;
     scope_error = fs_scope_leave();
     if (scope_error < 0) return scope_error;
@@ -281,6 +282,20 @@ open_failed:
     (void)fs_scope_leave();
     process->fd_table[fd] = -99;
     ofd_release(index);
+    return result;
+}
+
+long io_fstat(long fd, uintptr_t output) {
+    Process *process = process_current();
+    const int value = fd_pin(process, fd);
+    const OpenFile *file = get_ofd(value);
+    long result = ERR_BAD_FD;
+    if (file && (file->type == OFD_FILE || file->type == OFD_DIRECTORY)) {
+        WuwaFileInfo info;
+        result = fs_inode_info(file->inode, &info);
+        if (result == 0) result = user_copy_to(process->page_table, output, &info, sizeof(info));
+    }
+    fd_unpin(value);
     return result;
 }
 
@@ -470,6 +485,21 @@ static long io_read_pinned(Process *process, int value, uintptr_t buffer, size_t
     }
     if (ofd && ofd->type == OFD_PIPE_READ) {
         return pipe_read_wait(process, value, buffer, length);
+    }
+    if (ofd && ofd->type == OFD_DIRECTORY) {
+        if (length < sizeof(WuwaDirEntry)) return ERR_INVALID;
+        const int error = kernel_gate_enter(&ofd_gates[value]);
+        if (error < 0) return error;
+        size_t offset = ofd->offset;
+        WuwaDirEntry entry;
+        long result = fs_read_directory(ofd->inode, &offset, &entry);
+        if (result > 0) {
+            const int copy_error = user_copy_to(process->page_table, buffer, &entry, sizeof(entry));
+            if (copy_error < 0) result = copy_error;
+            else ofd->offset = offset;
+        }
+        const int leave_error = kernel_gate_leave(&ofd_gates[value]);
+        return leave_error < 0 ? leave_error : result;
     }
     if (ofd && ofd->type == OFD_FILE) {
         const int gate_error = kernel_gate_enter(&ofd_gates[value]);

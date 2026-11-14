@@ -1,5 +1,7 @@
 # Spec 26：從 WUFS 路徑載入 ELF
 
+目前核心保留舊 `exec_path`，另提供 `exec_argv(path, argc, argv)`。CLI 可使用 `run <path> [args]`。靜態 ELF 的載入區擴至 `0x400000` 起的 512 KiB，每段依標頭取得 R、RX 或 RW 權限。參數上限為 16 筆且合計 2048 bytes（含字串終止字元）。以下保留首版規格及驗收紀錄。
+
 ## 目標與範圍
 
 讓 shell `run <path>` 以 fork 建立子行程，透過 WUWAOS 自訂系統呼叫從 WUFS 讀取路徑指向的 ELF 並執行；絕對及相對路徑使用現有 CWD 規則。既有 `run worker|quick|counter` 與內建 exec 保留。首版無命令列參數、PATH 搜尋、動態連結與 Linux syscall 相容性。

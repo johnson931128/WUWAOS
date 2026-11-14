@@ -2,11 +2,12 @@
 
 ## 核心路線圖
 
-核心與使用者程式繼續由主機交叉編譯。以下項目來自 [xv6-riscv 核心對照](./plan.md#核心路線圖2026-11-15)。行程生命週期已通過 CLI 驗收，其餘項目待實作及驗收。
+核心與使用者程式繼續由主機交叉編譯。各項實作與驗收範圍見 [xv6-riscv 核心對照](./plan.md#核心路線圖2026-11-15)。
 
-- **程式執行**：外部 ELF 的 `argc`／`argv`，以及放寬固定段布局的評估。
+- **程式執行**：`exec_argv`、CLI `run <path> [args]` 與 512 KiB 的靜態 ELF 載入區已實作。QEMU Flash CLI 通過參數、跨頁 BSS、失敗後保留原行程與 fork 繼承驗證。
 - **行程生命週期**：`wait(-1, &status)` 與 CLI `wait [pid]` 已實作。`kill` 沿用直接子行程限制及 PID 1 保護，孤兒由 scheduler 回收。QEMU 直接開機、Flash 磁碟開機及既有 Thread Stage A 回歸通過。
-- **WUFS 與 FD**：hard link、unlink 後保留開啟引用、`fstat` 資訊與目錄讀取、跨操作 block cache、journal 批次提交。
+- **FD**：`fstat` 和唯讀目錄 FD 已通過基本 QEMU Flash CLI 驗收。
+- **WUFS**：hard link、unlink 後保留開啟引用、跨操作 block cache、journal 批次提交待實作及驗收。
 - **驅動介面**：裝置檔與 UART 中斷。既有 TTY 和 VirtIO 中斷已提供部分基礎。
 - **排程**：多 hart 排程（SMP）、核心態計時器搶占。現有基線為單 hart 的多 thread 排程和使用者態搶占。
 

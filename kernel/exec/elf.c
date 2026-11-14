@@ -11,9 +11,9 @@
 #define PT_INTERP 3U
 #define PT_TLS 7U
 #define PT_GNU_STACK 0x6474e551U
-#define ELF_READ 4U
-#define ELF_WRITE 2U
-#define ELF_EXEC 1U
+#define ELF_READ VM_ELF_READ
+#define ELF_WRITE VM_ELF_WRITE
+#define ELF_EXEC VM_ELF_EXEC
 #define MAX_HEADERS 16U
 
 typedef struct {
@@ -51,7 +51,7 @@ static long elf_load_impl(const char *path, uintptr_t *root_out, uintptr_t *entr
     n = fs_read(path, (size_t)header.phoff, segments, bytes);
     if (n < 0) return n;
     if ((size_t)n != bytes) return ELF_INVALID;
-    unsigned int used = 0;
+    unsigned char used[(USER_ELF_IMAGE_END - USER_ENTRY) / PAGE_SIZE] = {0};
     int entry_valid = 0;
     for (size_t i = 0; i < header.phnum; ++i) {
         ProgramHeader *p = &segments[i];
@@ -61,17 +61,15 @@ static long elf_load_impl(const char *path, uintptr_t *root_out, uintptr_t *entr
         if (p->filesz > p->memsz || p->offset > (uint64_t)size || p->filesz > (uint64_t)size - p->offset ||
             (p->align > 1 && ((p->align & (p->align - 1)) || ((p->vaddr - p->offset) & (p->align - 1))))) return ELF_INVALID;
         if (!p->memsz) continue;
-        uint64_t limit;
-        if (p->flags == (ELF_READ | ELF_EXEC)) limit = USER_DATA;
-        else if (p->flags == (ELF_READ | ELF_WRITE)) limit = USER_DATA + PAGE_SIZE;
-        else return ELF_INVALID;
-        if (p->vaddr < (p->flags & ELF_EXEC ? USER_ENTRY : USER_DATA) || p->vaddr >= limit ||
-            p->memsz > limit - p->vaddr) return ELF_INVALID;
+        if (p->flags != ELF_READ && p->flags != (ELF_READ | ELF_EXEC) &&
+            p->flags != (ELF_READ | ELF_WRITE)) return ELF_INVALID;
+        if (p->vaddr < USER_ENTRY || p->vaddr >= USER_ELF_IMAGE_END ||
+            p->memsz > USER_ELF_IMAGE_END - p->vaddr) return ELF_INVALID;
         size_t first = (size_t)((p->vaddr - USER_ENTRY) / PAGE_SIZE);
         size_t last = (size_t)((p->vaddr + p->memsz - 1 - USER_ENTRY) / PAGE_SIZE);
         for (size_t j = first; j <= last; ++j) {
-            if (used & (1U << j)) return ELF_INVALID;
-            used |= 1U << j;
+            if (used[j]) return ELF_INVALID;
+            used[j] = 1;
         }
         if ((p->flags & ELF_EXEC) && header.entry >= p->vaddr && header.entry - p->vaddr < p->memsz) entry_valid = 1;
     }
@@ -82,7 +80,7 @@ static long elf_load_impl(const char *path, uintptr_t *root_out, uintptr_t *entr
     for (size_t i = 0; i < header.phnum; ++i) {
         ProgramHeader *p = &segments[i];
         if (p->type != PT_LOAD || !p->memsz) continue;
-        result = vm_elf_allow(root, (uintptr_t)p->vaddr, (size_t)p->memsz);
+        result = vm_elf_allow(root, (uintptr_t)p->vaddr, (size_t)p->memsz, p->flags);
         if (result < 0) goto fail;
         unsigned char block[512];
         for (size_t pos = 0; pos < p->memsz;) {

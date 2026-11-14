@@ -109,11 +109,13 @@ void syscall_dispatch(TrapFrame *frame) {
     case SYS_FORK:
         result = process_fork();
         break;
-    case SYS_EXEC_PATH: {
+    case SYS_EXEC_PATH:
+    case SYS_EXEC_ARGV: {
         char path[FS_PATH_MAX];
         result = copy_fs_path(process_current()->page_table, frame->registers[10], path);
         if (result < 0) break;
-        result = process_exec_path(path);
+        result = process_exec_path(path, number == SYS_EXEC_ARGV ? frame->registers[11] : 0,
+                                   number == SYS_EXEC_ARGV ? frame->registers[12] : 0);
         if (result == 0) return;
         break;
     }
@@ -123,6 +125,9 @@ void syscall_dispatch(TrapFrame *frame) {
         if (result == 0) result = io_open(path, (long)frame->registers[11]);
         break;
     }
+    case SYS_FSTAT:
+        result = io_fstat((long)frame->registers[10], frame->registers[11]);
+        break;
     case SYS_CLOSE:
         result = io_close((long)frame->registers[10]);
         break;

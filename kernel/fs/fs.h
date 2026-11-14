@@ -3,6 +3,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include "file_info.h"
 
 /* Boot-only one-time format/mount/replay before scheduler startup; not a runtime remount API. */
 int fs_init(void);
@@ -19,7 +20,9 @@ long fs_replace(const char *path, const void *buffer, size_t length);
 long fs_remove(const char *path);
 long fs_remove_tree(const char *path);
 long fs_copy(const char *source, const char *destination);
-long fs_open_inode(const char *path, int create, uint32_t *inode);
+long fs_open_inode(const char *path, int create, uint32_t *inode, uint32_t *type);
+long fs_inode_info(uint32_t inode, WuwaFileInfo *info);
+long fs_read_directory(uint32_t inode, size_t *offset, WuwaDirEntry *entry);
 long fs_inode_size(uint32_t inode);
 long fs_read_inode(uint32_t inode, size_t offset, void *buffer, size_t length);
 long fs_write_inode(uint32_t inode, size_t offset, const void *buffer, size_t length);

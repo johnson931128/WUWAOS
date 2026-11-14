@@ -13,6 +13,7 @@
 - **現況**：`exec_path` 可從 WUFS 載入固定布局的靜態 RV64 ELF，入口 `a0`／`a1` 為零。xv6 的 `exec(path, argv)` 會在新位址空間建立參數字串和指標表，由 `main(argc, argv)` 讀取。 [WUWAOS Spec 26](../docs/SPEC-26-elf-exec.md) · [xv6 exec.c](https://github.com/mit-pdos/xv6-riscv/blob/fa2ddcb/kernel/exec.c)
 - **工作**：定義外部程式的參數傳遞、參數數量與總大小上限、指標檢查和堆疊配置。先驗證並建好新映像及其參數，成功後再替換舊位址空間。另行評估如何放寬固定段布局，以及對 VM、權限、fork 和 swap 的影響。
 - **驗收**：交叉編譯的 ELF 收到正確的零或多筆參數，字串、尾端空指標與堆疊對齊符合 ABI。非法指標、引數超限或載入失敗時，原行程可繼續執行，新資源可回收。多 thread 下保有既有 `ERR_BUSY` 行為，並回歸 fork／exec／swap。
+- **已實作**：保留 `exec_path`，新增 `exec_argv`，CLI 支援 `run <path> [args]`。靜態 ELF 的可載入區擴為 512 KiB，支援每段 R／RX／RW，保留一頁使用者主堆疊。QEMU Flash CLI 驗證參數、跨頁 BSS、錯誤指標後原行程仍可執行及 fork 繼承。既有直接開機回歸涵蓋 swap。參數數量超限已驗證，多 thread 的新入口專項為 `NOT_RUN`。
 
 ### 行程等待、終止與孤兒回收
 
@@ -31,6 +32,7 @@
 - **現況**：WUWAOS 提供路徑式 `fs_list`，一般 WUFS `open` 只接受普通檔案。xv6 提供 `fstat(fd)`，也能開啟並讀取目錄項目。 [WUWAOS fs.c](../kernel/fs/fs.c) · [xv6 file.c](https://github.com/mit-pdos/xv6-riscv/blob/fa2ddcb/kernel/file.c) · [xv6 sysfile.c](https://github.com/mit-pdos/xv6-riscv/blob/fa2ddcb/kernel/sysfile.c)
 - **工作**：定義 FD 查詢可回傳的類型、大小與 inode 編號，以及目錄讀取的資料格式、位置和存取規則。連結數與 unlink 後仍持有 FD 的查詢行為，需與 inode 生命週期規格一致。
 - **驗收**：可從 FD 查到正確 metadata 並逐筆讀完目錄。驗證唯讀開啟、錯誤 FD、非法使用者緩衝區及並行關閉。若支援連結數，須能觀察到 link／unlink 後的正確值。
+- **已實作**：`fstat` 回傳檔案大小、類型、inode 和連結數欄位。唯讀目錄 FD 以 `WuwaDirEntry` 逐筆讀取，並與 `dup` 共用位置。QEMU Flash CLI 驗證普通檔案與目錄資訊、目錄 EOF、唯讀限制、錯誤 FD、非法指標和不足的讀取緩衝區。並行關閉與 WUFS 新版連結數為 `NOT_RUN`。
 
 ### Block cache 與 journal 批次提交
 

@@ -1244,7 +1244,7 @@ static long fs_write_impl(const char *path, const void *buffer, size_t length) {
     return (long)length;
 }
 
-static long fs_open_inode_impl(const char *path, int create, uint32_t *number) {
+static long fs_open_inode_impl(const char *path, int create, uint32_t *number, uint32_t *type) {
     if (!mounted) return -22;
     uint32_t inode_number;
     int found = path_lookup(path, &inode_number);
@@ -1256,8 +1256,9 @@ static long fs_open_inode_impl(const char *path, int create, uint32_t *number) {
     if (found < 0) return found;
     Inode inode;
     if (inode_read(inode_number, &inode) < 0) return -5;
-    if (inode.type != FS_TYPE_FILE) return -21;
+    if (inode.type != FS_TYPE_FILE && inode.type != FS_TYPE_DIRECTORY) return -21;
     *number = inode_number;
+    *type = inode.type;
     return 0;
 }
 
@@ -1436,9 +1437,42 @@ long fs_read(const char *path, size_t offset, void *buffer, size_t length) {
     return error < 0 ? error : fs_scope_finish(fs_read_impl(path, offset, buffer, length));
 }
 
-long fs_open_inode(const char *path, int create, uint32_t *number) {
+long fs_open_inode(const char *path, int create, uint32_t *number, uint32_t *type) {
     int error = fs_scope_enter();
-    return error < 0 ? error : fs_scope_finish(fs_open_inode_impl(path, create, number));
+    return error < 0 ? error : fs_scope_finish(fs_open_inode_impl(path, create, number, type));
+}
+
+static long inode_info(uint32_t number, WuwaFileInfo *info) {
+    Inode inode;
+    if (inode_read(number, &inode) < 0) return ERR_IO;
+    *info = (WuwaFileInfo){ .size = inode.size, .inode = number, .type = inode.type, .links = 1 };
+    return 0;
+}
+
+long fs_inode_info(uint32_t number, WuwaFileInfo *info) {
+    int error = fs_scope_enter();
+    return error < 0 ? error : fs_scope_finish(inode_info(number, info));
+}
+
+static long read_directory(uint32_t number, size_t *offset, WuwaDirEntry *result) {
+    Inode inode;
+    if (inode_read(number, &inode) < 0) return ERR_IO;
+    if (inode.type != FS_TYPE_DIRECTORY) return ERR_INVALID;
+    while (*offset < inode.size / sizeof(DirectoryEntry)) {
+        DirectoryEntry entry;
+        if (dir_entry_read(&inode, (uint32_t)*offset, &entry) < 0) return ERR_IO;
+        ++*offset;
+        if (!entry.name[0]) continue;
+        result->inode = entry.inode;
+        for (size_t i = 0; i < sizeof(entry.name); ++i) result->name[i] = entry.name[i];
+        return sizeof(*result);
+    }
+    return 0;
+}
+
+long fs_read_directory(uint32_t number, size_t *offset, WuwaDirEntry *entry) {
+    int error = fs_scope_enter();
+    return error < 0 ? error : fs_scope_finish(read_directory(number, offset, entry));
 }
 
 long fs_inode_size(uint32_t number) {

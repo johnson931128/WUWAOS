@@ -65,6 +65,7 @@ long read(long fd, char *buffer, unsigned long length) {
 }
 
 long open(const char *path, long flags) { return syscall3(SYS_OPEN, (long)path, flags, 0); }
+long fstat(long fd, WuwaFileInfo *info) { return syscall3(SYS_FSTAT, fd, (long)info, 0); }
 long close(long fd) { return syscall3(SYS_CLOSE, fd, 0, 0); }
 long dup2(long oldfd, long newfd) { return syscall3(SYS_DUP2, oldfd, newfd, 0); }
 long dup(long oldfd) { return syscall3(SYS_DUP, oldfd, 0, 0); }
@@ -78,6 +79,9 @@ long pipeline(long pids[2]) { return syscall3(SYS_PIPELINE, (long)pids, 0, 0); }
 long trace(long enabled) { return syscall3(SYS_TRACE, enabled, 0, 0); }
 long fork(void) { return syscall3(SYS_FORK, 0, 0, 0); }
 long exec_path(const char *path) { return syscall3(SYS_EXEC_PATH, (long)path, 0, 0); }
+long exec_argv(const char *path, unsigned long argc, const char *const argv[]) {
+    return syscall3(SYS_EXEC_ARGV, (long)path, (long)argc, (long)argv);
+}
 long exec(long program) { return syscall3(SYS_EXEC, program, 0, 0); }
 long exec_arg(long program, const char *argument) {
     return syscall3(SYS_EXEC, program, (long)argument, 0);

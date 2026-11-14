@@ -102,13 +102,11 @@ static int parse(char *line, Stage stages[STAGE_LIMIT], char storage[LINE_BYTES]
 }
 
 static int external_stage(const Stage *stage) {
-    if (stage->argc == 1) {
-        const char *name = stage->argv[0];
-        if (name[0] == '/') return 1;
-        while (*name) if (*name++ == '/') return 1;
-        return 0;
-    }
-    return same(stage->argv[0], "run") && stage->argc == 2;
+    const int skip_run = same(stage->argv[0], "run");
+    if (stage->argc <= skip_run) return 0;
+    const char *name = stage->argv[skip_run];
+    while (*name) if (*name++ == '/') return 1;
+    return skip_run && stage->argc > 2;
 }
 
 static void run_cat(const Stage *stage) {
@@ -167,8 +165,10 @@ static void child_run(const Stage *stage) {
     if (same(stage->argv[0], "writer") && stage->argc == 1) { exec(PROGRAM_WRITER); error_number("writer exec error ", ERR_INVALID); exit(127); }
     if (same(stage->argv[0], "reader") && stage->argc == 1) { exec(PROGRAM_READER); error_number("reader exec error ", ERR_INVALID); exit(127); }
     if (external_stage(stage)) {
-        const char *path = same(stage->argv[0], "run") ? stage->argv[1] : stage->argv[0];
-        const long result = exec_path(path);
+        const int start = same(stage->argv[0], "run");
+        const unsigned long argc = (unsigned long)(stage->argc - start);
+        const long result = argc == 1 ? exec_path(stage->argv[start]) :
+                            exec_argv(stage->argv[start], argc, (const char *const *)&stage->argv[start]);
         error_number("exec error ", result);
         exit(127);
     }
@@ -245,6 +245,6 @@ int shell_exec_line(char *line) {
     }
     const int is_echo = same(stages[0].argv[0], "echo");
     const int is_cat = same(stages[0].argv[0], "cat");
-    if (!has_operator && !is_echo && !is_cat) return 0;
+    if (!has_operator && !is_echo && !is_cat && !external_stage(&stages[0])) return 0;
     return run_stages(stages, count);
 }
