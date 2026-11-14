@@ -43,7 +43,7 @@ PTE 是 CPU 查找的結構；補充表是核心用來決定「缺頁時去哪�
 
 ## 何時置換、如何選頁
 
-預設全系統使用者常駐預算為 64 頁，也就是 256 KiB；這不是整台 QEMU 的 RAM 大小。頁框預算達上限，或底層沒有可用實體頁時，VM 嘗試置換。
+預設全系統使用者常駐預算為 128 頁，也就是 512 KiB。頁框預算達上限，或底層沒有可用實體頁時，VM 嘗試置換。
 
 FIFO 掃描補充表，選入駐序號最小且未固定的常駐頁。讀寫命中不改入駐次序，所以不是 LRU（最近最少使用）。最多掃描 17 份空間（16 個行程加一份 exec 備用）、每份 262 頁記錄；核心與分頁表不參與置換。
 
@@ -74,7 +74,7 @@ FIFO 掃描補充表，選入駐序號最小且未固定的常駐頁。讀寫命
 | `VmPage.pins` | 非 0 時不可置換。fault handler 也會 pin 可能跨頁的指令 code page。 |
 | `VmPage.dirty`、PTE `D` | 軟體修改狀態與硬體 dirty bit 合併判定；dirty 頁不能直接丟棄。 |
 | `saved_entry` | 暫存 victim leaf PTE；I/O 失敗時還原並執行 `sfence.vma`。 |
-| `resident`、`frame_limit` | 全系統常駐頁數與預算。預設 64 頁，最小預算 8 頁。 |
+| `resident`、`frame_limit` | 全系統常駐頁數與預算。預設 128 頁，最小預算 8 頁。 |
 | Swap bitmap | `swap.c` 的槽位配置圖；slot 由 1 起算，0 不代表磁碟位置。 |
 
 主要函式（精確型別見標頭檔）：
@@ -97,7 +97,7 @@ FIFO 掃描補充表，選入駐序號最小且未固定的常駐頁。讀寫命
 
 `sbrk` 只保留 heap 合法範圍，第一次存取才分配頁框。fork 複製私有內容，包含已換出資料；exec 成功後才回收舊空間；wait 與孤兒回收歸還頁框、槽位和私有分頁表。
 
-目前共用限制由 [include/vm_limits.h（GitHub）](https://github.com/johnson931128/WUWAOS/blob/main/include/vm_limits.h) 定義：每頁 4096 bytes、heap 起點 0x1000000、最多 256 個 heap 頁、預設 64 個常駐頁框、最小預算 8 頁。
+目前共用限制由 [include/vm_limits.h（GitHub）](https://github.com/johnson931128/WUWAOS/blob/main/include/vm_limits.h) 定義。每頁 4096 bytes，heap 起點為 0x1000000，每個行程最多有 256 個 heap 頁。全系統預設有 128 個常駐頁框的預算，最小可設 8 頁。
 
 ## 在 QEMU 觀察
 
@@ -122,7 +122,7 @@ mem write 11 76
 vmstat
 mem read 0
 mem free
-vmstat limit 64
+vmstat limit 128
 ```
 
 第一個 read 應讀到零；填寫頁數超過預算後，vmstat 應顯示換出／換入或 clean drop（直接丟棄乾淨頁）。再次讀第 0 頁，首／中／尾內容應保持 65。實際計數也包含 shell 自己的程式碼、資料與堆疊，不能只以 heap 頁數推算。

@@ -240,7 +240,7 @@ Sv39 將虛擬位址拆成 L2／L1／L0 三個 9-bit 索引與 12-bit 頁內位�
 - vm_walk 用 `(address >> (12 + 9 * level)) & 511` 逐層取索引，需要時配置下層表。核心 vm_map 僅安裝 4 KiB 映射，拒絕覆蓋既有 PTE。
 - resident_page 取得頁框並完整讀取 swap 或填入映像／零頁，成功後才公布有效 PTE；kernel copyout 主動標 dirty，使用者直接寫入則由硬體 D bit 記錄。換入失敗保留原 slot，不公布部分讀取的頁面。
 - evict_one 掃描全域補充表，選 arrival 最小、未 pin 的常駐頁。命中不更新 arrival，因此是 FIFO，不是 LRU。dirty 頁保存完整 PTE、pin victim、先清除 PTE 並執行 `sfence.vma`，再等待八個 swap 磁區寫入；同一 VM Gate 使觸及該位址的其他行程 fault 後等待。寫入失敗時 restore PTE、flush、保持 RAM 為 dirty authoritative copy，並釋放本次新配 slot；成功才公布 backing slot、釋放 frame。撤銷至 commit/restore 由 cancel-defer 保護。既有 slot 部分覆寫失敗時也保留 dirty RAM，不把 slot 當作有效新副本。
-- 使用者常駐預算預設 64 頁、最小可設 8 頁；超過預算或 page_alloc 無可用頁時嘗試置換。沒有可安全換出的頁面回 -12；磁碟失敗回 -5。QEMU RAM 總量仍是 128 MiB。
+- 使用者常駐預算預設 128 頁（512 KiB）、最小可設 8 頁；超過預算或 page_alloc 無可用頁時嘗試置換。沒有可安全換出的頁面回 -12；磁碟失敗回 -5。QEMU RAM 總量仍是 128 MiB。
 - vm_handle_fault 依 scause 12／13／15 檢查執行／讀／寫權限，合法者補頁；處理時 pin 住目前指令可能占用的 code 頁，避免 swap full 時 code 與 operand 互相淘汰。trap_handler 成功後重試同一 sepc，不像 ecall 加 4；非法位址／權限回 -14 終止該行程。
 - vm_sbrk 只調整合法 heap 範圍；縮小時釋放不再涵蓋的整頁及 slot，空的分頁表暫留到位址空間銷毀。部分頁縮小再擴張不保證既有 bytes 清零。
 - vm_clone 複製常駐內容時 pin 來源頁；已換出的內容透過核心常駐暫存頁複製至獨立 slot。未曾使用的頁不需載入，子行程保留相同映像／零頁來源。任何失敗由 process_fork 銷毀不完整子空間，父內容保留。
