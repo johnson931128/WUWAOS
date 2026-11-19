@@ -17,6 +17,7 @@
 #define PTE_A (1UL << 6)
 #define PTE_D (1UL << 7)
 #define PTE_COW (1UL << 8) /* Sv39 RSW[0], for originally writable user leaves. */
+#define PTE_FLAGS ((1UL << 10) - 1)
 #define PTE_LEAF (PTE_R | PTE_W | PTE_X)
 #define KERNEL_BASE 0x80200000UL
 #define UART_BASE 0x10000000UL
@@ -57,6 +58,7 @@ static size_t kernel_guard_count;
 static size_t mmio_count, resident, frame_limit = VM_DEFAULT_FRAMES;
 static uint64_t next_arrival;
 static KernelGate vm_gate;
+static const VmSpace *fork_source; /* Excluded from eviction until fork preparation ends. */
 static struct {
     size_t faults, soft_loads, images, zeroes, ins, outs, drops, invalid, io_errors, copies;
 } stats;
@@ -199,11 +201,11 @@ static int evict_one(void) {
         VmSpace *owner = 0;
         size_t selected = 0;
         for (size_t s = 0; s < PROCESS_LIMIT + 1; ++s) {
-            if (spaces[s].root == 0 || running_remotely(spaces[s].root)) continue;
+            if (spaces[s].root == 0 || &spaces[s] == fork_source || running_remotely(spaces[s].root)) continue;
             for (size_t i = 0; i < SPACE_PAGES; ++i) {
                 VmPage *page = &spaces[s].pages[i];
                 if (page->physical && !page->pins && page->arrival > after &&
-                    (victim == 0 || page->arrival < victim->arrival)) {
+                    (victim == 0 || page->arrival < victim->arrival) && *frame_ref(page->physical) == 1) {
                     victim = page; owner = &spaces[s]; selected = i;
                 }
             }
@@ -293,11 +295,44 @@ static void image_for(long program, const unsigned char **start, size_t *length)
     *length = (uintptr_t)end - (uintptr_t)*start;
 }
 
+static int resolve_cow(VmPage *page, uint64_t *entry, uintptr_t *physical) {
+    const uintptr_t source = page->physical;
+    const unsigned int refs = *frame_ref(source);
+    if (!refs) vm_panic("COW source has no references");
+    uintptr_t target = source;
+    if (refs > 1) {
+        ++page->pins;
+        const int error = obtain_frame(&target);
+        --page->pins;
+        if (error < 0) return error;
+        for (size_t i = 0; i < PAGE_SIZE; ++i)
+            ((unsigned char *)target)[i] = ((const unsigned char *)source)[i];
+        retain_frame(target);
+        page->physical = target;
+        page->arrival = ++next_arrival;
+    }
+    page->dirty = 1;
+    const uint64_t flags = (*entry & PTE_FLAGS & ~PTE_COW) | PTE_W | PTE_A | PTE_D;
+    *entry = ((target >> 12) << 10) | flags;
+    flush();
+    if (target != source) release_frame(source);
+    *physical = target;
+    return 0;
+}
+
 static int resident_page(VmSpace *space, size_t index, int write, uintptr_t *physical) {
     VmPage *page = &space->pages[index];
     uint64_t *entry = vm_walk(space->root, page_address(index), 1);
     if (entry == 0) return ERR_NO_MEMORY;
     const uint64_t old_entry = *entry;
+    if (write && page->physical) {
+        if (old_entry & PTE_COW) {
+            if (!(permissions(space, index) & PTE_W)) return ERR_ADDRESS;
+            return resolve_cow(page, entry, physical);
+        }
+        /* The ELF loader can initialize read-only leaves of its private image. */
+        if (*frame_ref(page->physical) != 1) return ERR_ADDRESS;
+    }
     if (page->physical == 0) {
         uintptr_t frame;
         const int error = obtain_frame(&frame);
@@ -484,29 +519,22 @@ static uintptr_t vm_create_impl(long program) {
     for (size_t i = 0; i < 512; ++i) table[i] = common[i];
     table[0] = 0;
     const uintptr_t low = table_alloc();
-    if (low == 0) { vm_destroy(root); return 0; }
+    if (low == 0) { vm_destroy_impl(root); return 0; }
     const uint64_t *shared_low = (const uint64_t *)entry_address(common[0]);
     for (size_t i = 0; i < 512; ++i) ((uint64_t *)low)[i] = shared_low[i];
     table[0] = table_entry(low);
     return root;
 }
 
-static int vm_clone_impl(uintptr_t destination, uintptr_t source) {
-    VmSpace *to = find_space(destination), *from = find_space(source);
-    if (to == 0 || from == 0) return ERR_ADDRESS;
+static int vm_clone_impl(VmSpace *to, VmSpace *from) {
     to->heap_end = from->heap_end;
     for (size_t i = 0; i < ELF_IMAGE_PAGES; ++i)
         to->elf_permissions[i] = from->elf_permissions[i];
     to->stack_slots = from->stack_slots;
     for (size_t i = 0; i < SPACE_PAGES; ++i) {
-        VmPage *page = &from->pages[i];
+        const VmPage *page = &from->pages[i];
         if (page->physical) {
-            ++page->pins;
-            uintptr_t target;
-            const int error = resident_page(to, i, 1, &target);
-            if (error < 0) { --page->pins; return error; }
-            for (size_t j = 0; j < PAGE_SIZE; ++j) ((unsigned char *)target)[j] = ((unsigned char *)page->physical)[j];
-            --page->pins;
+            if (!vm_walk(to->root, page_address(i), 1)) return ERR_NO_MEMORY;
         } else if (page->slot) {
             const unsigned int slot = swap_alloc();
             if (slot == 0) return ERR_NO_MEMORY;
@@ -520,6 +548,36 @@ static int vm_clone_impl(uintptr_t destination, uintptr_t source) {
             ++stats.copies;
         }
     }
+    if (thread_current()->kill_pending) return ERR_INTERRUPTED;
+
+    /* All operations that can fail or block precede the PTE commit. */
+    int downgraded = 0;
+    for (size_t i = 0; i < SPACE_PAGES; ++i) {
+        const VmPage *page = &from->pages[i];
+        if (!page->physical) continue;
+        const uintptr_t address = page_address(i);
+        uint64_t *source = vm_walk(from->root, address, 0);
+        uint64_t *destination = vm_walk(to->root, address, 0);
+        if (!source || !(*source & PTE_V) || entry_address(*source) != page->physical ||
+            !destination || *destination || !*frame_ref(page->physical))
+            vm_panic("Invalid resident fork mapping");
+        const uint64_t saved = *source;
+        uint64_t shared = saved;
+        if (permissions(from, i) & PTE_W) shared = (saved & ~PTE_W) | PTE_COW;
+        if (shared != saved) {
+            *source = shared;
+            downgraded = 1;
+        }
+        retain_frame(page->physical);
+        to->pages[i] = (VmPage){
+            .physical = page->physical,
+            .arrival = page->arrival,
+            /* The child has no slot backing any data inherited from swap. */
+            .dirty = page->dirty || (saved & PTE_D) || page->slot,
+        };
+        *destination = shared;
+    }
+    if (downgraded) flush();
     return 0;
 }
 
@@ -714,12 +772,22 @@ int vm_handle_fault(uintptr_t root, uintptr_t address, unsigned long cause, uint
     return leave_error < 0 ? leave_error : result;
 }
 
-int vm_clone(uintptr_t destination, uintptr_t source) {
+int vm_fork(uintptr_t source, uintptr_t *destination) {
     const int error = vm_scope_enter();
     if (error < 0) return error;
-    const int result = vm_clone_impl(destination, source);
-    const int leave_error = vm_scope_leave();
-    return leave_error < 0 ? leave_error : result;
+    VmSpace *from = find_space(source);
+    int result = ERR_ADDRESS;
+    if (from) {
+        fork_source = from;
+        const uintptr_t root = vm_create_impl(from->program);
+        if (thread_current()->kill_pending) result = ERR_INTERRUPTED;
+        else result = root ? vm_clone_impl(find_space(root), from) : ERR_NO_MEMORY;
+        fork_source = 0;
+        if (result < 0) vm_destroy_impl(root);
+        else *destination = root;
+    }
+    if (vm_scope_leave() < 0) vm_panic("Fork VM scope imbalance");
+    return result;
 }
 
 int vm_elf_allow(uintptr_t root, uintptr_t address, size_t length, unsigned flags) {

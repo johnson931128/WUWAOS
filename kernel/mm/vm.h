@@ -30,7 +30,8 @@ void vm_map_mmio(uintptr_t base);
 uintptr_t vm_create(long program);
 int vm_elf_allow(uintptr_t root, uintptr_t address, size_t length, unsigned flags);
 int vm_elf_write(uintptr_t root, uintptr_t address, const void *buffer, size_t length);
-int vm_clone(uintptr_t destination, uintptr_t source);
+/* Create an unpublished child root. Failure leaves the source mappings intact. */
+int vm_fork(uintptr_t source, uintptr_t *destination);
 int vm_destroy(uintptr_t root);
 int vm_try_destroy(uintptr_t root);
 void vm_use_kernel(void);

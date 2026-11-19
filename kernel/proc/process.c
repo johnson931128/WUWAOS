@@ -472,7 +472,7 @@ static void mark_zombie(Process *process, const char *reason) {
     process->state = PROCESS_ZOMBIE;
 }
 
-static long create_process(long program, long parent_pid, int publish) {
+static long create_process(long program, long parent_pid, uintptr_t fork_source, int publish) {
     int slot = -1;
     for (int i = 0; i < PROCESS_LIMIT; ++i) {
         if (processes[i].state == PROCESS_UNUSED) {
@@ -506,10 +506,12 @@ static long create_process(long program, long parent_pid, int publish) {
     process->state = PROCESS_NEW;
     process->thread = thread_allocate(process);
     if (!process->thread) { process->state = PROCESS_UNUSED; return ERR_NO_SLOT; }
-    process->page_table = vm_create(program);
-    if (process->page_table == 0) {
+    int error = 0;
+    if (fork_source) error = vm_fork(fork_source, &process->page_table);
+    else process->page_table = vm_create(program);
+    if (!process->page_table) {
         discard_initial_thread(process);
-        return ERR_NO_MEMORY;
+        return error < 0 ? error : ERR_NO_MEMORY;
     }
     process->thread->user_stack_top = USER_STACK_TOP;
     process->thread->frame = (TrapFrame *)(process->thread->kernel_stack_top - TF_SIZE);
@@ -539,7 +541,7 @@ void process_init(void) {
     thread_init();
     scheduler_init();
     workstate_init();
-    if (create_process(0, 0, 1) != 1) {
+    if (create_process(0, 0, 0, 1) != 1) {
         console_puts("[process] Cannot create init\n");
         kernel_idle();
     }
@@ -549,7 +551,7 @@ long process_start_gui_terminal(TtyOutputConsumer consumer, void *context, TtyId
     if (!consumer || !id_out) return ERR_INVALID;
     const TtyId id = tty_session_create(consumer, context);
     if (!id) return ERR_NO_SLOT;
-    const long pid = create_process(0, 0, 0);
+    const long pid = create_process(0, 0, 0, 0);
     if (pid < 0) {
         (void)tty_session_close(id);
         tty_release(id);
@@ -582,7 +584,7 @@ long process_spawn(long program) {
         return ERR_INVALID;
     }
     Process *parent = process_current();
-    const long pid = create_process(program, parent->pid, 0);
+    const long pid = create_process(program, parent->pid, 0, 0);
     if (pid < 0) return pid;
     Process *child = find_pid(pid);
     io_inherit(child, parent);
@@ -596,38 +598,13 @@ long process_fork(void) {
     if (parent->state != PROCESS_LIVE || parent->image_changing || thread_process_slot_count(parent) != 1)
         return ERR_BUSY;
     parent->image_changing = 1;
-    const long pid = create_process(parent->program, parent->pid, 0);
+    const long pid = create_process(parent->program, parent->pid, parent->page_table, 0);
     if (pid < 0) {
         parent->image_changing = 0;
         return pid;
     }
     Process *child = find_pid(pid);
-    if (parent->state != PROCESS_LIVE || caller->kill_pending || !parent->image_changing) {
-        if (vm_destroy(child->page_table) == 0) {
-            child->page_table = 0; discard_initial_thread(child);
-        } else { child->parent_pid = 0; mark_zombie(child, "fork cancellation cleanup deferred"); }
-        parent->image_changing = 0;
-        return ERR_INTERRUPTED;
-    }
-    const int copy_error = vm_clone(child->page_table, parent->page_table);
-    if (copy_error < 0) {
-        parent->image_changing = 0;
-        if (vm_destroy(child->page_table) == 0) {
-            child->page_table = 0;
-            discard_initial_thread(child);
-        } else {
-            child->parent_pid = 0;
-            mark_zombie(child, "fork cleanup deferred");
-        }
-        return copy_error;
-    }
-    if (parent->state != PROCESS_LIVE || caller->kill_pending) {
-        if (vm_destroy(child->page_table) == 0) {
-            child->page_table = 0; discard_initial_thread(child);
-        } else { child->parent_pid = 0; mark_zombie(child, "fork cancellation cleanup deferred"); }
-        parent->image_changing = 0;
-        return ERR_INTERRUPTED;
-    }
+    /* VM checked cancellation before committing. No operation below waits. */
     volatile unsigned char *to = (volatile unsigned char *)child->thread->frame;
     const unsigned char *from = (const unsigned char *)caller->frame;
     for (size_t i = 0; i < sizeof(TrapFrame); ++i) {
