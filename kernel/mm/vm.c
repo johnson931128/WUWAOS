@@ -182,7 +182,6 @@ static uint64_t permissions(const VmSpace *space, size_t index) {
     return PTE_U | PTE_R | (index < USER_CODE_SIZE / PAGE_SIZE ? PTE_X : PTE_W);
 }
 
-/* FIFO among eligible pages. Hits never change arrival; pinned pages cannot move. */
 static int running_remotely(uintptr_t root) {
     for (int i = 0; i < THREAD_LIMIT; ++i) {
         const Thread *thread = thread_slot(i);
@@ -192,82 +191,123 @@ static int running_remotely(uintptr_t root) {
     return 0;
 }
 
+typedef struct {
+    VmPage *page;
+    uint64_t *entry;
+    uint64_t saved;
+    unsigned int slot;
+    int dirty;
+} EvictionMapping;
+
+/* Fork shares a frame only at the same page index in each address space. */
+static size_t collect_eviction_mappings(uintptr_t physical, size_t index, EvictionMapping *mappings) {
+    size_t count = 0;
+    for (size_t s = 0; s < PROCESS_LIMIT + 1; ++s) {
+        VmSpace *space = &spaces[s];
+        VmPage *page = &space->pages[index];
+        if (!space->root || page->physical != physical) continue;
+        if (page->pins || space == fork_source || running_remotely(space->root)) return 0;
+        uint64_t *entry = vm_walk(space->root, page_address(index), 0);
+        if (!entry || !(*entry & PTE_V) || entry_address(*entry) != physical)
+            vm_panic("Resident metadata/PTE mismatch");
+        const uint64_t saved = *entry;
+        mappings[count++] = (EvictionMapping){
+            .page = page, .entry = entry, .saved = saved, .slot = page->slot,
+            .dirty = page->dirty || (saved & PTE_D),
+        };
+    }
+    if (count != *frame_ref(physical)) vm_panic("Resident frame reference mismatch");
+    return count;
+}
+
+static void release_new_eviction_slots(const EvictionMapping *mappings, size_t count) {
+    for (size_t i = 0; i < count; ++i)
+        if (mappings[i].slot && mappings[i].slot != mappings[i].page->slot)
+            swap_free(mappings[i].slot);
+}
+
+static int evict_frame(uintptr_t physical, EvictionMapping *mappings, size_t count) {
+    int needs_io = 0;
+    for (size_t i = 0; i < count; ++i) {
+        EvictionMapping *mapping = &mappings[i];
+        if (!mapping->dirty) continue;
+        needs_io = 1;
+        if (!mapping->slot) mapping->slot = swap_alloc();
+        if (!mapping->slot) {
+            release_new_eviction_slots(mappings, count);
+            return ERR_NO_MEMORY;
+        }
+    }
+
+    /* Keep the VM gate across I/O. Faults on revoked mappings wait until
+       the entire operation commits or rolls back, including on other harts. */
+    if (needs_io) {
+        const int error = thread_cancel_defer_enter();
+        if (error < 0) {
+            release_new_eviction_slots(mappings, count);
+            return error;
+        }
+    }
+    for (size_t i = 0; i < count; ++i) *mappings[i].entry = 0;
+    flush();
+
+    int result = 0;
+    for (size_t i = 0; i < count; ++i) {
+        if (mappings[i].dirty && swap_write(mappings[i].slot, physical) < 0) {
+            ++stats.io_errors;
+            result = ERR_IO;
+            break;
+        }
+    }
+    if (result < 0) {
+        /* A prior slot may be partially overwritten. The restored RAM
+           mapping remains dirty and authoritative until a full write. */
+        for (size_t i = 0; i < count; ++i) *mappings[i].entry = mappings[i].saved;
+        flush();
+        release_new_eviction_slots(mappings, count);
+    } else {
+        for (size_t i = 0; i < count; ++i) {
+            const EvictionMapping *mapping = &mappings[i];
+            if (mapping->dirty) ++stats.outs;
+            else ++stats.drops;
+            mapping->page->slot = mapping->slot;
+            mapping->page->physical = 0;
+            mapping->page->dirty = 0;
+            release_frame(physical);
+        }
+    }
+    if (needs_io && thread_cancel_defer_leave() < 0) vm_panic("Cancel defer imbalance after swap-out");
+    return result;
+}
+
+/* FIFO among eligible frames. Shared mappings have the same arrival. */
 static int evict_one(void) {
     if (thread_runtime_nonblocking()) return ERR_BUSY;
     uint64_t after = 0;
     int error = ERR_NO_MEMORY;
     for (;;) {
         VmPage *victim = 0;
-        VmSpace *owner = 0;
         size_t selected = 0;
         for (size_t s = 0; s < PROCESS_LIMIT + 1; ++s) {
             if (spaces[s].root == 0 || &spaces[s] == fork_source || running_remotely(spaces[s].root)) continue;
             for (size_t i = 0; i < SPACE_PAGES; ++i) {
                 VmPage *page = &spaces[s].pages[i];
                 if (page->physical && !page->pins && page->arrival > after &&
-                    (victim == 0 || page->arrival < victim->arrival) && *frame_ref(page->physical) == 1) {
-                    victim = page; owner = &spaces[s]; selected = i;
+                    (victim == 0 || page->arrival < victim->arrival)) {
+                    victim = page;
+                    selected = i;
                 }
             }
         }
         if (victim == 0) return error;
         after = victim->arrival;
-        uint64_t *entry = vm_walk(owner->root, page_address(selected), 0);
-        if (entry == 0 || !(*entry & PTE_V)) vm_panic("Resident metadata/PTE mismatch");
-        const uint64_t saved_entry = *entry;
-        const int dirty = victim->dirty || (saved_entry & PTE_D);
-        unsigned int slot = victim->slot;
-        int allocated_slot = 0;
-        if (dirty) {
-            if (slot == 0) {
-                slot = swap_alloc();
-                allocated_slot = slot != 0;
-            }
-            if (slot == 0) continue;
-
-            /* Keep the whole revoke/write/restore-or-commit sequence atomic
-               with respect to cancellation. Other processes that touch this
-               address fault on the missing PTE and wait for vm_gate. */
-            const int defer_enter_error = thread_cancel_defer_enter();
-            if (defer_enter_error < 0) {
-                if (allocated_slot) swap_free(slot);
-                return defer_enter_error;
-            }
-            ++victim->pins;
-            *entry = 0;
-            flush();
-            if (swap_write(slot, victim->physical) < 0) {
-                *entry = saved_entry;
-                flush();
-                victim->dirty = 1;
-                --victim->pins;
-                if (allocated_slot) swap_free(slot);
-                ++stats.io_errors;
-                error = ERR_IO;
-                const int defer_error = thread_cancel_defer_leave();
-                if (defer_error < 0) return defer_error;
-                continue; /* RAM remains authoritative and dirty. */
-            }
-            victim->slot = slot;
-            ++stats.outs;
-            victim->dirty = 0;
-            release_frame(victim->physical);
-            victim->physical = 0;
-            --victim->pins;
-            const int defer_error = thread_cancel_defer_leave();
-            if (defer_error < 0) vm_panic("Cancel defer imbalance after swap-out");
-            return 0;
-        }
-
-        ++victim->pins;
-        *entry = 0;
-        flush(); /* Revoke the old virtual mapping before reusing its frame. */
-        ++stats.drops;
-        release_frame(victim->physical);
-        victim->physical = 0;
-        victim->dirty = 0;
-        --victim->pins;
-        return 0;
+        const uintptr_t physical = victim->physical;
+        EvictionMapping mappings[PROCESS_LIMIT + 1];
+        const size_t count = collect_eviction_mappings(physical, selected, mappings);
+        if (!count) continue;
+        const int result = evict_frame(physical, mappings, count);
+        if (result == ERR_IO) error = ERR_IO;
+        else if (result != ERR_NO_MEMORY) return result;
     }
 }
 
