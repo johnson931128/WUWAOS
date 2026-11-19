@@ -16,6 +16,7 @@
 #define PTE_U (1UL << 4)
 #define PTE_A (1UL << 6)
 #define PTE_D (1UL << 7)
+#define PTE_COW (1UL << 8) /* Sv39 RSW[0], for originally writable user leaves. */
 #define PTE_LEAF (PTE_R | PTE_W | PTE_X)
 #define KERNEL_BASE 0x80200000UL
 #define UART_BASE 0x10000000UL
@@ -46,6 +47,10 @@ typedef struct {
 
 /* Metadata only; physical user memory is never preallocated here. */
 static VmSpace spaces[PROCESS_LIMIT + 1];
+/* One reference per resident user mapping, under vm_gate. The allocator
+   continues to manage page tables and other kernel allocations separately. */
+static uint8_t frame_refs[(RAM_END - RAM_BASE) / PAGE_SIZE];
+_Static_assert(PROCESS_LIMIT + 1 <= UINT8_MAX, "User frame reference capacity");
 static uintptr_t kernel_root, mmio[16];
 static uintptr_t kernel_guard_pages[THREAD_LIMIT + HART_LIMIT];
 static size_t kernel_guard_count;
@@ -65,6 +70,29 @@ extern const unsigned char __workstate_image_start[], __workstate_image_end[];
 static _Noreturn void vm_panic(const char *message) {
     console_puts("[vm] "); console_puts(message); console_putc('\n'); kernel_idle();
 }
+
+static uint8_t *frame_ref(uintptr_t physical) {
+    if (physical < RAM_BASE || physical >= RAM_END || (physical & (PAGE_SIZE - 1)))
+        vm_panic("Invalid user frame address");
+    return &frame_refs[(physical - RAM_BASE) / PAGE_SIZE];
+}
+
+static void retain_frame(uintptr_t physical) {
+    uint8_t *refs = frame_ref(physical);
+    if (*refs >= PROCESS_LIMIT + 1) vm_panic("User frame reference overflow");
+    if ((*refs)++ == 0) ++resident;
+}
+
+/* The caller has revoked the mapping and synchronized TLBs. */
+static void release_frame(uintptr_t physical) {
+    uint8_t *refs = frame_ref(physical);
+    if (*refs == 0) vm_panic("Release of unowned user frame");
+    if (--*refs == 0) {
+        --resident;
+        page_free(physical);
+    }
+}
+
 static void flush(void) {
     __asm__ volatile("fence rw, rw\nsfence.vma zero, zero" : : : "memory");
     hart_invalidate_remote_tlbs();
@@ -221,9 +249,8 @@ static int evict_one(void) {
             victim->slot = slot;
             ++stats.outs;
             victim->dirty = 0;
-            page_free(victim->physical);
+            release_frame(victim->physical);
             victim->physical = 0;
-            --resident;
             --victim->pins;
             const int defer_error = thread_cancel_defer_leave();
             if (defer_error < 0) vm_panic("Cancel defer imbalance after swap-out");
@@ -234,11 +261,10 @@ static int evict_one(void) {
         *entry = 0;
         flush(); /* Revoke the old virtual mapping before reusing its frame. */
         ++stats.drops;
-        page_free(victim->physical);
+        release_frame(victim->physical);
         victim->physical = 0;
         victim->dirty = 0;
         --victim->pins;
-        --resident;
         return 0;
     }
 }
@@ -296,7 +322,7 @@ static int resident_page(VmSpace *space, size_t index, int write, uintptr_t *phy
         page->physical = frame;
         page->arrival = ++next_arrival;
         page->dirty = 0;
-        ++resident;
+        retain_frame(frame);
         *entry = ((frame >> 12) << 10) | permissions(space, index) | PTE_V | PTE_A;
     }
     if (write) { page->dirty = 1; *entry |= PTE_D; }
@@ -410,8 +436,7 @@ static void release_page(VmSpace *space, size_t index) {
         if (entry == 0) vm_panic("Missing resident PTE");
         *entry = 0;
         flush();
-        page_free(page->physical);
-        --resident;
+        release_frame(page->physical);
     }
     if (page->slot) swap_free(page->slot);
     *page = (VmPage){0};
