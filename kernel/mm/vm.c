@@ -61,6 +61,8 @@ static KernelGate vm_gate;
 static const VmSpace *fork_source; /* Excluded from eviction until fork preparation ends. */
 static struct {
     size_t faults, soft_loads, images, zeroes, ins, outs, drops, invalid, io_errors, copies;
+    size_t shared_frames, fork_shared, cow_faults, cow_copyouts, cow_copies, cow_reuses;
+    size_t shared_evictions, shared_rollbacks;
 } stats;
 static unsigned char clone_buffer[PAGE_SIZE] __attribute__((aligned(PAGE_SIZE)));
 extern unsigned char __text_end[], __rodata_end[];
@@ -83,12 +85,14 @@ static void retain_frame(uintptr_t physical) {
     uint8_t *refs = frame_ref(physical);
     if (*refs >= PROCESS_LIMIT + 1) vm_panic("User frame reference overflow");
     if ((*refs)++ == 0) ++resident;
+    else if (*refs == 2) ++stats.shared_frames;
 }
 
 /* The caller has revoked the mapping and synchronized TLBs. */
 static void release_frame(uintptr_t physical) {
     uint8_t *refs = frame_ref(physical);
     if (*refs == 0) vm_panic("Release of unowned user frame");
+    if (*refs == 2) --stats.shared_frames;
     if (--*refs == 0) {
         --resident;
         page_free(physical);
@@ -260,12 +264,14 @@ static int evict_frame(uintptr_t physical, EvictionMapping *mappings, size_t cou
         }
     }
     if (result < 0) {
+        if (count > 1) ++stats.shared_rollbacks;
         /* A prior slot may be partially overwritten. The restored RAM
            mapping remains dirty and authoritative until a full write. */
         for (size_t i = 0; i < count; ++i) *mappings[i].entry = mappings[i].saved;
         flush();
         release_new_eviction_slots(mappings, count);
     } else {
+        if (count > 1) ++stats.shared_evictions;
         for (size_t i = 0; i < count; ++i) {
             const EvictionMapping *mapping = &mappings[i];
             if (mapping->dirty) ++stats.outs;
@@ -355,19 +361,27 @@ static int resolve_cow(VmPage *page, uint64_t *entry, uintptr_t *physical) {
     const uint64_t flags = (*entry & PTE_FLAGS & ~PTE_COW) | PTE_W | PTE_A | PTE_D;
     *entry = ((target >> 12) << 10) | flags;
     flush();
-    if (target != source) release_frame(source);
+    if (target != source) {
+        release_frame(source);
+        ++stats.cow_copies;
+    } else ++stats.cow_reuses;
     *physical = target;
     return 0;
 }
 
-static int resident_page(VmSpace *space, size_t index, int write, uintptr_t *physical) {
+typedef enum { PAGE_READ, PAGE_STORE, PAGE_COPYOUT, PAGE_INITIALIZE } PageAccess;
+
+static int resident_page(VmSpace *space, size_t index, PageAccess access, uintptr_t *physical) {
     VmPage *page = &space->pages[index];
     uint64_t *entry = vm_walk(space->root, page_address(index), 1);
     if (entry == 0) return ERR_NO_MEMORY;
     const uint64_t old_entry = *entry;
+    const int write = access != PAGE_READ;
     if (write && page->physical) {
         if (old_entry & PTE_COW) {
             if (!(permissions(space, index) & PTE_W)) return ERR_ADDRESS;
+            if (access == PAGE_STORE) ++stats.cow_faults;
+            if (access == PAGE_COPYOUT) ++stats.cow_copyouts;
             return resolve_cow(page, entry, physical);
         }
         /* The ELF loader can initialize read-only leaves of its private image. */
@@ -428,7 +442,7 @@ static int vm_handle_fault_impl(uintptr_t root, uintptr_t address, unsigned long
     if (first != 0) ++first->pins;
     if (second != 0) ++second->pins;
     uintptr_t physical;
-    const int error = resident_page(space, (size_t)index, cause == 15, &physical);
+    const int error = resident_page(space, (size_t)index, cause == 15 ? PAGE_STORE : PAGE_READ, &physical);
     if (first != 0) --first->pins;
     if (second != 0) --second->pins;
     return error;
@@ -609,6 +623,7 @@ static int vm_clone_impl(VmSpace *to, VmSpace *from) {
             downgraded = 1;
         }
         retain_frame(page->physical);
+        ++stats.fork_shared;
         to->pages[i] = (VmPage){
             .physical = page->physical,
             .arrival = page->arrival,
@@ -647,7 +662,7 @@ static int vm_elf_write_impl(uintptr_t root, uintptr_t address, const void *buff
         int index = page_index(space, address + copied);
         if (index < 0 || (size_t)index >= FIXED_PAGES - 1) return ERR_ADDRESS;
         uintptr_t physical;
-        int result = resident_page(space, (size_t)index, 1, &physical);
+        int result = resident_page(space, (size_t)index, PAGE_INITIALIZE, &physical);
         if (result < 0) return result;
         size_t offset = (address + copied) & (PAGE_SIZE - 1);
         size_t amount = PAGE_SIZE - offset;
@@ -704,7 +719,7 @@ static int copy_user(uintptr_t root, uintptr_t user, void *buffer, size_t length
         const int index = page_index(space, user + copied);
         if (!space->pages[index].physical) ++stats.soft_loads;
         uintptr_t physical;
-        const int error = resident_page(space, (size_t)index, write, &physical);
+        const int error = resident_page(space, (size_t)index, write ? PAGE_COPYOUT : PAGE_READ, &physical);
         if (error < 0) return error;
         const size_t offset = (user + copied) & (PAGE_SIZE - 1);
         size_t amount = PAGE_SIZE - offset;
@@ -743,6 +758,17 @@ static long vm_control_impl(long limit) {
     console_puts(" swap_fork_copies="); console_number((long)stats.copies);
     console_puts("\ninvalid_faults="); console_number((long)stats.invalid);
     console_puts(" io_errors="); console_number((long)stats.io_errors); console_putc('\n');
+    size_t free_pages, pool_pages;
+    page_get_stats(&free_pages, &pool_pages);
+    console_puts("free_frames="); console_number((long)free_pages);
+    console_puts(" shared_frames="); console_number((long)stats.shared_frames);
+    console_puts(" fork_shared="); console_number((long)stats.fork_shared);
+    console_puts(" cow_faults="); console_number((long)stats.cow_faults);
+    console_puts(" cow_copyouts="); console_number((long)stats.cow_copyouts);
+    console_puts(" cow_copies="); console_number((long)stats.cow_copies);
+    console_puts(" cow_reuses="); console_number((long)stats.cow_reuses);
+    console_puts(" shared_evictions="); console_number((long)stats.shared_evictions);
+    console_puts(" shared_rollbacks="); console_number((long)stats.shared_rollbacks); console_putc('\n');
     return 0;
 }
 
@@ -860,7 +886,7 @@ static int vm_thread_stack_prepare_impl(uintptr_t root, int slot) {
     if (!space || slot < 0 || slot >= (int)THREAD_EXTRA_STACK_SLOTS ||
         !(space->stack_slots & (1U << slot))) return ERR_INVALID;
     uintptr_t physical;
-    return resident_page(space, STACK_FIRST_PAGE + (size_t)slot * 8 + 7, 1, &physical);
+    return resident_page(space, STACK_FIRST_PAGE + (size_t)slot * 8 + 7, PAGE_INITIALIZE, &physical);
 }
 
 static int vm_thread_stack_release_impl(uintptr_t root, int slot) {

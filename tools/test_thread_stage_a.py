@@ -36,7 +36,8 @@ def connect(port):
 
 
 class Guest:
-    def __init__(self, qemu, folder, disk, swap, label, flash=False, gui=False, harts=1):
+    def __init__(self, qemu, folder, disk, swap, label, flash=False, gui=False, harts=1,
+                 kernel=None, swap_readonly=False):
         self.log = folder / (label + '.log')
         self.data = bytearray()
         serial_port, qmp_port = free_port(), free_port()
@@ -50,12 +51,13 @@ class Guest:
         if flash:
             args += ['-drive', 'if=pflash,unit=0,format=raw,readonly=on,file=build/boot-flash.img']
         else:
-            args += ['-kernel', str(ROOT / 'build/kernel.elf')]
+            args += ['-kernel', str(kernel or ROOT / 'build/kernel.elf')]
         if gui:
             for device in ['virtio-gpu-device', 'virtio-tablet-device', 'virtio-keyboard-device']:
                 args += ['-device', device]
         for image, ident in [(disk, 'fs')] + ([] if flash else [(swap, 'swap')]):
-            args += ['-drive', f'file={image},if=none,format=raw,id={ident},cache=writeback',
+            readonly = ',readonly=on' if ident == 'swap' and swap_readonly else ''
+            args += ['-drive', f'file={image},if=none,format=raw,id={ident},cache=writeback{readonly}',
                      '-device', f'virtio-blk-device,drive={ident}']
         self.stderr = (folder / (label + '-qemu.log')).open('wb')
         self.process = subprocess.Popen(args, cwd=ROOT, stdin=subprocess.DEVNULL,

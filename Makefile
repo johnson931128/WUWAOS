@@ -48,6 +48,10 @@ test-thread-core:
 	$(HOST_CC) -std=c11 -O0 -g -Wall -Wextra -Werror -I. -Iinclude tests/thread_core_test.c kernel/proc/thread.c kernel/proc/scheduler.c kernel/proc/gate.c kernel/proc/event.c kernel/ipc/sync.c -o build/thread-core-host-test.exe
 	./build/thread-core-host-test.exe
 
+.PHONY: test-cow
+test-cow:
+	python3 -B tools/test_cow.py
+
 build:
 	mkdir -p $@
 
