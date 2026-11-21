@@ -16,16 +16,18 @@ WUWAOS is a small operating system written in **C and RISC-V assembly** that boo
 
 | Area | Current implementation |
 | --- | --- |
-| Platform | QEMU `virt`, RISC-V 64-bit, one CPU core, and 128 MiB RAM; OpenSBI firmware with CLI disk boot |
+| Platform | QEMU `virt`, RISC-V 64-bit, and 128 MiB RAM. OpenSBI firmware, CLI disk boot, and multi-hart CLI scheduling |
 | Processes and scheduling | Up to 16 processes, process control blocks, fork, built-in and path-based exec, wait, exit, and timer-driven round-robin scheduling |
 | Synchronization and IPC | Custom mutexes and semaphores, sleep/wakeup, per-process file descriptors, and multi-stage pipes |
-| Virtual memory | Sv39 three-level page tables, demand paging, FIFO page replacement, and swap |
+| Virtual memory | Sv39 three-level page tables, copy-on-write fork, demand paging, FIFO page replacement, and swap |
 | File system | Event-waiting VirtIO block requests, WUFS redo journal, atomic file replacement, shared open-file offsets, and shell redirection |
 | User interface | UART shell, `fan` and `workstate`; optional VirtIO desktop with up to four independent Terminal windows, focus, dragging, and viewport resizing |
 
 WUWAOS focuses on fundamental operating system mechanisms and is not Linux-compatible. `make run-disk` boots the UART shell from a WUFS disk. A restricted static RV64 ELF loader can run compatible WUWAOS programs from WUFS; general ELF/Linux compatibility, networking, and a file manager are not supported. Window resizing changes the viewport of a fixed 100×30 terminal model; it does not resize the TTY or reflow text. Development uses host-side cross-compilation. See the [documentation](https://johnson931128.github.io/WUWAOS/).
 
 ## Current Development Status
+
+`fork()` shares resident user frames, including read-only code. A write splits a shared writable page or restores write access when only one mapping remains. See the [COW specification](docs/SPEC-35-copy-on-write.md) for swap behavior, validation, and the eager-fork comparison. Run `make test-cow` in WSL for the focused QEMU regression.
 
 The 2026-11-08 implementation adds asynchronous Block requests and swap PTE rollback, nonblocking GPU presentation with bounded recovery, kernel stack guard pages, four independent Terminal windows, and atomic file replacement used by `fan`. Existing isolated TTY sessions, event waits, and owner-aware gates protect shared state. Kernel code can cooperatively sleep and resume its caller stack. The CLI also supports multi-hart scheduling and timer preemption at designated kernel checkpoints.
 

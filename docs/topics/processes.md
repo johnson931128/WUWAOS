@@ -58,7 +58,7 @@ Guard page 命中且成功進入 C trap handler 時會印 PID／stack 範圍並�
 
 `create_process` 取得空 PCB，準備頁表與初始 TrapFrame，成功後才公布 Ready。建立中途失敗就回收不完整空間。
 
-`process_fork` 複製父行程的使用者內容與已越過 ecall 的暫存器狀態。父 a0 得到子 PID，子 a0 得到 0。核心堆疊不直接複製；常駐頁與已交換資料都取得獨立內容，目前沒有 COW（寫入時複製）。
+`process_fork` 複製父行程在 ecall 之後的暫存器狀態，並為子行程準備新的核心堆疊與頁表。父 a0 得到子 PID，子 a0 得到 0。父子暫時共享常駐頁框，原本可寫的頁在任一方首次寫入時走 [COW 寫入路徑](./paging.md#copy-on-write)。已換出的頁則各自持有一份 Swap 副本。準備失敗時會回收子空間，父頁表的原權限與引用保留。
 
 `process_exec` 先準備新空間與必要參數，成功後才切換並銷毀舊空間。PID 和父子關係保留，下一次返回使用者模式時從新程式入口開始。
 

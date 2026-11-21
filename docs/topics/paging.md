@@ -13,11 +13,22 @@
 
 原因 12 是取指令缺頁，13 是讀取缺頁，15 是寫入缺頁。非法位址和寫入唯讀頁不會因為「發生缺頁」就獲准配置。
 
+## 寫入時複製（COW） {#copy-on-write}
+
+`fork()` 建立獨立的子頁表。兩個行程可以先共用已在 RAM 的 4 KiB 頁框。原本可寫的映射會暫時清除 PTE 的 `W`，並以 Sv39 軟體保留位元 `RSW[0]` 記住 COW 狀態。
+
+<CowFlow />
+
+Store fault（原因 15）以 `stval` 找到該頁。核心確認原權限允許寫入後，才拆分頁框或恢復寫權限。原本唯讀的程式碼頁仍保持唯讀。`user_copy_to()` 寫入使用者記憶體時也先處理 COW，例如 `read()` 把資料寫進使用者的 buffer。
+
+讀實作可從 [vm_fork、resident_page、resolve_cow](https://github.com/johnson931128/WUWAOS/blob/main/kernel/mm/vm.c) 開始。引用、置換與驗證結果見 [COW 規格](../SPEC-35-copy-on-write.md)。
+
 ## 互動：挑選 victim 與換出
 
 下方固定資料互動展示 FIFO 候選與 dirty page 換出成功或 I/O 失敗。這是固定資料教學示意，不會呼叫核心或磁碟；QEMU runtime 驗證仍需獨立執行。
 
 <script setup>
+import CowFlow from '../.vitepress/theme/components/CowFlow.vue'
 import PagingLab from '../.vitepress/theme/components/PagingLab.vue'
 </script>
 
@@ -45,11 +56,11 @@ PTE 是 CPU 查找的結構；補充表是核心用來決定「缺頁時去哪�
 
 預設全系統使用者常駐預算為 128 頁，也就是 512 KiB。頁框預算達上限，或底層沒有可用實體頁時，VM 嘗試置換。
 
-FIFO 掃描補充表，選入駐序號最小且未固定的常駐頁。讀寫命中不改入駐次序，所以不是 LRU（最近最少使用）。最多掃描 17 份空間（16 個行程加一份 exec 備用）、每份 262 頁記錄；核心與分頁表不參與置換。
+FIFO 掃描補充表，選最早入駐且符合置換條件的實體頁框。讀寫命中不改入駐次序。共享映射使用相同入駐序號，任一映射被 pin 或所屬位址空間正在其他 Hart 執行時，暫時跳過該頁框。核心與分頁表不參與置換。
 
 - clean（未修改）且可從映像／零頁重建：直接丟棄。
 - clean 且已有 Swap 副本：保留槽位，不必重寫。
-- dirty（已修改）：先 pin 並撤銷 PTE、同步轉譯，再完整寫入 8 個磁區；成功才公布 swap metadata 並回收頁框，失敗則恢復映射與 dirty RAM。撤銷到還原／提交之間延後 kill，避免半途丟棄狀態。
+- dirty（已修改）：預留所需槽位後撤銷該頁框的全部映射，並同步轉譯。每個需要寫出的映射使用獨立 slot，完整寫入各自的 8 個磁區後才一起提交並回收頁框。失敗時恢復整組 PTE，釋放本次新增槽位，並保留 dirty RAM。這段期間 VM Gate 保持持有，kill 也會延後。
 
 修改狀態合併軟體記錄與硬體 PTE_D（已寫入標記）。缺頁處理會暫時 pin（固定、禁止換出）當前指令可能跨越的程式碼頁，避免資源不足時指令頁與資料頁互相淘汰、永遠無法完成重試。
 
@@ -73,8 +84,8 @@ FIFO 掃描補充表，選入駐序號最小且未固定的常駐頁。讀寫命
 | `VmPage.arrival` | 頁面進入 RAM 時遞增；FIFO 命中不更新。跨所有 `VmSpace` 比較。 |
 | `VmPage.pins` | 非 0 時不可置換。fault handler 也會 pin 可能跨頁的指令 code page。 |
 | `VmPage.dirty`、PTE `D` | 軟體修改狀態與硬體 dirty bit 合併判定；dirty 頁不能直接丟棄。 |
-| `saved_entry` | 暫存 victim leaf PTE；I/O 失敗時還原並執行 `sfence.vma`。 |
-| `resident`、`frame_limit` | 全系統常駐頁數與預算。預設 128 頁，最小預算 8 頁。 |
+| `EvictionMapping.saved` | 暫存該頁框每個映射的 leaf PTE，供 I/O 失敗時整組復原。 |
+| `frame_refs`、`resident` | 每個使用者頁框的映射引用，以及全系統常駐實體頁框數。預設預算 128 個，最少 8 個。 |
 | Swap bitmap | `swap.c` 的槽位配置圖；slot 由 1 起算，0 不代表磁碟位置。 |
 
 主要函式（精確型別見標頭檔）：
@@ -95,7 +106,7 @@ FIFO 掃描補充表，選入駐序號最小且未固定的常駐頁。讀寫命
 
 ## 配置與生命週期
 
-`sbrk` 只保留 heap 合法範圍，第一次存取才分配頁框。fork 複製私有內容，包含已換出資料；exec 成功後才回收舊空間；wait 與孤兒回收歸還頁框、槽位和私有分頁表。
+`sbrk` 只保留 heap 合法範圍，第一次存取才分配頁框。fork 保留尚未配置頁的按需載入語意，為已換出頁建立獨立 Swap 副本。exec 切換映像、縮小 heap 與退出清理會解除原本的映射。最後一份引用解除時才歸還實體頁框。
 
 目前共用限制由 [include/vm_limits.h（GitHub）](https://github.com/johnson931128/WUWAOS/blob/main/include/vm_limits.h) 定義。每頁 4096 bytes，heap 起點為 0x1000000，每個行程最多有 256 個 heap 頁。全系統預設有 128 個常駐頁框的預算，最小可設 8 頁。
 
@@ -131,6 +142,6 @@ vmstat limit 128
 
 非法缺頁回 -14，沒有資源回 -12，Swap I/O 失敗回 -5；無法補頁就結束該行程。runtime 磁碟等待會讓出 CPU；逾時後先要求 reset，確認安全停止才隔離裝置並回錯，不能確認則停機保留 DMA storage。Swap-out 失敗會恢復 victim 的 RAM 映射，但裝置 offline 後，已經只存在 Swap 的其他頁仍可能無法換入。2026-11-08 的非同步換頁與故障路徑未執行 runtime 驗證（NOT_RUN）；詳見[實作計畫](https://github.com/johnson931128/WUWAOS/blob/main/planning/plan.md)。
 
-沒有 COW、mmap、共享頁與動態核心 heap。縮小 heap 只釋放不再涵蓋的整頁；部分頁縮小再擴張不保證清零。常駐頁保留交換區副本、空 heap L0 表保留至空間銷毀，都是仍有所有權的資源。
+頁框共享來自 fork，Swap Slot 仍各自持有。縮小 heap 只釋放不再涵蓋的整頁；部分頁縮小再擴張不保證清零。常駐頁保留交換區副本，空 heap L0 表保留至空間銷毀。
 
 觀念參考：[`notes/ch10 Virtual Momory.md` · 缺頁處理步驟與 §10.4.2 FIFO](https://github.com/johnson931128/WUWAOS/blob/main/notes/ch10%20Virtual%20Momory.md)。WUWAOS 目前實作及資源不足、唯讀交換區、非法存取等既有驗收見 [Spec 10](../SPEC-10-demand-paging.md)；未實際耗盡全部 128 MiB，也未注入部分磁區讀取失敗。

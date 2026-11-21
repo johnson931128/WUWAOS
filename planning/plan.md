@@ -2,6 +2,11 @@
 
 目前開發重心是作業系統核心。核心與使用者程式由主機交叉編譯，相容的靜態 RV64 ELF 可匯入 WUFS 後執行。歷史實作及驗收保留在下方，各項最新狀態見 [plan_current.md](./plan_current.md)。
 
+## Fork 的寫入時複製（2026-11-22）
+
+- 頁框引用、Fork／Store Fault 與共享頁框整組置換先後落地，分別對應 `df6d214`、`3151b7c`、`712633a`。
+- `make test-cow` 驗證共享與隔離、Copyout、換出／回滾、Fork 中途失敗與 2／3 Hart 寫入，並在所有行程退出後核對實體頁框與 Swap Slot。效能比較、重現命令與尚未驗證項目收錄在 [Spec 35](../docs/SPEC-35-copy-on-write.md)。
+
 ## 核心路線圖（2026-11-15）
 
 比較基準是 WUWAOS `2e385e2` 與 [MIT xv6-riscv `fa2ddcb`](https://github.com/mit-pdos/xv6-riscv/tree/fa2ddcb7ca87a77af579380a6eafd5aff163b44f) 的核心原始碼，範圍涵蓋排程、記憶體、檔案系統、驅動與 syscall。各節現況記錄比較當時的基線。驗收尚無結果的項目為 `NOT_RUN`。具體 ABI、鎖定策略與磁碟格式取捨於實作前確認。

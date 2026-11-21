@@ -234,20 +234,20 @@ Sv39 將虛擬位址拆成 L2／L1／L0 三個 9-bit 索引與 12-bit 頁內位�
 
 只有已保留的合法區域能補頁；heap 最後一個部分頁按頁對齊映射。新建立的行程只先配置私有根表與低位址 L1，不配置使用者頁；L0 表與使用者頁在需要時取得。kernel/root/page-table 頁面常駐、不參與使用者 FIFO 置換。
 
-- VmSpace 保存 root、program、heap_end、缺頁數，以及 262 個 VmPage 補充分頁記錄。spaces[5] 是 metadata，並非預先配置的使用者 RAM；第五欄供 exec 準備新空間。
-- `vm_scope_enter/leave` 以可重入 owner Gate 序列化頁表、resident metadata、複製與查詢；同一行程可遞迴進入。scheduler/UI poll 是 no-wait context，若配置需要 eviction 會在改 PTE 或提交磁碟請求前回 BUSY。
+- `VmSpace` 保存 root、program、heap_end、缺頁數，以及 `SPACE_PAGES` 份 `VmPage` 補充分頁記錄。`spaces` 依 `PROCESS_LIMIT + 1` 配置，包含 exec 新映像使用的空間。
+- `vm_scope_enter/leave` 以可重入 VM Gate 序列化頁表與頁框引用。Gate 以 TID 判斷遞迴所有權。scheduler/UI poll 需要置換時會在改 PTE 或提交磁碟請求前回 BUSY。
 - VmPage 的 physical 非零表示常駐；slot 非零表示有獨立 swap backing；兩者皆零時由原始映像或零頁重建。dirty 與硬體 PTE_D 合併判斷修改狀態，pins 表示暫時不可換出，arrival 表示本次入駐次序。
 - vm_walk 用 `(address >> (12 + 9 * level)) & 511` 逐層取索引，需要時配置下層表。核心 vm_map 僅安裝 4 KiB 映射，拒絕覆蓋既有 PTE。
-- resident_page 取得頁框並完整讀取 swap 或填入映像／零頁，成功後才公布有效 PTE；kernel copyout 主動標 dirty，使用者直接寫入則由硬體 D bit 記錄。換入失敗保留原 slot，不公布部分讀取的頁面。
-- evict_one 掃描全域補充表，選 arrival 最小、未 pin 的常駐頁。命中不更新 arrival，因此是 FIFO，不是 LRU。dirty 頁保存完整 PTE、pin victim、先清除 PTE 並執行 `sfence.vma`，再等待八個 swap 磁區寫入；同一 VM Gate 使觸及該位址的其他行程 fault 後等待。寫入失敗時 restore PTE、flush、保持 RAM 為 dirty authoritative copy，並釋放本次新配 slot；成功才公布 backing slot、釋放 frame。撤銷至 commit/restore 由 cancel-defer 保護。既有 slot 部分覆寫失敗時也保留 dirty RAM，不把 slot 當作有效新副本。
+- `resident_page()` 取得頁框並完整讀取 Swap 或填入映像／零頁，成功後才公布 PTE。對具備 `PTE_COW` 的寫入先驗證原權限，再呼叫 `resolve_cow()`。多引用時複製 4 KiB，單一引用時直接恢復 `W`。換入失敗時保留原槽位。
+- `evict_one()` 選 `arrival` 最小的合格頁框。`collect_eviction_mappings()` 透過共同頁索引找到所有映射，任一映射受 pin、fork 保護或在遠端 Hart 執行就跳過。`evict_frame()` 預留槽位並撤銷全部 PTE，完成本地與遠端 TLB 同步後再寫出。成功時一起提交所有槽位並回收頁框。失敗時恢復整組映射與 dirty RAM，釋放本次新配的槽位。取消保護與 VM Gate 涵蓋 I/O 等待。
 - 使用者常駐預算預設 128 頁（512 KiB）、最小可設 8 頁；超過預算或 page_alloc 無可用頁時嘗試置換。沒有可安全換出的頁面回 -12；磁碟失敗回 -5。QEMU RAM 總量仍是 128 MiB。
 - vm_handle_fault 依 scause 12／13／15 檢查執行／讀／寫權限，合法者補頁；處理時 pin 住目前指令可能占用的 code 頁，避免 swap full 時 code 與 operand 互相淘汰。trap_handler 成功後重試同一 sepc，不像 ecall 加 4；非法位址／權限回 -14 終止該行程。
 - vm_sbrk 只調整合法 heap 範圍；縮小時釋放不再涵蓋的整頁及 slot，空的分頁表暫留到位址空間銷毀。部分頁縮小再擴張不保證既有 bytes 清零。
-- vm_clone 複製常駐內容時 pin 來源頁；已換出的內容透過核心常駐暫存頁複製至獨立 slot。未曾使用的頁不需載入，子行程保留相同映像／零頁來源。任何失敗由 process_fork 銷毀不完整子空間，父內容保留。
-- vm_destroy 先釋放補充表中所有使用者實體頁與 swap slots，再遞迴回收私有分頁表，跳過共用核心分支。拒絕銷毀 satp 正在使用的根表。exec 成功切換後才銷毀舊空間；Zombie 保留資源直到 wait／孤兒回收。
+- `vm_fork()` 持 VM Gate 準備獨立子頁表。`vm_clone_impl()` 先準備子 L0 表與已換出頁的獨立 Swap 副本，再安裝常駐頁共享映射。準備錯誤由 `vm_fork()` 回收，父 PTE 權限和引用保留。未曾使用的頁仍在第一次存取時配置。
+- `frame_refs` 以實體位址索引，計數單位為使用者映射，`resident` 計數單位為有引用的實體頁框。`release_page()` 撤銷 PTE、同步 TLB、解除引用、歸還槽位。`vm_destroy_impl()` 最後遞迴回收私有分頁表，跳過共用核心分支。exec 切換新空間後銷毀舊空間，退出則由 scheduler 清理位址空間。
 - user_readable／user_writable 驗證合法範圍與權限，不要求常駐。user_copy_from／user_copy_to 逐頁載入後立即複製，不保留可能被下一次配置淘汰的實體指標；失敗明確回傳。user_read_byte／user_write_byte／user_write_long 是短資料包裝。
 
-FIFO 單輪選擇最多掃描 17×262 個 metadata；複製／換入換出 O(頁面 bytes)，單次轉譯固定三級。swap full 或失效候選者需繼續掃描其他頁，成本可能更高。沒有 COW、mmap、LRU 或多 hart。Block API 對 caller 保留同步回傳型態，但 runtime 在內部等待非同步 request completion；本輪整合尚未 runtime 驗證（NOT_RUN）。完整基礎分頁設計見 SPEC-10。
+FIFO 選擇會掃描 `VmSpace` 的補充記錄，並檢查同一頁框的所有映射。共享頁框換出時，依需要寫出的映射各自傳輸 4 KiB。Block API 對呼叫者同步回傳，runtime 在內部等待非同步 request completion。驗收和限制見 [COW 規格](./SPEC-35-copy-on-write.md)，早期設計見 [Spec 10](./SPEC-10-demand-paging.md)。
 
 ### page.c：底層實體頁面配置
 
@@ -274,7 +274,7 @@ Thread 退出／安全取消 → Zombie → join／Process 群組清理 → Unus
 - 初始 a0 存內建角色，sp 是使用者 stack 頂端，sepc 是 0x400000；sstatus 選 U-mode、SPIE=1、SIE=0，讓 sret 後可接收計時器中斷，核心內維持不搶占；停用浮點／向量能力。
 - process_init 在建立任何 process root 前，從共用 kernel_root 移除 scheduler 與各 TCB stack guard 的 leaf PTE；new roots 共用這些核心映射。建立 PCB 時只清 guard 後的 16 KiB stack，frame/top layout 不變。guard trap 的可診斷範圍與 stack-overflow 限制見第 5 節；本輪 runtime NOT_RUN。
 - process_init 建立 PID 1 的 shell；process_spawn 只接受 worker／quick，父 PID 為目前行程。
-- process_fork 建立尚未公布 Ready 的子 PCB，複製使用者頁及父 TrapFrame，設定子 a0=0、複製 FD table 並增加 OFD 引用後才改成 Ready；父子共用同一個 open-file offset。父回傳新 PID，子從 fork 呼叫後繼續。核心 stack 不複製，子使用新的保存框架。
+- `process_fork()` 建立尚未公布 Ready 的子 PCB，呼叫 `vm_fork()` 準備子頁表，複製父 TrapFrame，設定子 a0=0、繼承 FD table 的 OFD 引用後才公布 Ready。父子共用 open-file offset。父回傳新 PID，子使用新的核心 stack 與保存框架，從 fork 呼叫後繼續。
 - process_exec 先拒絕未知 ID，再準備／交換位址空間。清除舊使用者暫存器、設定 sp／入口／a0 角色，保留原本合法的 sstatus、PID／父子關係／核心 stack／FD table，清除等待及 I/O 欄位。切換 satp 後，trap.S 直接恢復新入口，不會返回舊 shell。所有空間共用核心映射，所以切換時目前核心 stack 仍有效。
 - transition 統一記錄與更新狀態，進入 Ready 時排到 FIFO 隊尾，離開 Ready 時移除；scheduler_next 已出列的節點不重複移除。trace_enabled 可關閉子行程的追蹤，但不會停用佇列維護。PID 1 與 fan 不輸出逐次狀態紀錄，以免打斷提示字元或編輯畫面，仍有真實狀態供 ps／pcb 查閱。fork 出來但還沒 exec 的 shell 子行程照常記錄。
 - TCB 的 context 保存 ra／sp／s0～s11；create_process 設定 first_run 與 frame 下緣作為初始核心入口／堆疊。fork 使用新的核心上下文，exec 保留目前核心 C 呼叫。

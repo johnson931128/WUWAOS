@@ -1,5 +1,7 @@
 # Spec 10：Demand paging、FIFO 頁面置換與 Swap
 
+> 本篇保留初次導入 Demand Paging 的實作與驗收。現行 fork 和共享頁框的換出規則見 [Spec 35](./SPEC-35-copy-on-write.md)。
+
 本文件保留當時的實作與驗收紀錄；後續共用磁碟請求已加入 5 秒逾時診斷並停止核心，見 [Spec 12](./SPEC-12-block-timeout.md)。下方「沒有裝置超時」是本階段歷史限制。
 
 ## 目標與範圍
