@@ -1,5 +1,9 @@
 # 08 · 頁面、虛擬記憶體與 COW
 
+<script setup>
+import CowFlow from '../.vitepress/theme/components/CowFlow.vue'
+</script>
+
 程式用[虛擬位址](./glossary.md#virtual-address)存取程式碼和資料。CPU 用這個行程的頁表，把位址換成實體 RAM 的位置。WUWAOS 以 4 KiB 為單位管理，[頁面](./glossary.md#page-frame)是位址空間中的一段，頁框是 RAM 裡放這段內容的位置。
 
 ## 從虛擬位址到實體頁框
@@ -22,8 +26,13 @@ WUWAOS 使用 [Sv39](./glossary.md#sv39) 三級頁表。最後一級的 [PTE](./
 - 引用大於一份時，複製 4 KiB 並將寫入者的 PTE 改到新頁框。
 - 只剩一份引用時，恢復原頁框的寫權限。
 
+<CowFlow />
+
 核心用 `user_copy_to()` 寫入使用者緩衝區時也會先解決 COW。原本唯讀的程式碼維持唯讀。已換出的頁由父子各自持有獨立 Swap 副本。共享頁框換出時整組撤銷映射，必要的資料分別寫入各映射的槽位，失敗就復原整組 PTE。最後一份映射撤銷並完成 TLB 同步後，才歸還頁框。
 
 可用 `vmstat` 查看常駐頁框、COW 缺頁、複製次數和 Swap I/O。`make test-cow` 的既有驗收涵蓋低常駐預算、共享換出、回滾與 2／3 Hart。整機實體配置池耗盡和部分磁區已成功寫入後才失敗仍未驗證。 [VM 實作](https://github.com/johnson931128/WUWAOS/blob/3a3b273/kernel/mm/vm.c) · [COW 規格與量測](../SPEC-35-copy-on-write.md) · [早期分頁規格](../SPEC-10-demand-paging.md)
 
-接著讀[WUFS 與磁碟復原](./09-filesystem.md)。
+## 動手觀察
+
+- [Sv39 位址轉譯](../topics/memory.md)可以選擇虛擬位址，逐層查看頁表索引。
+- [FIFO 置換與 Swap](../topics/paging.md)可以看頁框成功寫出，或在磁碟寫入失敗後恢復原映射。

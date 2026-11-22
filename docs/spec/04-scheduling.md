@@ -1,5 +1,9 @@
 # 04 · 誰先跑：排程、狀態與多 Hart
 
+<script setup>
+import SchedulingLab from '../.vitepress/theme/components/SchedulingLab.vue'
+</script>
+
 如果有三條執行緒都能工作，只有一個 [Hart](./glossary.md#hart) 時，核心要決定現在跑哪一條。WUWAOS 把能執行的 TCB 放進一條全系統共用的[就緒佇列](./glossary.md#ready-queue)，取出隊首來執行。這是以執行緒為單位的[輪流排程](./glossary.md#round-robin)。
 
 ## 一條執行緒怎麼換狀態
@@ -23,4 +27,8 @@
 
 現行 CLI 有 2／3 Hart QEMU 回歸。長時間 SMP 壓測留待驗證。 [就緒佇列](https://github.com/johnson931128/WUWAOS/blob/3a3b273/kernel/proc/scheduler.c) · [排程與切換](https://github.com/johnson931128/WUWAOS/blob/3a3b273/kernel/proc/process.c#L1331) · [計時器排程規格](../SPEC-15-timer-rr.md) · [既有驗收](../SPEC-35-copy-on-write.md#_2026-11-22-qemu-驗證)
 
-接著讀[為什麼要同步](./05-synchronization-problems.md)。
+## 比較不同時間片
+
+用單 Hart 教學模型試不同的時間片，觀察就緒佇列和時間軸怎麼變。模型的時間片可以調整，WUWAOS 實際使用 50 ms。實機資訊可用 [workstate](../topics/monitoring.md) 查看。 [計時器與輪流排程補充](../topics/scheduling.md)
+
+<SchedulingLab />

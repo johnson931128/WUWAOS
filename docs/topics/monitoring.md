@@ -1,4 +1,6 @@
-# 11 · workstate 即時監測
+# workstate 即時監測 {#_11-·-workstate-即時監測}
+
+對應現行規格：[〈04 · 誰先跑：排程、狀態與多 Hart〉](../spec/04-scheduling.md)。
 
 在 WUWAOS shell 輸入 `workstate`，會開啟終端全螢幕的行程監測，每秒更新、每頁最多 8 個行程，按 n／p 切換頁面、q 或 Q 返回原 shell。第一張的 CPU 顯示 sampling，取得下一個時間區間後才顯示百分比。
 

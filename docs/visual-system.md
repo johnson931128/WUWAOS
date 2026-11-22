@@ -2,7 +2,7 @@
 
 ## 編排與資訊層級
 
-首頁為系統地圖與學習路線。十二個主章以 Concept Overview、Architecture Diagram、Step-by-step Explanation、Implementation Details、Source Code Mapping、Failure Cases / Limitations、Further Reading 排列。既有長文、表格、指令、媒體與歷史證據保留；詳細文字位於主要圖像之後，不以刪除內容換取留白。
+首頁是系統地圖與學習路線。主導覽、側欄和前後章節以[現行規格的 00–09 章](./spec/index.md)為準。短圖解放在說明對應機制的段落，大型互動教材可從正文和[互動教學目錄](./topics/labs.md)進入。章節可連回程式碼與驗收，早期設計和舊網址保有原來的沿革與引用。
 
 ## 圖像語言
 

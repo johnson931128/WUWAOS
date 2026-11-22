@@ -2,7 +2,9 @@
 import BootTimeline from '../.vitepress/theme/components/BootTimeline.vue'
 </script>
 
-# 02 · 開機流程
+# 開機流程 {#_02-·-開機流程}
+
+對應現行規格：[〈01 · 如何執行：啟動、建置與驗證〉](../spec/01-running.md)。
 
 從 QEMU 啟動 RISC-V 虛擬機，到使用者 shell 顯示 `wuwaos/>`。在圖中切換磁碟開機與直接開機，可查看兩條路徑各自如何交接到核心。
 

@@ -1,4 +1,6 @@
-# 04 · 行程管理
+# 行程管理 {#_04-·-行程管理}
+
+對應現行規格：[〈03 · 行程與執行緒〉](../spec/03-processes-and-threads.md)。
 
 程式是一份指令與資料；Process（行程）是這份程式正在執行的一次實例。兩個行程可以執行同一份程式，卻擁有不同 PID、暫存器與私有資料。
 
@@ -84,15 +86,15 @@ ps
 
 exit 關閉端點並留下 Zombie；wait 取得結果後釋放使用者頁、Swap slots（交換區槽位）、私有頁表及 PCB。孤兒行程另有接管與回收流程。狀態結果寫入父使用者空間失敗時，不會先丟棄 Zombie。
 
-最多 16 個行程（含 shell），exec 支援內建程式 ID，也支援從路徑載入受限的靜態 RV64 ELF；不支援任意 Linux 執行檔。多 Thread 的 create／join／額外 user stack 與群組退出已實作，完整 runtime 驗收仍 NOT_RUN。fork／exec 僅允許唯一占用 TCB 的 Process，包含 New／Zombie 在內超過一個 slot 都回 ERR_BUSY；成功 exec 保留 PID／TID。詳見 [Spec 34](../SPEC-34-threads.md)與 [Thread 圖解](./threads.md)。
+最多 16 個行程（含 Shell）。`exec` 支援內建程式及受限的靜態 RV64 ELF。`fork` 與 `exec` 要求行程只占用一格 TCB，`New` 和未回收的 `Zombie` 也算在內。成功 exec 保留 PID／TID。CLI 回歸已涵蓋 create、阻塞 join、管線恢復與群組退出。 [Spec 34](../SPEC-34-threads.md) · [既有 QEMU 驗收](../SPEC-35-copy-on-write.md#_2026-11-22-qemu-驗證)
 
-觀念參考：`notes/ch3 Process.md`。實作脈絡見 [Spec 02](../SPEC-02-process-lifecycle.md)、[Spec 05](../SPEC.md)，目前私有記憶體複製見 [Spec 10](../SPEC-10-demand-paging.md)。
+觀念參考見 `notes/ch3 Process.md`。早期設計見 [Spec 02](../SPEC-02-process-lifecycle.md) 與 [Spec 05](../SPEC.md)，目前常駐頁共享機制見 [COW 規格](../spec/08-virtual-memory.md#寫入時複製)。
 
 ## 同步物件
 
 WUWAOS 以自訂核心物件與 syscall 實作 Mutex（互斥鎖）及 Semaphore（計數號誌），不依賴 POSIX。Mutex 確保單一持有者；Semaphore 用計數管理資源。資源不足時行程阻塞，核心在條件改變時喚醒 FIFO 等待者。
 
-目前單核心、核心內不搶占，這是等待佇列操作不被同時改動的前提。持鎖行程終止或 exec 時，鎖標記為 poisoned（資料可能不一致）；後續取得會回報錯誤。Semaphore 名額不會因持有行程離開自動返還。詳細介面、例外與驗證狀態見 [Spec 22](../SPEC-22-synchronization.md)，[核心原始碼](https://github.com/johnson931128/WUWAOS/blob/main/kernel/ipc/sync.c)。
+共享核心鎖序列化等待佇列更新，Mutex 以執行緒為擁有者。持鎖者的同步狀態在退出或更換映像時清理，鎖會標為 poisoned，表示受保護的資料可能不一致。Semaphore 名額需由程式透過 `post()` 歸還。 [現行同步工具規格](../spec/06-synchronization-tools.md) · [核心原始碼](https://github.com/johnson931128/WUWAOS/blob/main/kernel/ipc/sync.c)
 
 可以在 QEMU 使用 `sync sem create 0` 建立初始值為 0 的號誌，再以 `syncbg sem wait <id>` 啟動等待的子行程。使用 `ps` 看到 Waiting sync，之後以 `sync sem post <id>` 喚醒它，再用 `wait <pid>` 回收。`syncbg mutex hold <id>` 的子行程持鎖等待通道 7，`wakeup 7` 使其解鎖並離開；實際編號以畫面顯示為準。`wakeup 7` 同時喚醒其他等待此通道的行程。
 

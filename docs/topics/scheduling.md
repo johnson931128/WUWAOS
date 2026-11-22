@@ -2,7 +2,9 @@
 import SchedulingLab from '../.vitepress/theme/components/SchedulingLab.vue'
 </script>
 
-# 05 · 計時器與 RR 排程
+# 計時器與 RR 排程 {#_05-·-計時器與-rr-排程}
+
+對應現行規格：[〈04 · 誰先跑：排程、狀態與多 Hart〉](../spec/04-scheduling.md)。
 
 <SchedulingLab />
 
@@ -97,11 +99,11 @@ counter 每輪會 yield，交替輸出只能展示輪轉，不能單憑它證明
 
 ## Failures / Limitations
 
-### 核心為什麼仍不搶占
+### 核心在哪裡可以被搶占 {#核心為什麼仍不搶占}
 
-初始使用者狀態設 `sstatus.SPIE`（陷阱返回後中斷啟用狀態），並開啟 `sie.STIE`（允許計時器中斷）。進入核心後，`SIE`（監督模式中斷全域開關）保持關閉，處理完才返回使用者模式。
+初始使用者狀態設 `sstatus.SPIE`（陷阱返回後中斷啟用狀態），並開啟 `sie.STIE`（允許計時器中斷）。進入核心後通常關閉 `SIE`。系統呼叫完成後，有一個短暫的搶占檢查點。沒有持有內部 Gate、延後取消或待處理的 kill 時，核心才在這個檢查點接受計時器中斷。
 
-單核心的頁表、行程表與 VirtIO 佇列不會在修改一半時被 timer 搶占。Gate 競爭與 runtime Block request 都可讓呼叫者透過 event wait 自願切到 scheduler；poll 收到裝置完成後，再恢復原呼叫。Boot 裝置初始化仍可同步輪詢。長 syscall、CPU 繪圖與大段記憶體複製仍可能延後搶占；**50 ms 並非嚴格的最大回應時間，也不是精確 CPU burst 統計**。
+多 Hart 透過共享核心鎖協調頁表、行程表與 VirtIO 佇列的核心操作。Gate 競爭與 Block request 都可讓呼叫者透過事件等待交還 CPU，裝置完成後再恢復原呼叫。開機仍可同步輪詢。長 syscall、CPU 繪圖與大量記憶體複製可能延後搶占，實際回應時間會受這些工作影響。
 
 若沒有 Ready 行程但仍有 event 或 UI poll work，排程器使用固定的短絕對 deadline arm SBI timer，於 `SIE=0` 下執行 `WFI`；`sie.STIE` 保持開啟，因此本地 timer pending 可喚醒 WFI，而 trap handler 不會進入 S-mode timer interrupt。返回後先停止／確認 timer，再輪詢 UART、UI 與 event timeout。Spurious wake 會沿用原絕對 deadline，避免無限延後。這是 idle polling 節能等待，不改 50 ms RR quantum，也不是裝置中斷驅動。
 
@@ -112,7 +114,7 @@ counter 每輪會 yield，交替輸出只能展示輪轉，不能單憑它證明
 ## Further Reading
 
 - 課程筆記的「RR 核心定義與硬體依賴」一節介紹 Round-Robin 與 FIFO queue。本站互動器以有限 workload 示範這些概念，WUWAOS 的核心實作見上方原始碼。 [notes/ch5 CPU schedueling.md](https://github.com/johnson931128/WUWAOS/blob/main/notes/ch5%20CPU%20schedueling.md)
-- 原始合作式 FIFO 設計保留於 [Spec 07](../SPEC-07-fifo-scheduler.md)，現行設計以 [Spec 15](../SPEC-15-timer-rr.md) 為準。
+- 歷史設計見 [Spec 07](../SPEC-07-fifo-scheduler.md) 與 [Spec 15](../SPEC-15-timer-rr.md)，目前的多 Hart 與搶占規則見[排程規格](../spec/04-scheduling.md)。
 - [OSTEP CPU Scheduling](https://research.cs.wisc.edu/wind/OSTEP/cpu-sched.pdf) §7.7：RR time slice 與工作負載推演。
 - [OSTEP VizTools Scheduling](https://srg-ics-uplb.github.io/cmsc125/viztools/scheduling/) 與 [OS Lab CPU Scheduling](https://oslab.xikai.me/cpu-scheduling)：互動步驟與 queue/Gantt 視圖參考。
 

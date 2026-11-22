@@ -1,5 +1,9 @@
 # 03 · 行程與執行緒
 
+<script setup>
+import ThreadFlow from '../.vitepress/theme/components/ThreadFlow.vue'
+</script>
+
 把程式跑起來時，核心建立一個[行程](./glossary.md#process)，用 PID 辨認。行程持有頁表、檔案描述符、工作目錄等資源。實際在 CPU 上前進的是[執行緒](./glossary.md#thread)，用 TID 辨認。每條執行緒有自己的堆疊、暫存器和執行位置。同一行程內的執行緒透過同一份頁表看到共用資料。
 
 | 核心記錄 | 保存什麼 |
@@ -26,4 +30,8 @@
 
 系統上限為 16 個行程、32 格 TCB，每個行程最多占 8 格。既有 QEMU 案例涵蓋建立、阻塞 join、群組退出與 COW 隔離。 [行程與執行緒生命週期](https://github.com/johnson931128/WUWAOS/blob/3a3b273/kernel/proc/process.c) · [Thread 規格](../SPEC-34-threads.md) · [ELF 規格](../SPEC-26-elf-exec.md) · [Thread Stage A 驗收](../thread-stage-a.md) · [COW 驗收](../SPEC-35-copy-on-write.md#_2026-11-22-qemu-驗證)
 
-接著讀[誰先跑](./04-scheduling.md)。
+## 觀察一條執行緒的狀態
+
+比較時間片到期、等待 I/O 和等待 `join`。圖解以單 Hart 示意執行緒的狀態轉換。 [執行緒與硬體補充](../topics/threads.md)
+
+<ThreadFlow />

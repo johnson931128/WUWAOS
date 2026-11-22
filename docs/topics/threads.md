@@ -4,6 +4,8 @@ import ThreadFlow from '../.vitepress/theme/components/ThreadFlow.vue'
 
 # 執行緒如何在 WUWAOS 裡運作
 
+對應現行規格：[〈03 · 行程與執行緒〉](../spec/03-processes-and-threads.md)。
+
 程式讀檔時，磁碟可能還在找資料，CPU 卻已經可以做別的事。作業系統會暫停等待資料的<strong>執行緒（thread）</strong>，讓另一條執行緒先跑。資料就緒後，原本的執行緒會回到排程佇列，輪到它時，再從暫停的地方繼續。
 
 這個做法也能用在同一個程式裡。例如文書編輯器可以讓一條執行緒處理鍵盤輸入，另一條負責存檔。存檔等磁碟時，介面仍有機會處理下一個按鍵。以下用這個分工說明概念，並以 WUWAOS 的 `cat` 追蹤示範實際的等待與恢復。
@@ -48,7 +50,7 @@ import ThreadFlow from '../.vitepress/theme/components/ThreadFlow.vue'
 | 名詞 | 用途 |
 | --- | --- |
 | <strong>軟體執行緒（software thread）</strong> | 讓程式的一條執行路徑可以獨立暫停、等待與恢復。WUWAOS 核心以 TCB 管理它。 |
-| <strong>hart（hardware thread）</strong> | RISC-V 執行環境提供的硬體執行位置，可獨立推進一條指令流。WUWAOS 在 QEMU 以 `-smp 1` 啟動，客體只看到一個 hart，編號為 0。 |
+| <strong>hart（hardware thread）</strong> | RISC-V 執行環境提供的硬體執行位置，可獨立推進一條指令流。WUWAOS CLI 預設 `-smp 1`，也可配置多個 Hart。 |
 | <strong>CPU 核心（core）</strong> | 實際取指、解碼、運算的硬體單位。一個實體核心可提供一個或多個硬體執行位置。 |
 | <strong>SMT（Simultaneous Multithreading，同時多執行緒）</strong> | 讓同一實體核心同時支援多條硬體指令流。每條有各自的架構暫存器狀態，共用部分執行單元與快取。Intel Hyper-Threading 是一個例子。 |
 
@@ -199,7 +201,7 @@ void thread_example(void) {
 - 初始執行緒使用原本的一頁使用者堆疊。額外執行緒使用 32 KiB 的使用者堆疊，旁邊留一頁 <strong>guard page（防護頁）</strong>，讓越界碰到未映射頁時觸發例外。
 - `fork()` 用來建立子行程，`exec()` 用來替換目前行程執行的程式。行程占用超過一格 TCB 時，兩者都會回傳 `ERR_BUSY`。目前 `ps` 和 `pcb` 主要顯示行程及其代表執行緒，專用執行緒清單和 `demo threads` 尚未實作。
 
-階段 B／C 的 API 與共用資源清理已有程式碼，完整多執行緒 QEMU 執行驗收尚待完成。[執行緒規格](../SPEC-34-threads.md) · [階段 B／C 實作紀錄](../thread-stage-b.md)
+階段 B／C 的 API 與共用資源清理已實作。CLI 回歸涵蓋建立、時間片搶占、阻塞 join、管線恢復及群組退出，完整長時間壓測仍待驗證。 [執行緒規格](../SPEC-34-threads.md) · [QEMU 回歸範圍](../SPEC-35-copy-on-write.md#_2026-11-22-qemu-驗證)
 
 ## 資料來源與實作對照
 

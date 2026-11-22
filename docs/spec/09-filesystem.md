@@ -1,3 +1,7 @@
+---
+next: false
+---
+
 # 09 · 資料怎麼存下來：WUFS 與磁碟復原
 
 WUFS 是 WUWAOS 的磁碟檔案系統。使用者用 `/home/user/note.txt` 這樣的路徑找檔案。核心逐層查目錄，每筆目錄項目把名字對應到 [inode](./glossary.md#inode)。inode 記錄檔案類型、大小和資料存放的磁區。這一層決定資料放在哪裡，[第 07 章](./07-io.md)的驅動負責把資料送到磁碟。
@@ -25,4 +29,6 @@ WUFS 是 WUWAOS 的磁碟檔案系統。使用者用 `/home/user/note.txt` 這�
 
 現行 CLI 回歸驗證了 WUFS0003 另存升級、hard link、最後一個引用回收、重啟持久性和 redo 重播。各種損毀、逾時與中途失敗的邊界分別留在詳細紀錄。 [WUFS 核心](https://github.com/johnson931128/WUWAOS/blob/3a3b273/kernel/fs/fs.c) · [主機磁碟工具](https://github.com/johnson931128/WUWAOS/blob/3a3b273/tools/make_disk.py) · [磁碟保護](../SPEC-31-filesystem-initialization-guard.md) · [Journal 詳細規格](../SPEC-32-wufs-redo-journal.md) · [驗收程式](https://github.com/johnson931128/WUWAOS/blob/3a3b273/tools/test_kernel_cli.py)
 
-返回[現行規格目錄](./index.md)。
+## 動手觀察
+
+[Journal 與安全替換](../topics/journal.md)可逐步查看一筆交易落盤，並比較不同階段中斷後是否能重播。 [磁碟格式與 Shell 操作補充](../topics/filesystem.md)

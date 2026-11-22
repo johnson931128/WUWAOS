@@ -2,7 +2,9 @@
 description: 選擇 Windows 免安裝版或 WSL 原始碼，啟動 WUWAOS 並執行第一條 shell 指令。
 ---
 
-# 01 · 開始使用
+# 開始使用 {#_01-·-開始使用}
+
+對應現行規格：[〈01 · 如何執行：啟動、建置與驗證〉](../spec/01-running.md)。
 
 從 Windows 啟動 WUWAOS。選一種方式，看到 `wuwaos/>` 後就能在系統裡輸入第一條指令。
 
@@ -60,7 +62,7 @@ wuwaos/> help
 
 ### 磁碟開機與直接開機
 
-`make run-disk` 將核心安裝到 `build/wuwaos-cli.img`。QEMU 啟動 OpenSBI 後，flash 載入器會從磁碟讀取 `/boot/kernel.elf`。這條路徑使用一顆 WUFS0002 磁碟，停用 swap，並要求 journal 無待重播紀錄。`make clean` 保留磁碟與其中的檔案。
+`make run-disk` 將核心安裝到 `build/wuwaos-cli.img`。QEMU 啟動 OpenSBI 後，flash 載入器會從磁碟讀取 `/boot/kernel.elf`。這條路徑掛一顆 WUFS 磁碟（支援 0002／0003），停用 Swap，並要求 journal 無待重播紀錄。`make clean` 保留磁碟與其中的檔案。
 
 若需要由 QEMU 直接載入核心並附加 swap 磁碟，在 **PowerShell** 執行 `wsl -d Ubuntu -- make run`。此路徑使用 `build/wuwaos.img` 與 `build/wuwaos-swap.img`。若 journal 有待重播紀錄，請走會跳過主機映像更新的[復原流程](../SPEC-32-wufs-redo-journal.md#新磁碟與-pending-recovery-操作)。
 

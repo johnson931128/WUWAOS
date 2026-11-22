@@ -1,5 +1,7 @@
 # WUFS Journal 與安全替換
 
+對應現行規格：[〈09 · 資料怎麼存下來：WUFS 與磁碟復原〉](../spec/09-filesystem.md)。
+
 一次更新 inode、allocation bitmap、檔案資料與目錄項目時，若只完成其中一部分，檔案系統可能留下彼此不一致的結構。WUFS 將 transaction 的目標 sectors 與完整 sector payload 先保存到 journal，之後才寫 home sectors；重啟時可用有效的 committed journal redo 尚未完成的更新。
 
 <script setup>

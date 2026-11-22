@@ -17,5 +17,3 @@
 等待因通知而結束時，執行緒先回到 Ready Queue。像 Pipe 讀取這類操作，喚醒後仍要在核心重新檢查資料量和寫端是否存在，才能決定讀取、繼續等待，或回傳結束。
 
 程式對照見 [等待與喚醒](https://github.com/johnson931128/WUWAOS/blob/3a3b273/kernel/proc/process.c#L771) · [事件等待](https://github.com/johnson931128/WUWAOS/blob/3a3b273/kernel/proc/process.c#L1096) · [同步操作示範](../SPEC-23-sync-demo.md)。本章的加一例子用來解釋交錯順序，實際 Pipe、join 和事件喚醒驗收見[Thread 驗收](../thread-stage-b.md)。
-
-接著讀[同步工具怎麼做](./06-synchronization-tools.md)。

@@ -18,5 +18,3 @@ WUWAOS 提供使用者程式可請求的 Mutex 和 Semaphore。核心另外用 G
 [事件來源](./glossary.md#kernel-event) 用 generation 辨識物件的這一次使用，用 sequence 記下自上次查閱後是否發生通知。等待者可同時設定 deadline（最後等到的時間）。通知、逾時或取消會把結果留下，讓執行緒回來後知道等待為何結束。共享核心鎖序列化短暫的核心狀態更新，Gate 則保護可能跨越執行緒睡眠的操作邊界。
 
 可以用 Shell `demo sync` 觀察 Mutex 和 Semaphore。Core 測試覆蓋 Gate 所有權與 TID 的行為，QEMU 既有驗收覆蓋實際 I/O 事件等待和喚醒。 [同步實作](https://github.com/johnson931128/WUWAOS/blob/3a3b273/kernel/ipc/sync.c) · [Gate](https://github.com/johnson931128/WUWAOS/blob/3a3b273/kernel/proc/gate.c) · [Event](https://github.com/johnson931128/WUWAOS/blob/3a3b273/kernel/proc/event.c) · [同步規格](../SPEC-22-synchronization.md) · [非同步 I/O 驗收](../merge-2026-11-10.md)
-
-接著讀[資料怎麼進出](./07-io.md)。

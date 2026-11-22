@@ -1,5 +1,7 @@
 # FD 與 OFD：編號與共用位置
 
+對應現行規格：[〈07 · 資料怎麼進出：I/O 與磁碟〉](../spec/07-io.md)。
+
 `fd` 是行程手上的小整數；它不是檔案本身，也不直接保存讀到哪裡。WUWAOS 透過核心的 open-file description（OFD）把 FD 連到檔案、存取權限與目前 offset。分清這兩層，就能說明為何 `dup` 和 `fork` 後的讀取會互相推進位置，而對同一路徑再次 `open` 則不會。
 
 <script setup>

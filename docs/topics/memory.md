@@ -2,7 +2,9 @@
 import Sv39Explorer from '../.vitepress/theme/components/Sv39Explorer.vue'
 </script>
 
-# 06 · 實體頁與 Sv39
+# 實體頁與 Sv39 {#_06-·-實體頁與-sv39}
+
+對應現行規格：[〈08 · 頁面、虛擬記憶體與 COW〉](../spec/08-virtual-memory.md)。
 
 <Sv39Explorer />
 

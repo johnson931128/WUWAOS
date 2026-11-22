@@ -76,7 +76,11 @@ function simulate(q: number): Frame[] {
 const frames = computed(() => simulate(quantum.value))
 const playback = usePlayback(computed(() => frames.value.length), 1000)
 const current = computed(() => frames.value[playback.index.value] ?? frames.value[0])
-const maxTime = computed(() => Math.max(1, frames.value[frames.value.length - 1]?.time ?? 0))
+const pixelsPerMs = computed(() => {
+  const slices = frames.value.at(-1)?.gantt ?? []
+  const shortest = Math.min(...slices.map(slice => slice.end - slice.start))
+  return slices.length ? 80 / shortest : 1
+})
 const jobMap = Object.fromEntries(jobs.map((job) => [job.id, job]))
 function reset() { playback.reset() }
 </script>
@@ -84,8 +88,8 @@ function reset() { playback.reset() }
 <template>
   <section class="scheduling-lab" aria-labelledby="scheduling-lab-title">
     <div class="lab-heading">
-      <div><p class="eyebrow">可單步操作 · 確定性教學模型</p><h3 id="scheduling-lab-title">Ready queue → CPU → Gantt</h3></div>
-      <label class="quantum-control"><span>教學 quantum</span><select v-model.number="quantum" @change="reset"><option :value="25">25 ms</option><option :value="50">50 ms</option><option :value="100">100 ms</option></select></label>
+      <h3 id="scheduling-lab-title">就緒佇列與 CPU 時間軸</h3>
+      <label class="quantum-control"><span>教學時間片</span><select v-model.number="quantum" @change="reset"><option :value="25">25 ms</option><option :value="50">50 ms</option><option :value="100">100 ms</option></select></label>
     </div>
 
     <div class="workload" aria-label="固定示例工作負載">
@@ -118,16 +122,16 @@ function reset() { playback.reset() }
 
       <DiagramFrame title="Gantt 執行時間軸" description="依同一個 RR 模擬結果逐步累積的 CPU 執行區段；方塊內有工作名稱，寬度依執行毫秒數縮放。" kind="dynamic" :zoomable="true">
         <div class="gantt-wrap" role="img" :aria-label="`Gantt 時間軸，已執行至 ${current.time} 毫秒`">
-          <div class="gantt-axis"><span>0 ms</span><span>{{ current.time }} ms</span></div>
+          <div class="gantt-axis" :style="{ width: `${current.time * pixelsPerMs}px` }"><span>0 ms</span><span v-if="current.time">{{ current.time }} ms</span></div>
           <div class="gantt-track">
-            <span v-for="(slice, index) in current.gantt" :key="`${slice.id}-${slice.start}-${index}`" class="gantt-block" :style="{ width: `${Math.max(3, (slice.end - slice.start) / maxTime * 100)}%`, '--job-color': jobMap[slice.id].color }" :title="`${slice.id}: ${slice.start}–${slice.end} ms`"><b>{{ slice.id }}</b><small>{{ slice.start }}–{{ slice.end }}</small></span>
+            <span v-for="(slice, index) in current.gantt" :key="`${slice.id}-${slice.start}-${index}`" class="gantt-block" :style="{ width: `${(slice.end - slice.start) * pixelsPerMs}px`, '--job-color': jobMap[slice.id].color }" :title="`${slice.id}: ${slice.start}–${slice.end} ms`"><b>{{ slice.id }}</b><small>{{ slice.start }}–{{ slice.end }}</small></span>
             <span v-if="!current.gantt.length" class="empty-state">按下一步開始模擬</span>
           </div>
           <div class="gantt-legend"><span v-for="job in jobs" :key="job.id"><i :style="{ background: job.color }" />{{ job.id }}</span><span><i class="idle-key" />idle</span></div>
         </div>
       </DiagramFrame>
     </div>
-    <p class="model-boundary"><strong>教學模型：</strong>每步 snapshot 是「slice 執行完、arrival 入列與未完成工作回到隊尾之後」；Gantt 記錄剛完成的 slice，ready queue 呈現片尾順序。模型為單核心、有限 arrivals/bursts，沒有 I/O 阻塞或核心時間，只按 deterministic RR 計算 queue、remaining 與 Gantt。修改 quantum 僅重算網站示例。<strong>WUWAOS 核心實際固定 50 ms</strong>；S-mode 核心執行期間關閉全域中斷，timer 不會搶占核心函式。</p>
+    <p class="model-boundary">這個單 Hart 教學模型只計算工作到達、執行以及時間片結束後的輪轉。時間軸記錄剛完成的時間片，就緒佇列顯示該步結束時的順序。調整時間片只會重算這組範例。<strong>WUWAOS 核心實際使用 50 ms</strong>，核心態可在指定的安全檢查點搶占。</p>
   </section>
 </template>
 
@@ -137,5 +141,12 @@ function reset() { playback.reset() }
 .workload{display:flex;flex-wrap:wrap;align-items:center;gap:.5rem .9rem;margin:1rem 0;padding:.8rem;border-radius:12px;background:var(--vp-c-bg)}.workload-job{font-size:.78rem}.workload-job b{display:inline-grid;place-items:center;width:1.35rem;height:1.35rem;border-radius:5px;background:var(--job-color);color:var(--os-on-accent)}
 .live-note{min-height:2.5rem;padding:.7rem .85rem;border:1px solid var(--os-line);border-radius:var(--os-radius-control);background:var(--os-warning-soft);color:var(--os-ink);font-size:.9rem}.scheduler-board{display:grid;gap:1rem}.queue-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(140px,.45fr);align-items:center;gap:1rem}.lane h4{margin:0 0 .55rem;font-size:.9rem}.lane h4 small{color:var(--vp-c-text-2);font-weight:400}.queue-cards{display:flex;flex-wrap:wrap;gap:.5rem;min-height:3.6rem;align-items:center}.queue-card{display:grid;justify-items:center;min-width:3rem;padding:.35rem;border:1px solid var(--job-color);border-radius:10px;background:color-mix(in srgb,var(--job-color) 15%,var(--vp-c-bg));}.queue-card b{font-size:1.15rem}.queue-card small{font-size:.58rem;color:var(--vp-c-text-2)}.empty-state{color:var(--vp-c-text-2);font-size:.8rem}.cpu{display:grid;justify-items:center;gap:.25rem;padding:.8rem;border:2px solid var(--job-color,var(--vp-c-divider));border-radius:14px;background:color-mix(in srgb,var(--job-color,var(--vp-c-bg)) 15%,var(--vp-c-bg));text-align:center}.cpu.idle{border-style:dashed}.cpu strong{font-size:1.7rem}.cpu small,.cpu span{font-size:.68rem}.remaining-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.5rem;margin-top:1rem}.remaining-row{display:grid;grid-template-columns:auto auto;gap:.1rem .45rem;align-items:center;padding:.5rem;border-radius:9px;background:var(--vp-c-bg);font-size:.75rem}.remaining-row>b{color:var(--job-color)}.remaining-track{grid-column:1/-1;height:6px;overflow:hidden;border-radius:9px;background:var(--vp-c-bg-alt)}.remaining-track i{display:block;height:100%;background:var(--job-color);transition:width var(--os-motion-fast) var(--os-ease)}.gantt-wrap{overflow-x:auto;padding:.2rem .1rem .4rem}.gantt-axis{display:flex;justify-content:space-between;font-size:.7rem;color:var(--vp-c-text-2)}.gantt-track{display:flex;min-width:260px;min-height:3.4rem;align-items:stretch;overflow:hidden;border:1px solid var(--vp-c-divider);border-radius:9px;background:var(--vp-c-bg)}.gantt-block{display:grid;align-content:center;justify-items:center;min-width:3rem;overflow:hidden;border-right:2px solid var(--vp-c-bg);background:var(--job-color);color:var(--os-on-accent)}.gantt-block b{font-size:.88rem}.gantt-block small{font-size:.58rem;white-space:nowrap}.gantt-legend{display:flex;gap:.85rem;margin-top:.5rem;font-size:.7rem}.gantt-legend span{display:flex;align-items:center;gap:.3rem}.gantt-legend i{width:.7rem;height:.7rem;border-radius:3px}.idle-key{border:1px dashed var(--vp-c-text-2)}.model-boundary{margin:1rem 0 0;padding:.8rem;border:1px solid var(--os-line);background:var(--os-warning-soft);border-radius:var(--os-radius-panel);font-size:.8rem;line-height:1.55}
 @media(max-width:640px){.scheduling-lab{padding:.9rem}.lab-heading{align-items:flex-start;flex-direction:column}.quantum-control{grid-template-columns:auto 1fr;align-items:center}.queue-layout{grid-template-columns:1fr}.cpu{justify-self:stretch}.remaining-grid{grid-template-columns:1fr}.gantt-block{min-width:2.7rem}}
+.quantum-control, .workload-job, .queue-card small, .empty-state,
+.cpu small, .cpu span, .remaining-row, .gantt-axis, .gantt-legend,
+.gantt-block small, .model-boundary { font-size: .875rem; }
+.gantt-axis { min-width: 4.75rem; }
+.gantt-track { width: max-content; min-width: 0; }
+.gantt-block { flex-shrink: 0; min-width: 0; padding-inline: .2rem; }
+.gantt-track .empty-state { padding-inline: .65rem; }
 @media(prefers-reduced-motion:reduce){.remaining-track i{transition:none}}
 </style>

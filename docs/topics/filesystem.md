@@ -1,4 +1,6 @@
-# 09 · WUFS 檔案系統
+# WUFS 檔案系統 {#_09-·-wufs-檔案系統}
+
+對應現行規格：[〈09 · 資料怎麼存下來：WUFS 與磁碟復原〉](../spec/09-filesystem.md)。
 
 磁碟只提供編號磁區，不知道 `/home/user/note.txt` 是什麼。WUFS 是 WUWAOS 自訂的檔案系統，將路徑轉成 inode，再找到存放內容的磁區。
 
@@ -34,7 +36,7 @@ inode 有 8 個直接指標與 8 個單層間接指標。每個間接區塊可�
 
 ## 格式辨識與空白磁碟保護
 
-WUFS 在第一個磁區開頭使用 8-byte 格式標記（magic）：舊版 `WUFS0001` 或目前新格式 `WUFS0002`。標記只能辨識格式，不能單獨證明檔案系統完整。kernel 會先精確驗證 superblock layout；V2 會先檢查並重播 journal，再驗證 inode、bitmap、pointer 與 directory tree。
+WUFS 在第一個磁區開頭放 8 bytes 的格式標記。`WUFS0001` 維持唯讀相容，`WUFS0002` 和 `WUFS0003` 支援 journal，0003 另外支援 hard link 與 console 裝置節點。核心先核對整體布局，再檢查並視需要重播 journal，最後驗證 inode、bitmap、指標與目錄樹。
 
 目前原始碼對 magic 不符的磁碟採保留資料的處理方式：
 
@@ -47,7 +49,7 @@ WUFS 在第一個磁區開頭使用 8-byte 格式標記（magic）：舊版 `WUF
 
 `disk_is_blank` 只讀取資料，逐一檢查所有 512-byte 磁區；找到非零 byte 或讀取錯誤即停止。只有全部讀取成功且皆為零才認定為空白。不能只看第一個磁區，因為檔頭可能已清零，但後面的 inode 或檔案內容仍存在。全零磁碟的最壞掃描成本為 O(磁碟 bytes)，kernel 額外使用一個 512-byte 緩衝區；正常 WUFS 掛載不走這條掃描路徑。
 
-主機上的 `tools/make_disk.py` 僅更新通過 V2 layout、journal-header 與 metadata 驗證的映像。它不處理 pending journal，也不覆寫壞格式。修改先在 RAM 完成，再以同目錄暫存檔、fsync 和 replace 更新目標。WUFS0001 不更新；一般 `make run` 若選到 V1 仍能啟動唯讀核心。
+主機上的 `tools/make_disk.py` 只更新通過 V2／V3 布局、journal header 與 metadata 驗證的映像。它會拒絕待重播與損毀的映像，也會保留 WUFS0001。修改先在 RAM 完成，再以同目錄暫存檔、fsync 和 replace 更新目標。換成 V3 時可依[現行規格](../spec/09-filesystem.md)使用另存升級。
 
 未知非空白磁碟、無效非零 journal header、錯誤 layout 或壞 inode pointer 都拒絕掛載，不會自動清除或修復。全零 disk 才會建立 V2。初始化保護見 [Spec 31](../SPEC-31-filesystem-initialization-guard.md)，transactions、journal/replay 與實際 QEMU fault 驗收見 [Spec 32](../SPEC-32-wufs-redo-journal.md)。WUFS0002 與 journal 後於 portable v1；既有 ZIP 不包含這些改動。
 

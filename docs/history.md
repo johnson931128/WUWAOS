@@ -54,12 +54,12 @@ Spec 33 以前的歷史 source link 若指向舊 `kernel/` 或 `user/` 路徑，
 | 07 | [FIFO 排程器](./SPEC-07-fifo-scheduler.md) |
 | 08 | [動態實體頁與三級頁表](./SPEC-08-memory.md)，預先載入使用者頁的部分由 10 取代 |
 | 09 | [fan 全螢幕編輯器](./SPEC-09-fan.md) |
-| 10 | [Demand paging、頁面置換與 Swap](./SPEC-10-demand-paging.md)，現行 VM 設計 |
+| 10 | [Demand paging、頁面置換與 Swap](./SPEC-10-demand-paging.md)，按需分頁與初期置換設計，後續見 [記憶體現行規格](./spec/08-virtual-memory.md) |
 | 11 | [文件網站](./SPEC-11-documentation.md) |
 | 12 | [磁碟請求逾時與停止核心](./SPEC-12-block-timeout.md) |
 | 13 | [螢光色塊開機字樣](./SPEC-13-block-splash.md) |
 | 14 | [逐行命令說明](./SPEC-14-shell-help.md) |
-| 15 | [計時器中斷與 RR 排程](./SPEC-15-timer-rr.md)，現行 CPU 排程政策 |
+| 15 | [計時器中斷與 RR 排程](./SPEC-15-timer-rr.md)，加入時間片的歷程，後續見 [排程現行規格](./spec/04-scheduling.md) |
 | 16 | [RV64 核心上下文切換](./SPEC-16-kernel-context.md)，獨立排程器堆疊、阻塞後恢復 C 呼叫 |
 | 17 | [workstate 即時監測](./SPEC-17-workstate.md)，CPU／RAM 快照、毫秒休眠與全螢幕操作 |
 | 18 | [檔案命令與 cls](./SPEC-18-file-commands.md)，刪除、複製、畫面與捲動歷史 |

@@ -1,4 +1,6 @@
-# 10 · Shell 與 fan 編輯器
+# Shell 與 fan 編輯器 {#_10-·-shell-與-fan-編輯器}
+
+對應現行規格：[〈07 · 資料怎麼進出：I/O 與磁碟〉](../spec/07-io.md)。
 
 `ls` 不帶參數時列出目前目錄；`rm 路徑` 刪除檔案或資料夾（資料夾需輸入 Y 確認），`cp /absolute/source /absolute/destination` 複製檔案。`cls` 會要求終端清除畫面和捲動歷史，保留 WUFS 檔案；捲動歷史是否真的清除取決於終端對控制序列的支援。命令範圍與限制見 [Spec 18](../SPEC-18-file-commands.md)。
 

@@ -1,17 +1,20 @@
 import { defineConfig } from 'vitepress'
+import { readFileSync } from 'node:fs'
 
 const publicUrl = 'https://johnson931128.github.io/WUWAOS/'
+const readSpec = (file: string) => readFileSync(new URL(`../spec/${file}`, import.meta.url), 'utf8')
 
-const chapters = [
-  ['開始使用', 'getting-started'], ['開機流程', 'boot'],
-  ['例外與系統呼叫', 'traps'], ['行程管理', 'processes'],
-  ['計時器與 RR 排程', 'scheduling'], ['實體頁與 Sv39', 'memory'],
-  ['按需分頁、置換與 Swap', 'paging'], ['輸入輸出與 Pipe', 'io'],
-  ['WUFS 檔案系統', 'filesystem'], ['Shell 與 fan 編輯器', 'applications'],
-  ['workstate 即時監測', 'monitoring'],
-  ['維護文件網站', 'writing'],
-  ['Thread、OS 與 CPU', 'threads'],
-]
+// The Markdown contents page is also the source of the primary navigation.
+const chapters = Array.from(readSpec('index.md').matchAll(/^\| \[(\d{2} · [^\]]+)\]\(\.\/([\w-]+)\.md\) \|/gm),
+  ([, text, slug]) => ({ text, slug, link: `/spec/${slug}` }))
+if (!chapters.length || chapters.some(({ slug, text }, index) =>
+  !text.startsWith(`${String(index).padStart(2, '0')} · `) ||
+  readSpec(`${slug}.md`).match(/^# (.+)$/m)?.[1].trim() !== text)) {
+  throw new Error('章節目錄的順序與標題必須和現行規格一致。')
+}
+
+const glossary = new Map(Array.from(readSpec('glossary.md').matchAll(/^## .+ \{#([\w-]+)\}\r?\n\r?\n([^\r\n]+)/gm),
+  ([, id, text]) => [id, text.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').replace(/`([^`]+)`/g, '$1')]))
 
 export default defineConfig({
   lang: 'zh-Hant',
@@ -36,6 +39,27 @@ export default defineConfig({
     // Repository-authored Vue labs are embedded in the Markdown chapters.
     lineNumbers: true, html: true, languageAlias: { h: 'c', S: 'asm' },
     config(md) {
+      md.core.ruler.after('inline', 'spec-term-hints', (state) => {
+        for (const token of state.tokens) {
+          if (!token.children) continue
+          let inTerm = false
+          for (const child of token.children) {
+            if (child.type === 'link_open') {
+              // Match terms in spec Markdown without duplicating glossary prose in Vue.
+              const id = child.attrGet('href')?.match(/^\.\/glossary\.md#([\w-]+)$/)?.[1]
+              const definition = id && glossary.get(id)
+              if (!definition) continue
+              child.type = 'html_inline'
+              child.content = `<SpecTerm term="${id}" definition="${md.utils.escapeHtml(definition)}">`
+              inTerm = true
+            } else if (child.type === 'link_close' && inTerm) {
+              child.type = 'html_inline'
+              child.content = '</SpecTerm>'
+              inTerm = false
+            }
+          }
+        }
+      })
       const fence = md.renderer.rules.fence!
       md.renderer.rules.fence = (tokens, index, options, env, self) => {
         if (tokens[index].info.trim() === 'mermaid') {
@@ -47,13 +71,11 @@ export default defineConfig({
   },
   themeConfig: {
     siteTitle: 'WUWAOS 實作紀錄',
-    nav: [{ text: '閱讀章節', link: '/topics/getting-started' }, { text: '互動教學', link: '/topics/block-async' }, { text: '設計研究', link: '/redesign' }, { text: '規格紀錄', link: '/history' }],
+    nav: [{ text: '現行規格', link: '/spec/', activeMatch: '^/spec/' }, { text: '互動教學', link: '/topics/labs' }, { text: '歷史紀錄', link: '/history' }],
     sidebar: [
-      { text: 'WUWAOS', items: [{ text: '00 · 專案總覽', link: '/' }, { text: 'Windows 免安裝環境', link: '/portable-windows' }] },
-      { text: '互動教學', items: [{ text: 'Block Async I/O', link: '/topics/block-async' }, { text: 'FD 與 OFD', link: '/topics/file-descriptors' }, { text: '換頁與 Swap', link: '/topics/paging' }, { text: 'Journal 與安全替換', link: '/topics/journal' }] },
-      { text: '從硬體到應用程式', items: chapters.map(([text, slug], i) => ({ text: `${String(i + 1).padStart(2, '0')} · ${text}`, link: `/topics/${slug}` })) },
-      { text: '規格與參考', items: [{ text: '原始規格與驗收紀錄', link: '/history' }, { text: 'Thread 規格與驗收邊界', link: '/SPEC-34-threads' }, { text: 'Thread 階段 A 紀錄', link: '/thread-stage-a' }, { text: 'Thread 階段 B／C 實作', link: '/thread-stage-b' }, { text: '磁碟保護與驗證', link: '/SPEC-31-filesystem-initialization-guard' }, { text: '完整程式碼導覽', link: '/CODE_GUIDE' }] },
-      { text: '網站改版規範', items: [{ text: '視覺教材設計', link: '/visual-system' }, { text: '研究與來源對照', link: '/redesign' }] },
+      { text: '現行規格', link: '/spec/', items: chapters.map(({ text, link }) => ({ text, link })) },
+      { text: '教材與參考', items: [{ text: '互動教學', link: '/topics/labs' }, { text: '名詞表', link: '/spec/glossary' }, { text: '原始規格與驗收紀錄', link: '/history' }, { text: '程式碼導覽', link: '/CODE_GUIDE' }] },
+      { text: '網站維護', collapsed: true, items: [{ text: '維護文件網站', link: '/topics/writing' }, { text: '視覺教材設計', link: '/visual-system' }, { text: '研究與來源對照', link: '/redesign' }] },
     ],
     outline: { level: [2, 3], label: '本頁內容' },
     search: { provider: 'local', options: { locales: { root: { translations: { button: { buttonText: '搜尋文件', buttonAriaLabel: '搜尋文件' }, modal: { noResultsText: '找不到相關內容', resetButtonTitle: '清除搜尋', footer: { selectText: '選取', navigateText: '切換', closeText: '關閉' } } } } } } },

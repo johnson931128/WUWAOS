@@ -19,4 +19,4 @@ WUWAOS 是一個跑在 QEMU `virt` 上的 [RISC-V 64 位元](./glossary.md#riscv
 
 核心入口負責初始化裝置、記憶體和行程，再交給排程器。開機交接、模組分工與舊版驗收各有紀錄。 [核心入口](https://github.com/johnson931128/WUWAOS/blob/3a3b273/kernel/boot/main.c) · [開機流程](../topics/boot.md) · [模組分層規格](../SPEC-33-module-architecture.md)
 
-接著讀[如何執行](./01-running.md)。
+可以在[首頁系統架構圖](../index.md#atlas-title)點選 CPU、核心或裝置，查看每個元件的責任和對應原始碼。

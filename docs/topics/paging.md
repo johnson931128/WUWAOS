@@ -1,4 +1,6 @@
-# 07 · 按需分頁、置換與 Swap
+# 按需分頁、置換與 Swap {#_07-·-按需分頁、置換與-swap}
+
+對應現行規格：[〈08 · 頁面、虛擬記憶體與 COW〉](../spec/08-virtual-memory.md)。
 
 程式保留了一段合法虛擬位址，不代表每一頁現在都占用 RAM。Demand paging（按需分頁）在真正需要資料時才準備頁面；RAM 頁框不足時，再透過 Page replacement（頁面置換）與 Swap（記憶體與磁碟交換）騰出空間。
 
@@ -140,7 +142,7 @@ vmstat limit 128
 
 ## 錯誤與限制
 
-非法缺頁回 -14，沒有資源回 -12，Swap I/O 失敗回 -5；無法補頁就結束該行程。runtime 磁碟等待會讓出 CPU；逾時後先要求 reset，確認安全停止才隔離裝置並回錯，不能確認則停機保留 DMA storage。Swap-out 失敗會恢復 victim 的 RAM 映射，但裝置 offline 後，已經只存在 Swap 的其他頁仍可能無法換入。2026-11-08 的非同步換頁與故障路徑未執行 runtime 驗證（NOT_RUN）；詳見[實作計畫](https://github.com/johnson931128/WUWAOS/blob/main/planning/plan.md)。
+非法缺頁回 -14，沒有資源回 -12，Swap I/O 失敗回 -5。無法補頁就結束該行程。磁碟等待會讓出 CPU。逾時時核心會要求重設裝置，確認裝置停止後才隔離並回錯，否則保留 DMA 緩衝區並停止執行。換出失敗會恢復原 RAM 映射。若裝置已離線，僅存在 Swap 的其他頁仍可能無法換入。既有 QEMU 回歸已驗證共享換出與 I/O 失敗復原。 [驗收與尚未驗證的情境](../SPEC-35-copy-on-write.md#_2026-11-22-qemu-驗證)
 
 頁框共享來自 fork，Swap Slot 仍各自持有。縮小 heap 只釋放不再涵蓋的整頁；部分頁縮小再擴張不保證清零。常駐頁保留交換區副本，空 heap L0 表保留至空間銷毀。
 

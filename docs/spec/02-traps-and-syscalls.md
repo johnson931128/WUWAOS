@@ -1,5 +1,9 @@
 # 02 · 從使用者程式進入核心
 
+<script setup>
+import TrapFlow from '../.vitepress/theme/components/TrapFlow.vue'
+</script>
+
 使用者程式要讀檔時，會呼叫 `read()`，把檔案描述符、緩衝區位址和長度交給核心。它在 [U-mode](./glossary.md#privilege-mode) 執行 `ecall` 後，CPU 轉入核心使用的 S-mode。這次受控的交接稱為[系統呼叫](./glossary.md#syscall)。
 
 ## 系統呼叫如何往返
@@ -20,6 +24,10 @@
 
 `scause` 表示為什麼進核心，`sepc` 表示返回或重試的位置，`stval` 在缺頁時提供相關虛擬位址。傳入的 user buffer 只是一個待驗證的位址。對應到頁框後，寫入還可能觸發[寫入時複製](./08-virtual-memory.md#寫入時複製)。
 
-原始碼與既有驗收見 [陷阱入口](https://github.com/johnson931128/WUWAOS/blob/3a3b273/arch/riscv/trap.S) · [Trap handler](https://github.com/johnson931128/WUWAOS/blob/3a3b273/arch/riscv/trap.c) · [Syscall dispatcher](https://github.com/johnson931128/WUWAOS/blob/3a3b273/kernel/syscall/syscall.c) · [陷阱章節](../topics/traps.md)。
+## 逐步看 CPU 如何返回
 
-接著讀[行程與執行緒](./03-processes-and-threads.md)。
+切換系統呼叫、合法缺頁或計時器中斷，查看三條路徑如何處理保存的指令位置。
+
+<TrapFlow />
+
+原始碼與既有驗收見 [陷阱入口](https://github.com/johnson931128/WUWAOS/blob/3a3b273/arch/riscv/trap.S) · [Trap handler](https://github.com/johnson931128/WUWAOS/blob/3a3b273/arch/riscv/trap.c) · [Syscall dispatcher](https://github.com/johnson931128/WUWAOS/blob/3a3b273/kernel/syscall/syscall.c) · [陷阱章節](../topics/traps.md)。

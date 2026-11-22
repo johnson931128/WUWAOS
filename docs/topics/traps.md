@@ -2,7 +2,9 @@
 import TrapFlow from '../.vitepress/theme/components/TrapFlow.vue'
 </script>
 
-# 03 · 例外與系統呼叫
+# 例外與系統呼叫 {#_03-·-例外與系統呼叫}
+
+對應現行規格：[〈02 · 從使用者程式進入核心〉](../spec/02-traps-and-syscalls.md)。
 
 User Mode（使用者模式）程式不能直接控制所有硬體。它以 syscall（系統呼叫）請核心提供服務；CPU 偵測到非法存取或缺頁時，也會進入核心。
 

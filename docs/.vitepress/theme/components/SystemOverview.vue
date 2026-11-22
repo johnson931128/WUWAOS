@@ -8,20 +8,20 @@ const parts = [
 {id:'shell',title:'Shell',sub:'指令與管線',icon:'terminal',tone:'blue',desc:'U-mode shell 解析指令，透過 WUWAOS 自訂 syscall ABI 建立行程、存取檔案與串接 pipe，不直接操作裝置。',source:'user/shell/shell.c',href:'/topics/applications.html',chapter:'Shell 與應用程式'},
 {id:'fan',title:'fan editor',sub:'編輯與安全儲存',icon:'editor',tone:'rose',desc:'fan 是使用者模式的全螢幕文字編輯器。儲存透過 fs_replace 路徑，將新版檔案與 metadata 納入同一筆有界交易。',source:'user/apps/fan/main.c',href:'/topics/journal.html',chapter:'Journal 與安全替換'},
 {id:'workstate',title:'workstate',sub:'觀察 CPU 與記憶體',icon:'activity',tone:'violet',desc:'workstate 讀取核心提供的快照，呈現行程 CPU 派發時間、RSS 與 Swap 使用情況。首頁架構圖本身不是即時監測介面。',source:'user/apps/workstate/workstate.c',href:'/topics/monitoring.html',chapter:'系統狀態監測'},
-{id:'process',title:'Process / Scheduler',sub:'PCB、TCB 與 RR 排程',icon:'process',tone:'blue',desc:'Process 保存行程資源；Thread 保存執行狀態、核心堆疊與事件等待。Ready queue 排入 Thread，透過計時器與上下文切換協調各 hart 上的執行。',source:'kernel/proc/process.c · kernel/proc/thread.h · kernel/proc/scheduler.c',href:'/topics/processes.html',chapter:'行程與排程'},
-{id:'memory',title:'Memory / Sv39',sub:'三級頁表、4 KiB 頁',icon:'memory',tone:'violet',desc:'Sv39 將虛擬位址轉譯到實體頁。VM 處理合法缺頁、權限與 FIFO 置換；可用的 Swap 磁碟保存換出的使用者頁，I/O 失敗則回復原映射與 RAM。',source:'kernel/mm/vm.c · kernel/mm/page.c · kernel/mm/swap.c',href:'/topics/memory.html',chapter:'實體頁與 Sv39'},
-{id:'trap',title:'Trap / System Call',sub:'ecall、例外與中斷入口',icon:'gate',tone:'teal',desc:'trap entry 保存暫存器並進入核心。trap_handler 分派使用者 ecall、缺頁、計時器及外部中斷；syscall_dispatch 連到自訂 ABI 的服務。',source:'arch/riscv/trap.c · arch/riscv/trap.S · kernel/syscall/syscall.c',href:'/topics/traps.html',chapter:'例外與系統呼叫'},
-{id:'io',title:'I/O / TTY',sub:'FD、OFD、pipe 與終端',icon:'io',tone:'blue',desc:'I/O 層將行程的 FD 連到 OFD、pipe、檔案或 TTY endpoint。等待中的 thread 透過核心事件讓出 CPU，裝置完成驗證後再通知等待者。',source:'kernel/io/io.c · kernel/io/tty.c',href:'/topics/io.html',chapter:'輸入輸出與 Pipe'},
-{id:'filesystem',title:'WUFS / Storage',sub:'inode、journal 與 Block',icon:'storage',tone:'amber',desc:'WUFS 將路徑解析成 inode 與磁區，以 redo journal 管理有界交易。VirtIO block driver 提交磁碟請求，透過 IRQ 或 polling 的共用驗證路徑處理完成。',source:'kernel/fs/fs.c · drivers/virtio/block.c',href:'/topics/filesystem.html',chapter:'WUFS 檔案系統'},
+{id:'process',title:'Process / Scheduler',sub:'PCB、TCB 與 RR 排程',icon:'process',tone:'blue',desc:'Process 保存行程資源；Thread 保存執行狀態、核心堆疊與事件等待。Ready queue 排入 Thread，透過計時器與上下文切換協調各 hart 上的執行。',source:'kernel/proc/process.c · kernel/proc/thread.h · kernel/proc/scheduler.c',href:'/spec/03-processes-and-threads.html',chapter:'行程與排程'},
+{id:'memory',title:'Memory / Sv39',sub:'三級頁表、4 KiB 頁',icon:'memory',tone:'violet',desc:'Sv39 將虛擬位址轉譯到實體頁。VM 處理合法缺頁、權限與 FIFO 置換；可用的 Swap 磁碟保存換出的使用者頁，I/O 失敗則回復原映射與 RAM。',source:'kernel/mm/vm.c · kernel/mm/page.c · kernel/mm/swap.c',href:'/spec/08-virtual-memory.html',chapter:'實體頁與 Sv39'},
+{id:'trap',title:'Trap / System Call',sub:'ecall、例外與中斷入口',icon:'gate',tone:'teal',desc:'trap entry 保存暫存器並進入核心。trap_handler 分派使用者 ecall、缺頁、計時器及外部中斷；syscall_dispatch 連到自訂 ABI 的服務。',source:'arch/riscv/trap.c · arch/riscv/trap.S · kernel/syscall/syscall.c',href:'/spec/02-traps-and-syscalls.html',chapter:'例外與系統呼叫'},
+{id:'io',title:'I/O / TTY',sub:'FD、OFD、pipe 與終端',icon:'io',tone:'blue',desc:'I/O 層將行程的 FD 連到 OFD、pipe、檔案或 TTY endpoint。等待中的 thread 透過核心事件讓出 CPU，裝置完成驗證後再通知等待者。',source:'kernel/io/io.c · kernel/io/tty.c',href:'/spec/07-io.html',chapter:'輸入輸出與 Pipe'},
+{id:'filesystem',title:'WUFS / Storage',sub:'inode、journal 與 Block',icon:'storage',tone:'amber',desc:'WUFS 將路徑解析成 inode 與磁區，以 redo journal 管理有界交易。VirtIO block driver 提交磁碟請求，透過 IRQ 或 polling 的共用驗證路徑處理完成。',source:'kernel/fs/fs.c · drivers/virtio/block.c',href:'/spec/09-filesystem.html',chapter:'WUFS 檔案系統'},
 {id:'desktop',title:'Desktop / Terminal',sub:'可選的核心端圖形服務',icon:'desktop',tone:'rose',desc:'ui/ 提供桌面視窗、輸入轉譯與終端繪製，經 TTY 與使用者程式溝通，再交給 VirtIO GPU 顯示。桌面服務位於 S-mode；視窗中的 shell 仍在 U-mode。',source:'ui/desktop/desktop.c · kernel/io/tty.c · drivers/virtio/gpu.c',href:'/topics/boot.html#桌面-terminal-與-gui-shell',chapter:'桌面與啟動流程'},
-{id:'cpu',title:'RISC-V CPU',sub:'RV64 · RISC-V 虛擬處理器',icon:'cpu',tone:'teal',desc:'QEMU virt 提供 RV64 hart。各 hart 可執行核心與使用者程式，透過特權模式、trap 與頁表建立邊界，而不是每個模組各有一顆 CPU。',source:'Makefile · arch/riscv/swtch.S',href:'/topics/getting-started.html',chapter:'平台與建置'},
-{id:'ram',title:'RAM',sub:'128 MiB guest memory',icon:'ram',tone:'violet',desc:'QEMU 配置 128 MiB guest RAM，用於核心、頁表、堆疊、使用者頁與裝置緩衝區。這是 Makefile 的平台設定，不是瀏覽器取得的即時用量。',source:'Makefile · kernel/mm/page.c',href:'/topics/memory.html',chapter:'記憶體管理'},
-{id:'uart-driver',title:'UART Driver',sub:'序列埠字元收發',icon:'serial',tone:'blue',desc:'核心的 UART driver 透過 MMIO 讀寫 UART 暫存器。輸出時先等待傳送暫存器可用，再逐位元組寫入。',source:'drivers/uart/uart.c',href:'/topics/io.html',chapter:'輸入輸出與 Pipe'},
-{id:'uart',title:'UART',sub:'QEMU 模擬序列埠',icon:'serial',tone:'blue',desc:'QEMU virt 提供 UART 裝置。WUWAOS 的 CLI 以映射在 0x10000000 的 UART 暫存器收發字元。',source:'drivers/uart/uart.h · Makefile',href:'/topics/io.html',chapter:'輸入輸出與 Pipe'},
+{id:'cpu',title:'RISC-V CPU',sub:'RV64 · RISC-V 虛擬處理器',icon:'cpu',tone:'teal',desc:'QEMU virt 提供 RV64 hart。各 hart 可執行核心與使用者程式，透過特權模式、trap 與頁表建立邊界，而不是每個模組各有一顆 CPU。',source:'Makefile · arch/riscv/swtch.S',href:'/spec/01-running.html',chapter:'平台與建置'},
+{id:'ram',title:'RAM',sub:'128 MiB guest memory',icon:'ram',tone:'violet',desc:'QEMU 配置 128 MiB guest RAM，用於核心、頁表、堆疊、使用者頁與裝置緩衝區。這是 Makefile 的平台設定，不是瀏覽器取得的即時用量。',source:'Makefile · kernel/mm/page.c',href:'/spec/08-virtual-memory.html',chapter:'記憶體管理'},
+{id:'uart-driver',title:'UART Driver',sub:'序列埠字元收發',icon:'serial',tone:'blue',desc:'核心的 UART driver 透過 MMIO 讀寫 UART 暫存器。輸出時先等待傳送暫存器可用，再逐位元組寫入。',source:'drivers/uart/uart.c',href:'/spec/07-io.html',chapter:'輸入輸出與 Pipe'},
+{id:'uart',title:'UART',sub:'QEMU 模擬序列埠',icon:'serial',tone:'blue',desc:'QEMU virt 提供 UART 裝置。WUWAOS 的 CLI 以映射在 0x10000000 的 UART 暫存器收發字元。',source:'drivers/uart/uart.h · Makefile',href:'/spec/07-io.html',chapter:'輸入輸出與 Pipe'},
 {id:'virtio',title:'VirtIO Block',sub:'虛擬磁碟',icon:'storage',tone:'amber',desc:'核心從 FDT 探測 VirtIO MMIO 裝置。Block driver 透過 VirtIO queue 提交磁區請求，裝置處理完成後更新 used ring。',source:'drivers/virtio/block.c · Makefile',href:'/topics/block-async.html',chapter:'Block I/O 互動教學'},
 {id:'virtio-gui',title:'VirtIO GPU / Input',sub:'GUI 組態',icon:'devices',tone:'rose',desc:'GUI 組態提供 VirtIO GPU、鍵盤與指標裝置，由核心端 driver 與桌面服務負責圖像呈現和輸入。',source:'Makefile · drivers/virtio/gpu.c · drivers/virtio/input.c',href:'/topics/boot.html#桌面-terminal-與-gui-shell',chapter:'桌面與啟動流程'},
-{id:'opensbi',title:'OpenSBI',sub:'M-mode firmware',icon:'firmware',tone:'amber',desc:'OpenSBI 提供早期機器模式初始化與 SBI 服務。在磁碟開機組態，它交接到 flash 中的 S-mode 載入器；直接開機則交接到 QEMU 預先載入的核心。',source:'Makefile · arch/riscv/sbi.c',href:'/topics/boot.html',chapter:'開機流程'},
-{id:'bootloader',title:'Bootloader',sub:'flash → WUFS → kernel.elf',icon:'boot',tone:'blue',desc:'make run-disk 使用 flash 裡的載入器，唯讀存取 VirtIO block，從 WUFS 找到 /boot/kernel.elf，驗證並載入 ELF 後交接到核心入口。直接 -kernel 開機略過這個載入器。',source:'bootloader/boot.c · bootloader/entry.S',href:'/topics/boot.html',chapter:'磁碟開機'},
+{id:'opensbi',title:'OpenSBI',sub:'M-mode firmware',icon:'firmware',tone:'amber',desc:'OpenSBI 提供早期機器模式初始化與 SBI 服務。在磁碟開機組態，它交接到 flash 中的 S-mode 載入器；直接開機則交接到 QEMU 預先載入的核心。',source:'Makefile · arch/riscv/sbi.c',href:'/spec/01-running.html#從韌體交接到-shell',chapter:'開機流程'},
+{id:'bootloader',title:'Bootloader',sub:'flash → WUFS → kernel.elf',icon:'boot',tone:'blue',desc:'make run-disk 使用 flash 裡的載入器，唯讀存取 VirtIO block，從 WUFS 找到 /boot/kernel.elf，驗證並載入 ELF 後交接到核心入口。直接 -kernel 開機略過這個載入器。',source:'bootloader/boot.c · bootloader/entry.S',href:'/spec/01-running.html#從韌體交接到-shell',chapter:'磁碟開機'},
 ]
 const partById = Object.fromEntries(parts.map(part => [part.id, part]))
 const layers = [
@@ -203,7 +203,32 @@ onMounted(() => {
     </div>
   </section>
   <section class="boot-route" aria-labelledby="boot-route-title"><div class="boot-caption"><ArchitectureIcon name="boot"/><div><h2 id="boot-route-title">從哪裡開始執行？</h2><p>磁碟開機路徑</p></div></div><div class="boot-stations"><button type="button" :aria-pressed="selected.id==='opensbi'" @click="select('opensbi')"><ArchitectureIcon name="firmware"/><span><strong>OpenSBI</strong><small>M-mode 韌體</small></span></button><span aria-hidden="true">→</span><button type="button" :aria-pressed="selected.id==='bootloader'" @click="select('bootloader')"><ArchitectureIcon name="boot"/><span><strong>Bootloader</strong><small>從 WUFS 載入 ELF</small></span></button><span aria-hidden="true">→</span><button type="button" :aria-pressed="selected.id==='kernel'" @click="select('kernel')"><ArchitectureIcon name="kernel"/><span><strong>kernel_main</strong><small>初始化與啟動行程</small></span></button></div><p class="boot-note">直接開機時，QEMU 預先載入核心，OpenSBI 直接交接給它；略過磁碟載入器。</p></section>
-  <section class="explore-section" aria-labelledby="explore-title"><h2 id="explore-title">選一條路線，走進系統。</h2><div class="reading-paths"><a :href="withBase('/topics/getting-started.html')"><ArchitectureIcon name="boot"/><div><h3>親手啟動</h3><p>準備環境，從第一個提示字元開始。</p></div><span aria-hidden="true">↗</span></a><a :href="withBase('/topics/block-async.html')"><ArchitectureIcon name="route"/><div><h3>觀察資料流</h3><p>探索等待、完成與資源生命週期。</p></div><span aria-hidden="true">↗</span></a><a :href="withBase('/CODE_GUIDE.html')"><ArchitectureIcon name="editor"/><div><h3>對照原始碼</h3><p>找到每個模組的責任與實作位置。</p></div><span aria-hidden="true">↗</span></a></div><footer class="atlas-footer"><span>C 與 RISC-V 組合語言實作的小型作業系統。</span><nav aria-label="專案參考"><a :href="withBase('/history.html')">實作紀錄</a><a :href="withBase('/portable-windows.html')">Windows 免安裝版本</a><a href="https://github.com/johnson931128/WUWAOS">GitHub</a></nav></footer></section>
+  <section class="explore-section" aria-labelledby="explore-title">
+    <h2 id="explore-title">從這裡開始</h2>
+    <div class="reading-paths">
+      <a :href="withBase('/spec/')">
+        <ArchitectureIcon name="editor" />
+        <div><h3>閱讀現行規格</h3><p>依 00–09 章理解核心如何運作。</p></div>
+      </a>
+      <a :href="withBase('/spec/01-running.html')">
+        <ArchitectureIcon name="boot" />
+        <div><h3>親手啟動</h3><p>準備環境，從第一個提示字元開始。</p></div>
+      </a>
+      <a :href="withBase('/topics/labs.html')">
+        <ArchitectureIcon name="route" />
+        <div><h3>互動教學</h3><p>逐步觀察排程、記憶體和磁碟。</p></div>
+      </a>
+    </div>
+    <footer class="atlas-footer">
+      <span>C 與 RISC-V 組合語言實作的小型作業系統。</span>
+      <nav aria-label="專案參考">
+        <a :href="withBase('/CODE_GUIDE.html')">程式碼導覽</a>
+        <a :href="withBase('/history.html')">歷史紀錄</a>
+        <a :href="withBase('/portable-windows.html')">Windows 免安裝版本</a>
+        <a href="https://github.com/johnson931128/WUWAOS">GitHub</a>
+      </nav>
+    </footer>
+  </section>
 </div>
 </template>
 

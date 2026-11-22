@@ -4,6 +4,8 @@ import BlockAsyncLab from '../.vitepress/theme/components/BlockAsyncLab.vue'
 
 # Block Async I/O
 
+對應現行規格：[〈07 · 資料怎麼進出：I/O 與磁碟〉](../spec/07-io.md)。
+
 `block_read()` 和 `block_write()` 看起來是一般函式，但底層裝置工作可能跨越多次排程才完成。本章把兩件事分開看：裝置 request 可以非同步進行；目前公開的 Block 呼叫仍會等到完成再返回。互動元件中的每個 frame 都是依照程式碼整理的教學示意，只呈現事件順序，不是 QEMU trace，也不代表真實時間比例。
 
 <BlockAsyncLab />
