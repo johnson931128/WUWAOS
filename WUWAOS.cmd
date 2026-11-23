@@ -16,14 +16,29 @@ pushd "%~dp0" || exit /b 1
 if not exist boot-flash.img goto missing_images
 if not exist wuwaos-cli.img goto missing_images
 
+set "WUWAOS_BOOT=-drive if=pflash,unit=0,format=raw,readonly=on,file=boot-flash.img"
+if not exist tools\check-cli-journal.ps1 goto start_qemu
+if not exist kernel-disk.elf goto start_qemu
+powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tools\check-cli-journal.ps1 wuwaos-cli.img
+set "WUWAOS_CHECK=%ERRORLEVEL%"
+if "%WUWAOS_CHECK%"=="0" goto start_qemu
+if not "%WUWAOS_CHECK%"=="10" goto check_failed
+echo WUWAOS: Journal needs checking. Starting the bundled recovery kernel.
+set "WUWAOS_BOOT=-kernel kernel-disk.elf"
+
+:start_qemu
 "%QEMU%" -machine virt -smp 1 -m 128M -nographic -bios default ^
-  -drive if=pflash,unit=0,format=raw,readonly=on,file=boot-flash.img ^
+  %WUWAOS_BOOT% ^
   -global virtio-mmio.force-legacy=false ^
   -drive file=wuwaos-cli.img,if=none,format=raw,id=wuwaos,cache=writeback ^
   -device virtio-blk-device,drive=wuwaos
 set "WUWAOS_EXIT=%ERRORLEVEL%"
 popd
 exit /b %WUWAOS_EXIT%
+
+:check_failed
+popd
+exit /b %WUWAOS_CHECK%
 
 :missing_images
 echo WUWAOS: Extract the full CLI release ZIP before launching. 1>&2

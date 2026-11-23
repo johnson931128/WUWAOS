@@ -32,8 +32,9 @@ def main():
         staging = workspace / archive.name
         with ZipFile(staging, "w", compression=ZIP_DEFLATED) as bundle:
             for source in (ROOT / "WUWAOS.cmd", ROOT / "LICENSE",
-                           BUILD / "boot-flash.img", disk):
+                           BUILD / "boot-flash.img", BUILD / "kernel-disk.elf", disk):
                 bundle.write(source, f"{NAME}/{source.name}")
+            bundle.write(ROOT / "tools/check-cli-journal.ps1", f"{NAME}/tools/check-cli-journal.ps1")
             bundle.write(ROOT / "licenses/Cascadia-OFL.txt", f"{NAME}/licenses/Cascadia-OFL.txt")
         staging.replace(archive)
 

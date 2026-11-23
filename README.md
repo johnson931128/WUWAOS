@@ -213,8 +213,12 @@ The local [per-device request ownership prototype](docs/SPEC-33-block-request-ow
 To quit QEMU, press **Ctrl+A**, release the keys, then press **X**. The
 `wuwaos-cli.img` file stores guest files across launches. Keep that image
 when backing up your work and use only one QEMU session per disk image.
-The CLI release boots through OpenSBI and the WUWAOS flash loader. This
-disk boot mode runs with swap disabled and requires a clean WUFS journal.
+The Windows CLI normally boots through OpenSBI and the WUWAOS flash loader
+with swap disabled. New bundles include a matching recovery kernel. If a
+WUFS0002 or WUFS0003 journal header is nonzero, `WUWAOS` boots that kernel
+directly so it can validate and replay the journal. The next launch uses the
+flash loader again after a successful replay. Keep the recovery kernel in
+sync with the disk kernel when upgrading a bundle.
 
 To build the release on a development machine, run
 `wsl -d Ubuntu -- python3 tools/package-cli.py` from the repository root.
