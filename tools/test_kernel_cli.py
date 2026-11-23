@@ -11,7 +11,7 @@ import sys
 import tempfile
 import zlib
 
-from make_disk import WufsImage
+from make_disk import DIRECT, INDIRECT, SECTOR, WufsImage
 from test_thread_stage_a import Guest, ROOT
 
 
@@ -106,6 +106,88 @@ def check_fan(qemu, folder, disk, swap, original):
     print('PASS: fan 32 KiB save, insertion limit, and oversize preservation', flush=True)
 
 
+def check_full_disk(qemu, folder, disk, swap):
+    class FillImage(WufsImage):
+        def __init__(self, image):
+            super().__init__(image)
+            self.free = [block for block in range(self.sectors - 1, self.data_start - 1, -1)
+                         if not self.bit(self.bbitmap, block)]
+
+        def alloc_block(self):
+            block = self.free.pop()
+            self.set_block(block, True)
+            return block
+
+        def set_block(self, block, value):
+            super().set_block(block, value)
+            if not value:
+                self.free.append(block)
+
+    full = folder / 'full.img'
+    fs = FillImage(bytearray(disk.read_bytes()))
+    maximum = DIRECT + INDIRECT * 128
+    filler_count = (len(fs.free) + maximum - 1) // maximum
+    for index in range(filler_count):
+        fs.install_file(f'/filler{index}', b'')
+    for index in range(filler_count):
+        count = min(len(fs.free), maximum)
+        while count + (max(0, count - DIRECT) + 127) // 128 > len(fs.free):
+            count -= 1
+        fs.write_data(fs.find(f'/filler{index}'), bytes(count * SECTOR))
+    assert not fs.free
+    fs.validate_metadata()
+    full.write_bytes(fs.image)
+
+    guest = Guest(qemu, folder, full, swap, 'full', flash=True)
+    try:
+        start = len(guest.data)
+        guest.send('fan /keep\r')
+        guest.wait('9/32768 bytes', start)
+        guest.send('X\x0f')
+        guest.wait('Save failed; buffer kept -28', start)
+        guest.send('\x18n')
+        guest.wait('wuwaos/> ', start)
+        guest.shell('cat /keep', '\npreserved')
+        guest.shell('rm /filler0', 'rm result=0')
+
+        start = len(guest.data)
+        guest.send('fan /keep\r')
+        guest.wait('9/32768 bytes', start)
+        guest.send('X\x0f')
+        guest.wait('Saved', start)
+        guest.send('\x18')
+        guest.wait('wuwaos/> ', start)
+        guest.shell('cat /keep', '\nXpreserved')
+    finally:
+        guest.close()
+    print('PASS: full disk preserves original Fan file; saving after freeing space succeeds', flush=True)
+
+
+def check_pipeline_reuse(guest):
+    guest.shell('trace off')
+    success = 'run /bin/exec-fd.elf hello world | cat | cat > /out'
+    failure = 'cat < /missing | cat | cat'
+
+    def run_pipeline_pair():
+        guest.shell(failure, 'input open error -2')
+        result = guest.shell(success)
+        assert 'error' not in result, result
+        guest.shell('cat /out', 'PASS: argv, extended BSS')
+
+    def resources():
+        slots = guest.shell('ps', 'Free PCB slots: 15')
+        assert 'Free TCB slots: 31' in slots, slots
+        status = guest.shell('vmstat')
+        return tuple(re.search(field + r'=(\d+)', status)[1]
+                     for field in ('resident', 'swap_slots', 'free_frames', 'shared_frames'))
+
+    run_pipeline_pair()
+    baseline = resources()
+    for _ in range(10):
+        run_pipeline_pair()
+    assert resources() == baseline
+
+
 def check_harts(qemu, folder, disk, swap):
     for harts in (2, 3):
         for flash in (False, True):
@@ -119,6 +201,9 @@ def check_harts(qemu, folder, disk, swap):
                 guest.shell('echo smp-ok | cat', 'smp-ok')
                 stats = guest.shell('ps', 'Free TCB slots: 31')
                 assert re.search(r'kernel_preemptions=[1-9]', stats), stats
+                if harts == 3 and flash:
+                    check_pipeline_reuse(guest)
+                    print('PASS: three-hart pipelines reuse FD, pipe, task and frame capacity', flush=True)
                 print(f'PASS: {label} shared VM, concurrent dispatch and kernel timer', flush=True)
             finally:
                 guest.close()
@@ -154,6 +239,7 @@ def main():
     check_wufs(qemu, folder, disk, swap)
     check_replay(qemu, folder, disk, swap)
     check_fan(qemu, folder, disk, swap, draft_data)
+    check_full_disk(qemu, folder, disk, swap)
     check_harts(qemu, folder, disk, swap)
     print('PASS: CLI roadmap regression', flush=True)
 

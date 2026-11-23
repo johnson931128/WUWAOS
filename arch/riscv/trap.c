@@ -73,6 +73,9 @@ TrapFrame *trap_handler(TrapFrame *frame) {
         return resume;
     }
     if (from_user && frame->scause == USER_ECALL) {
+        /* A remote hart can request exit before this hart acquires the kernel
+         * lock. Do not let the cancelled thread start a new blocking syscall. */
+        if (thread_current()->kill_pending) process_exit(-9);
         thread_kernel_call_enter();
         frame->sepc += 4; /* ECALL is a 32-bit instruction. */
         syscall_dispatch(frame);

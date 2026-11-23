@@ -52,6 +52,15 @@ long user_main(long unused) {
     CHECK(wakeup(7) == 1); collected(pid, 0);
     user_puts("PASS: exec, spawn, channel wake and child wait\n");
 
+    for (int i = 0; i < 16; ++i) {
+        long cancelled = spawn(PROGRAM_WORKER);
+        CHECK(cancelled > 0);
+        if (i % 2) CHECK(yield() == 0);
+        CHECK(kill(cancelled) == 0);
+        collected(cancelled, -9);
+    }
+    user_puts("PASS: worker termination around syscall entry\n");
+
     long slow = spawn(PROGRAM_WORKER); CHECK(slow > 0);
     long fast = spawn(PROGRAM_QUICK); CHECK(fast > 0);
     long status = 0;

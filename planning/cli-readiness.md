@@ -10,3 +10,6 @@
 
 - 階段 1：原生 Windows QEMU 從含空格的目錄執行 `WUWAOS`，通過乾淨 Flash 開機、有效 journal 重播、下次以 Flash 重啟並讀回資料、無效 journal 拒絕復原且磁碟 SHA-256 一致。重播案例用已提交的 journal 測試映像，未模擬實際斷電。
 - 階段 2：`fan` 在使用者 heap 保留 32 KiB 編輯空間。QEMU Flash CLI 已驗證開啟 32,767 bytes、再插入一個 byte 並保存到 32 KiB、拒絕插入超限 byte，以及超限檔案保持原樣。測試關機後會讀取磁碟核對兩份內容。
+- 階段 3：滿盤時 `fan` 保留原檔，刪除填充檔後可重新保存。3 hart Flash CLI 反覆執行外部 ELF、三級管線及錯誤重導，確認行程與執行緒槽數、常駐／空閒／共享頁框與 swap 使用量回到基準，並持續成功取得管線和 FD。回歸期間一次 3 hart 直接開機測試卡在 `kill`／`wait`。系統呼叫入口現在先處理待終止的執行緒，避免它開始新的阻塞操作。新增重複終止 worker 的驗證。
+
+CLI 回歸可用 `wsl -d Ubuntu -- python3 -B tools/test_kernel_cli.py` 重跑，COW 與 swap 回歸用 `wsl -d Ubuntu -- make test-cow`。這些測試使用獨立磁碟，未涵蓋長時間 SMP 壓測或實體斷電。
