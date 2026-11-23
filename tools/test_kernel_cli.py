@@ -15,6 +15,9 @@ from make_disk import WufsImage
 from test_thread_stage_a import Guest, ROOT
 
 
+FAN_LIMIT = 32 * 1024
+
+
 def tool(name, *arguments):
     subprocess.run([sys.executable, '-B', str(ROOT / 'tools' / name), *map(str, arguments)], check=True)
 
@@ -76,6 +79,33 @@ def check_replay(qemu, folder, disk, swap):
     assert not any(recovery.read_bytes()[512:1024])
 
 
+def check_fan(qemu, folder, disk, swap, original):
+    guest = Guest(qemu, folder, disk, swap, 'fan', flash=True)
+    try:
+        guest.shell('fan /oversize.c', 'fan: file exceeds 32768 bytes')
+        start = len(guest.data)
+        guest.send('fan /draft.c\r')
+        guest.wait('32767/32768 bytes', start)
+        guest.send('X')
+        guest.wait('32768/32768 bytes', start)
+        guest.send('Y')
+        guest.wait('Buffer full', start)
+        guest.send('\x0f')
+        guest.wait('Saved', start)
+        guest.send('\x18')
+        guest.wait('wuwaos/> ', start)
+    finally:
+        guest.close()
+
+    image = disk.read_bytes()
+    fs = WufsImage(bytearray(image))
+    for name, expected in (('/draft.c', b'X' + original), ('/oversize.c', original + b'ZZ')):
+        inode = fs.read_inode(fs.find(name))
+        data = b''.join(image[sector * 512:(sector + 1) * 512] for sector in fs.inode_blocks(inode))
+        assert data[:inode[1]] == expected, name
+    print('PASS: fan 32 KiB save, insertion limit, and oversize preservation', flush=True)
+
+
 def check_harts(qemu, folder, disk, swap):
     for harts in (2, 3):
         for flash in (False, True):
@@ -106,7 +136,13 @@ def main():
     original, disk, swap = [folder / name for name in ('old.img', 'disk.img', 'swap.img')]
     keep = folder / 'keep'
     keep.write_bytes(b'preserved')
-    install = ['--install', keep, '/keep']
+    draft_data = (b'/* edit me */\n' * FAN_LIMIT)[:FAN_LIMIT - 1]
+    draft = folder / 'draft.c'
+    draft.write_bytes(draft_data)
+    oversize = folder / 'oversize.c'
+    oversize.write_bytes(draft_data + b'ZZ')
+    install = ['--install', keep, '/keep', '--install', draft, '/draft.c',
+               '--install', oversize, '/oversize.c']
     for source, target in [('exec_fd_probe', 'exec-fd'), ('wufs_links_probe', 'wufs'),
                            ('smp_probe', 'smp'), ('thread-stage-a-probe', 'stage-a')]:
         install += ['--install', ROOT / f'build/{source}.elf', f'/bin/{target}.elf']
@@ -117,6 +153,7 @@ def main():
     tool('make_swap.py', '--image', swap)
     check_wufs(qemu, folder, disk, swap)
     check_replay(qemu, folder, disk, swap)
+    check_fan(qemu, folder, disk, swap, draft_data)
     check_harts(qemu, folder, disk, swap)
     print('PASS: CLI roadmap regression', flush=True)
 

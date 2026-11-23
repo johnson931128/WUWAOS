@@ -9,3 +9,4 @@
 ## 驗收紀錄
 
 - 階段 1：原生 Windows QEMU 從含空格的目錄執行 `WUWAOS`，通過乾淨 Flash 開機、有效 journal 重播、下次以 Flash 重啟並讀回資料、無效 journal 拒絕復原且磁碟 SHA-256 一致。重播案例用已提交的 journal 測試映像，未模擬實際斷電。
+- 階段 2：`fan` 在使用者 heap 保留 32 KiB 編輯空間。QEMU Flash CLI 已驗證開啟 32,767 bytes、再插入一個 byte 並保存到 32 KiB、拒絕插入超限 byte，以及超限檔案保持原樣。測試關機後會讀取磁碟核對兩份內容。

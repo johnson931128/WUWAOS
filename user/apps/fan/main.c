@@ -3,20 +3,19 @@
 #include "syscall_numbers.h"
 #include <stddef.h>
 
-#define LIMIT 2048U
+#define LIMIT (32U * 1024U)
 #define COLS 78U
 #define ROWS 20U
 #define NONE (-1)
 enum { UP = 256, DOWN, LEFT, RIGHT, HOME, END, DELETE, PAGE_UP, PAGE_DOWN };
 
-static char text[LIMIT + 1]; /* Extra byte detects oversized existing files. */
+static char *text;
 static size_t length, cursor, goal, top, left;
 static int dirty, confirming;
 static int save_uncertain;
 static const char *filename;
 static const char *message = "Ready";
 static long save_error;
-/* Cache visible lines, leaving room for text in the single 4 KiB data page. */
 static char screen[22][COLS + 1];
 static unsigned int screen_valid;
 
@@ -37,7 +36,7 @@ static void set_goal(void) {
 /* Insert/delete move the tail of a bounded contiguous buffer, O(length). */
 static void insert(char character, size_t count) {
     if (count > LIMIT - length) {
-        message = "Buffer full: 2048 bytes maximum";
+        message = "Buffer full";
         return;
     }
     for (size_t i = length; i > cursor; --i) text[i + count - 1] = text[i - 1];
@@ -158,7 +157,8 @@ static void render(void) {
         append(row, &used, "Ln "); number(row, &used, current_line + 1);
         append(row, &used, " Col "); number(row, &used, column + 1);
         append(row, &used, " | "); number(row, &used, length);
-        append(row, &used, "/2048 bytes | "); append(row, &used, message);
+        append(row, &used, "/"); number(row, &used, LIMIT);
+        append(row, &used, " bytes | "); append(row, &used, message);
         if (save_error < 0) {
             append(row, &used, " -"); number(row, &used, (size_t)-save_error);
         }
@@ -292,13 +292,21 @@ long user_main(long program, const char *path) {
         user_puts("fan: an absolute file path is required.\n");
         return 1;
     }
-    const long loaded = fs_readfile(path, text, sizeof(text));
+    /* The extra byte distinguishes a full buffer from a truncated file. */
+    const long buffer = sbrk(LIMIT + 1);
+    if (buffer < 0) {
+        user_puts("fan: cannot reserve the edit buffer.\n");
+        return 1;
+    }
+    text = (char *)buffer;
+    const long loaded = fs_readfile(path, text, LIMIT + 1);
     if (loaded == -2) message = "New file (created on save)";
     else if (loaded < 0) {
         user_puts("fan: cannot open file, error "); user_number(loaded); user_puts("\n");
         return 1;
     } else if (loaded > LIMIT) {
-        user_puts("fan: file exceeds 2048 bytes; left unchanged.\n");
+        user_puts("fan: file exceeds "); user_number(LIMIT);
+        user_puts(" bytes; left unchanged.\n");
         return 1;
     } else length = (size_t)loaded;
     for (size_t i = 0; i < length; ++i) {

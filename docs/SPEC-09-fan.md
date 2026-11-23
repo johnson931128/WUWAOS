@@ -6,7 +6,7 @@
 
 ## 使用方式與驗收條件
 
-- 支援 ASCII 可列印字元、LF 換行、既有 Tab；最多 2048 bytes。開檔多讀一個 byte 偵測超限；含其他位元組（包括 UTF-8、CR、NUL、ESC）的檔案拒絕開啟，不寫回。
+- 支援 ASCII 可列印字元、LF 換行、既有 Tab；目前最多 32 KiB（首版 2 KiB）。開檔多讀一個 byte 偵測超限；含其他位元組（包括 UTF-8、CR、NUL、ESC）的檔案拒絕開啟，不寫回。
 - 尚不存在的檔案以空緩衝區開啟，第一次成功儲存才建立；沒有父目錄時儲存回報錯誤且保留緩衝區。
 - 方向鍵移動、Home／End 到行首／行尾、Backspace／Delete 刪除、Enter 插入 LF，Tab 插入至下一個四欄位置所需的空白。既有 Tab 以 `>` 顯示並視為一欄，儲存時仍保留原 Tab。
 - Ctrl+O 儲存；Ctrl+X 離開。有修改時選 y 儲存後離開／n 捨棄／c 或 Escape 取消；儲存失敗留在編輯器。Ctrl+L 重畫。
@@ -17,11 +17,11 @@
 - `user/fan.c` 另行連結成 fan.elf／fan.bin，使用既有 16 KiB code、4 KiB data 與 4 KiB stack 布局，核心嵌入第三份映像；仍不是磁碟 ELF loader。
 - shell fork 後，子行程以擴充 exec 呼叫傳入 PROGRAM_FAN 及路徑；核心在替換前驗證／複製舊使用者路徑，將它放到新使用者堆疊頂端，a1 傳其位址，sp 調整至字串下方。既有 exec(program) 維持可用。
 - 新增 console_mode(raw) 系統呼叫，raw 模式提供不回顯、逐 byte 的阻塞讀取。單一行程持有 raw console，其他讀取者拒絕；exit／kill／成功 exec 釋放持有者。shell 等待編輯器期間不讀輸入，返回時恢復終端顏色、游標與一般畫面。
-- 編輯緩衝區為固定長度連續 byte 陣列，游標為 byte offset。插入／刪除以搬移後段實作，O(N)；行首／行尾／上下移動掃描文字，不使用 heap。上／下移動保留目標欄位。
+- 編輯緩衝區透過 `sbrk()` 在使用者 heap 保留連續空間，退出時由核心回收。游標為 byte offset。插入／刪除以搬移後段實作，O(N)；行首／行尾／上下移動掃描文字。上／下移動保留目標欄位。
 - Escape 序列用有限狀態解碼，不等待完整序列的同步迴圈；支援 CSI／SS3 方向鍵及常用 Home／End／Delete／PageUp／PageDown 序列，未知序列忽略。
 - 每個編輯動作後計算可見範圍，以逐行內容快取只重畫有改變的行；Ctrl+L 清除快取並完整重畫。控制字元不直接輸出成檔案內容，避免檔案中的終端控制碼被執行。
 - fan 的逐鍵等待狀態仍更新真實 PCB，但省略該行程的 transition 追蹤文字，避免每次按鍵破壞畫面。其他背景行程的輸出仍可能交錯，尚無完整前景工作與終端輸出隔離。
-- 儲存沿用 WUFS 整檔覆寫，不提供原子儲存／掉電交易保護。成功寫入完整長度才清除 dirty（未儲存修改）標記。
+- 儲存使用 WUFS `fs_replacefile` 的單筆 redo 交易。成功寫入完整長度才清除 dirty（未儲存修改）標記。參見 [WUFS journal](./SPEC-32-wufs-redo-journal.md)。
 
 ## 執行步驟
 
