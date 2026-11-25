@@ -3,11 +3,13 @@ import { computed, onMounted, ref } from 'vue'
 import { useData, withBase } from 'vitepress'
 import ArchitectureIcon from './ArchitectureIcon.vue'
 
+const props = defineProps<{ embedded?: boolean }>()
+
 const parts = [
 {id:'kernel',title:'WUWAOS Kernel',sub:'協調資源，也建立執行邊界',icon:'kernel',tone:'teal',desc:'核心在 RISC-V S-mode 執行，串接 trap、虛擬記憶體、裝置、TTY、檔案系統與行程。Gate / Event 提供共用的同步與等待機制。可選桌面與終端繪製也位於核心端，使用者程式則以 ecall 請求服務。',source:'kernel/boot/main.c',href:'/CODE_GUIDE.html',chapter:'完整程式碼導覽'},
 {id:'shell',title:'Shell',sub:'指令與管線',icon:'terminal',tone:'blue',desc:'U-mode shell 解析指令，透過 WUWAOS 自訂 syscall ABI 建立行程、存取檔案與串接 pipe，不直接操作裝置。',source:'user/shell/shell.c',href:'/topics/applications.html',chapter:'Shell 與應用程式'},
 {id:'fan',title:'fan editor',sub:'編輯與安全儲存',icon:'editor',tone:'rose',desc:'fan 是使用者模式的全螢幕文字編輯器。儲存透過 fs_replace 路徑，將新版檔案與 metadata 納入同一筆有界交易。',source:'user/apps/fan/main.c',href:'/topics/journal.html',chapter:'Journal 與安全替換'},
-{id:'workstate',title:'workstate',sub:'觀察 CPU 與記憶體',icon:'activity',tone:'violet',desc:'workstate 讀取核心提供的快照，呈現行程 CPU 派發時間、RSS 與 Swap 使用情況。首頁架構圖本身不是即時監測介面。',source:'user/apps/workstate/workstate.c',href:'/topics/monitoring.html',chapter:'系統狀態監測'},
+{id:'workstate',title:'workstate',sub:'觀察 CPU 與記憶體',icon:'activity',tone:'violet',desc:'workstate 讀取核心提供的快照，呈現行程 CPU 派發時間、RSS 與 Swap 使用情況。架構圖本身不是即時監測介面。',source:'user/apps/workstate/workstate.c',href:'/topics/monitoring.html',chapter:'系統狀態監測'},
 {id:'process',title:'Process / Scheduler',sub:'PCB、TCB 與 RR 排程',icon:'process',tone:'blue',desc:'Process 保存行程資源；Thread 保存執行狀態、核心堆疊與事件等待。Ready queue 排入 Thread，透過計時器與上下文切換協調各 hart 上的執行。',source:'kernel/proc/process.c · kernel/proc/thread.h · kernel/proc/scheduler.c',href:'/spec/03-processes-and-threads.html',chapter:'行程與排程'},
 {id:'memory',title:'Memory / Sv39',sub:'三級頁表、4 KiB 頁',icon:'memory',tone:'violet',desc:'Sv39 將虛擬位址轉譯到實體頁。VM 處理合法缺頁、權限與 FIFO 置換；可用的 Swap 磁碟保存換出的使用者頁，I/O 失敗則回復原映射與 RAM。',source:'kernel/mm/vm.c · kernel/mm/page.c · kernel/mm/swap.c',href:'/spec/08-virtual-memory.html',chapter:'實體頁與 Sv39'},
 {id:'trap',title:'Trap / System Call',sub:'ecall、例外與中斷入口',icon:'gate',tone:'teal',desc:'trap entry 保存暫存器並進入核心。trap_handler 分派使用者 ecall、缺頁、計時器及外部中斷；syscall_dispatch 連到自訂 ABI 的服務。',source:'arch/riscv/trap.c · arch/riscv/trap.S · kernel/syscall/syscall.c',href:'/spec/02-traps-and-syscalls.html',chapter:'例外與系統呼叫'},
@@ -101,14 +103,15 @@ function moveStep(offset: number) {
 
 const { isDark } = useData()
 onMounted(() => {
+  if (props.embedded) return
   const appearance = localStorage.getItem('vitepress-theme-appearance')
   if (!appearance || appearance === 'auto') isDark.value = false
 })
 </script>
 
 <template>
-<div class="system-overview architecture-home">
-  <header class="atlas-intro">
+<div class="system-architecture" :class="embedded ? 'architecture-chapter' : 'system-overview architecture-home'">
+  <header v-if="!embedded" class="atlas-intro">
     <h1>WUWAOS 系統架構</h1>
     <p class="intro-lead">從一行 Shell 指令，看核心如何使用虛擬硬體。</p>
   </header>
@@ -116,7 +119,7 @@ onMounted(() => {
   <section aria-labelledby="atlas-title">
     <div class="atlas-heading">
       <div>
-        <h2 id="atlas-title">System Architecture</h2>
+        <h2 id="atlas-title">{{ embedded ? '系統架構圖' : 'System Architecture' }}</h2>
         <p>滑過元件即可預覽說明，點選後可查閱章節與原始碼。</p>
       </div>
       <div class="trace-actions">
@@ -202,8 +205,8 @@ onMounted(() => {
       </aside>
     </div>
   </section>
-  <section class="boot-route" aria-labelledby="boot-route-title"><div class="boot-caption"><ArchitectureIcon name="boot"/><div><h2 id="boot-route-title">從哪裡開始執行？</h2><p>磁碟開機路徑</p></div></div><div class="boot-stations"><button type="button" :aria-pressed="selected.id==='opensbi'" @click="select('opensbi')"><ArchitectureIcon name="firmware"/><span><strong>OpenSBI</strong><small>M-mode 韌體</small></span></button><span aria-hidden="true">→</span><button type="button" :aria-pressed="selected.id==='bootloader'" @click="select('bootloader')"><ArchitectureIcon name="boot"/><span><strong>Bootloader</strong><small>從 WUFS 載入 ELF</small></span></button><span aria-hidden="true">→</span><button type="button" :aria-pressed="selected.id==='kernel'" @click="select('kernel')"><ArchitectureIcon name="kernel"/><span><strong>kernel_main</strong><small>初始化與啟動行程</small></span></button></div><p class="boot-note">直接開機時，QEMU 預先載入核心，OpenSBI 直接交接給它；略過磁碟載入器。</p></section>
-  <section class="explore-section" aria-labelledby="explore-title">
+  <section v-if="!embedded" class="boot-route" aria-labelledby="boot-route-title"><div class="boot-caption"><ArchitectureIcon name="boot"/><div><h2 id="boot-route-title">從哪裡開始執行？</h2><p>磁碟開機路徑</p></div></div><div class="boot-stations"><button type="button" :aria-pressed="selected.id==='opensbi'" @click="select('opensbi')"><ArchitectureIcon name="firmware"/><span><strong>OpenSBI</strong><small>M-mode 韌體</small></span></button><span aria-hidden="true">→</span><button type="button" :aria-pressed="selected.id==='bootloader'" @click="select('bootloader')"><ArchitectureIcon name="boot"/><span><strong>Bootloader</strong><small>從 WUFS 載入 ELF</small></span></button><span aria-hidden="true">→</span><button type="button" :aria-pressed="selected.id==='kernel'" @click="select('kernel')"><ArchitectureIcon name="kernel"/><span><strong>kernel_main</strong><small>初始化與啟動行程</small></span></button></div><p class="boot-note">直接開機時，QEMU 預先載入核心，OpenSBI 直接交接給它；略過磁碟載入器。</p></section>
+  <section v-if="!embedded" class="explore-section" aria-labelledby="explore-title">
     <h2 id="explore-title">從這裡開始</h2>
     <div class="reading-paths">
       <a :href="withBase('/spec/')">
@@ -233,7 +236,7 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.architecture-home {
+.system-architecture {
   --a-ink: var(--os-ink);
   --a-muted: var(--os-muted);
   --a-line: var(--os-line);
@@ -246,16 +249,16 @@ onMounted(() => {
   font-family: var(--vp-font-family-base);
 }
 
-.architecture-home :is(h1, h2, h3, p) {
+.system-architecture :is(h1, h2, h3, p) {
   margin: 0;
   padding: 0;
   border: 0;
 }
 
-.architecture-home :is(h1, h2, h3) { color: var(--a-ink); }
-.architecture-home button { font: inherit; color: inherit; cursor: pointer; }
-.architecture-home a { color: var(--a-teal); text-decoration: none; }
-.architecture-home :is(button, a, summary):focus-visible {
+.system-architecture :is(h1, h2, h3) { color: var(--a-ink); }
+.system-architecture button { font: inherit; color: inherit; cursor: pointer; }
+.system-architecture a { color: var(--a-teal); text-decoration: none; }
+.system-architecture :is(button, a, summary):focus-visible {
   outline: 2px solid var(--os-focus);
   outline-offset: 3px;
   scroll-margin-block: 84px;
@@ -289,7 +292,7 @@ onMounted(() => {
 .atlas-heading h2 { font-size: 1.3rem; }
 .atlas-heading p { margin-top: .25rem; color: var(--a-muted); font-size: .9375rem; }
 
-.architecture-home .atlas-control {
+.system-architecture .atlas-control {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -305,9 +308,9 @@ onMounted(() => {
 
 .atlas-control code { font-size: inherit; }
 .atlas-control .arch-icon { width: 19px; height: 19px; }
-.architecture-home .atlas-control:is(:hover, [aria-pressed="true"]) { border-color: var(--a-teal); }
-.architecture-home .primary-control { background: var(--os-accent-soft); }
-.architecture-home .atlas-control[aria-disabled="true"] { opacity: .65; cursor: default; border-color: var(--a-line); }
+.system-architecture .atlas-control:is(:hover, [aria-pressed="true"]) { border-color: var(--a-teal); }
+.system-architecture .primary-control { background: var(--os-accent-soft); }
+.system-architecture .atlas-control[aria-disabled="true"] { opacity: .65; cursor: default; border-color: var(--a-line); }
 
 .atlas-layout {
   display: grid;
@@ -350,7 +353,7 @@ onMounted(() => {
   gap: clamp(.4rem, 1vw, .8rem);
 }
 
-.architecture-home .component-block {
+.system-architecture .component-block {
   display: grid;
   justify-items: center;
   align-content: center;
@@ -370,11 +373,11 @@ onMounted(() => {
 
 .component-block span { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
 .component-block .arch-icon { width: 25px; height: 25px; color: var(--tone); }
-.architecture-home .component-block:is(.previewed, [aria-pressed="true"]) {
+.system-architecture .component-block:is(.previewed, [aria-pressed="true"]) {
   border-color: var(--layer-ink);
   background: color-mix(in srgb, var(--layer-ink) 13%, var(--a-paper));
 }
-.architecture-home .component-block:is(.current, .previewed) {
+.system-architecture .component-block:is(.current, .previewed) {
   box-shadow: inset 0 0 0 1px var(--layer-ink);
 }
 
@@ -403,12 +406,12 @@ onMounted(() => {
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-.architecture-home .boundary-flow code { color: inherit; font-size: .875rem; }
+.system-architecture .boundary-flow code { color: inherit; font-size: .875rem; }
 .boundary-flow.connected { color: var(--a-teal); font-weight: 700; }
 .boundary-flow.connected .wire { animation: emphasize-wire var(--os-motion-fast) var(--os-ease) both; stroke-width: 2.5; }
 @keyframes emphasize-wire { from { opacity: .55; } }
 
-.architecture-home .board-caption { margin-top: .75rem; color: var(--a-muted); font-size: .875rem; }
+.system-architecture .board-caption { margin-top: .75rem; color: var(--a-muted); font-size: .875rem; }
 .module-detail {
   position: sticky;
   top: 88px;
@@ -426,13 +429,25 @@ onMounted(() => {
 .module-detail .detail-sub { margin-top: .4rem; font-size: .875rem; color: var(--a-muted); }
 .module-detail .detail-description { margin: .5rem 0 .8rem; font-size: 1rem; line-height: 1.7; color: var(--a-muted); }
 .chapter-link { display: inline-block; padding-block: .65rem; font-size: .9375rem; font-weight: 650; }
-.architecture-home .source-detail { margin: 0; padding: 0 .65rem; font-size: .875rem; }
-.architecture-home .source-detail summary { margin: 0; padding-block: .6rem; color: var(--a-ink); }
+.system-architecture .source-detail { margin: 0; padding: 0 .65rem; font-size: .875rem; }
+.system-architecture .source-detail summary { margin: 0; padding-block: .6rem; color: var(--a-ink); }
 .source-detail > a { display: inline-block; margin-bottom: .55rem; }
 .source-detail code { display: block; margin-block: .4rem; overflow-wrap: anywhere; white-space: normal; font-size: .875rem; }
 
 .boot-route{display:grid;grid-template-columns:1fr;gap:1rem;margin-top:1.8rem;padding:1.3rem 1.4rem;border:1px solid var(--a-line);border-radius:16px;background:var(--a-paper)}.boot-caption{display:flex;gap:.7rem;align-items:center}.boot-caption>.arch-icon{width:30px;height:30px;color:#8b651e}.boot-caption h2{font-size:1rem}.boot-caption p{font-size:.875rem;color:var(--a-muted);margin-top:.15rem}.boot-stations{display:flex;align-items:center;justify-content:space-between;gap:.5rem}.boot-stations button{display:flex;align-items:center;gap:.65rem;background:var(--a-soft);border:1px solid transparent;border-radius:9px;padding:.7rem;min-width:0;text-align:left;flex:1}.boot-stations button:hover,.boot-stations button[aria-pressed=true]{border-color:#b6cec8;background:var(--os-accent-soft)}.boot-stations .arch-icon{width:29px;height:29px;flex-shrink:0;color:var(--a-teal)}.boot-stations strong{display:block;font-size:.875rem}.boot-stations small{display:block;font-size:.875rem;color:var(--a-muted);line-height:1.7}.boot-stations>span{color:#779f96}.boot-note{font-size:.875rem;color:var(--a-muted);line-height:1.8}.explore-section{margin-top:3rem}.explore-section>h2{font-size:1.5rem;margin-bottom:1.2rem}.reading-paths{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1.1rem}.reading-paths a{display:flex;align-items:flex-start;gap:.7rem;border:1px solid var(--a-line);border-radius:12px;background:var(--a-paper);padding:1rem;min-width:0}.reading-paths a:hover{background:var(--os-accent-soft)}.reading-paths .arch-icon{width:25px;height:25px;flex-shrink:0}.reading-paths h3{font-size:.9rem;color:var(--a-ink)}.reading-paths p{font-size:1rem;line-height:1.7;color:var(--a-muted);margin-top:.4rem}.reading-paths a>span{margin-left:auto}.atlas-footer{display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap;margin-top:2rem;padding:1rem 0;font-size:.875rem;color:var(--a-muted);border-top:1px solid var(--a-line)}.atlas-footer nav{display:flex;gap:1rem;flex-wrap:wrap}
 :global(body:has(.architecture-home)),:global(body:has(.architecture-home) .VPDoc){background:var(--a-paper)}:global(body:has(.architecture-home) .VPDoc .content-container),:global(body:has(.architecture-home) .VPDoc.has-sidebar .content-container){max-width:none!important}:global(body:has(.architecture-home) .VPDoc .content){padding-inline:0;max-width:none}:global(body:has(.architecture-home) .VPDoc .container){max-width:1440px}:global(body:has(.architecture-home) .VPDocFooter){display:none}
+
+
+.architecture-chapter {
+  container: chapter-architecture / inline-size;
+  margin-block: 1.5rem 2rem;
+}
+
+@container chapter-architecture (max-width: 720px) {
+  .atlas-layout { grid-template-columns: minmax(0, 1fr); gap: 1rem; }
+  .module-detail { position: static; }
+  .detail-content { min-height: 0; }
+}
 
 @media (max-width: 850px) {
   .atlas-layout { grid-template-columns: minmax(0, 1fr); gap: 1rem; }
@@ -453,7 +468,7 @@ onMounted(() => {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .architecture-home .component-block { transition: none; }
+  .system-architecture .component-block { transition: none; }
   .boundary-flow.connected .wire { animation: none; }
 }
 </style>

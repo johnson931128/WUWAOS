@@ -1,6 +1,12 @@
 # 00 · 專案簡介與系統架構
 
+<script setup lang="ts">
+import SystemOverview from '../.vitepress/theme/components/SystemOverview.vue'
+</script>
+
 WUWAOS 是一個跑在 QEMU `virt` 上的 [RISC-V 64 位元](./glossary.md#riscv)教學作業系統。從終端機發出的指令可以用來追蹤一次操作如何經過 CPU、核心和裝置。
+
+<SystemOverview embedded />
 
 ## 作業系統在管什麼
 
