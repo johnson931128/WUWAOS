@@ -1,5 +1,6 @@
 import { defineConfig } from 'vitepress'
 import { readFileSync } from 'node:fs'
+import { normalizeCourseNotes, renderCourseFormula } from './course-notes.mjs'
 
 const publicUrl = 'https://johnson931128.github.io/WUWAOS/'
 const readSpec = (file: string) => readFileSync(new URL(`../spec/${file}`, import.meta.url), 'utf8')
@@ -39,6 +40,31 @@ export default defineConfig({
     // Repository-authored Vue labs are embedded in the Markdown chapters.
     lineNumbers: true, html: true, languageAlias: { h: 'c', S: 'asm' },
     config(md) {
+      md.core.ruler.before('normalize', 'course-note-source', (state) => {
+        if (!state.src.includes('<!-- course-note:start -->')) return
+        state.env.courseNote = true
+        state.src = normalizeCourseNotes(state.src)
+      })
+      md.inline.ruler.before('text', 'course-note-math', (state, silent) => {
+        if (!state.env.courseNote || state.src[state.pos] !== '$') return false
+        const display = state.src[state.pos + 1] === '$'
+        const delimiter = display ? '$$' : '$'
+        const expression = display ? /^\$\$([^$]+)\$\$/ : /^\$([^$\n]+)\$(?!\$)/
+        const match = state.src.slice(state.pos, state.posMax).match(expression)
+        if (!match || !match[1].trim()) return false
+        if (!silent) {
+          const token = state.push('course_note_math', '', 0)
+          token.content = match[1].trim()
+          token.markup = delimiter
+        }
+        state.pos += match[0].length
+        return true
+      })
+      md.renderer.rules.course_note_math = (tokens, index) => {
+        const token = tokens[index]
+        const formula = renderCourseFormula(token.content, token.markup === '$$', md.utils.escapeHtml)
+        return `<span class="course-formula">${formula}</span>`
+      }
       md.core.ruler.after('inline', 'spec-term-hints', (state) => {
         for (const token of state.tokens) {
           if (!token.children) continue

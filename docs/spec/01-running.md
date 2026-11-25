@@ -4,7 +4,13 @@
 import BootTimeline from '../.vitepress/theme/components/BootTimeline.vue'
 </script>
 
-你可以直接使用已有的 Windows CLI Release，或在 Windows 的 [WSL](./glossary.md#wsl) Ubuntu 內建置目前原始碼。前者功能以該版本的發行說明為準，後者會編譯工作目錄中的原始碼。
+Windows CLI Release 可直接啟動已編譯的版本。在 [WSL](./glossary.md#wsl) Ubuntu 建置，則會執行目前工作目錄的原始碼。
+
+## 從原始碼變成可開機的系統
+
+編譯器把 C 轉成 RISC-V 目標碼，組譯器處理組合語言，連結器再依 linker script 把各段放到核心期望的位置。這些工作在主機完成。編譯使用的主機 CPU 與最後執行的客體 ISA 可以不同，所以這是交叉編譯。
+
+連結後的 `build/kernel.elf` 記錄程式入口與可載入區段。磁碟開機另外準備 `build/kernel-disk.elf`，把它寫入 WUFS 的 `/boot/kernel.elf`。開機時 Flash 載入器讀取 ELF，載入需要的區段，再把控制權交給核心入口。主機建置、磁碟準備、韌體交接、核心啟動分別發生在不同階段。 [建置規則](https://github.com/johnson931128/WUWAOS/blob/main/Makefile) · [Flash 載入器程式碼](https://github.com/johnson931128/WUWAOS/blob/main/bootloader/boot.c)
 
 ## 從原始碼啟動
 
@@ -24,7 +30,7 @@ wsl -d Ubuntu -- make run-disk
 
 ## 用現有 Release 啟動
 
-解壓 Windows CLI Release，按發行說明安裝 QEMU，然後在解壓目錄用 CMD 執行 `WUWAOS`。這條路徑執行的是發行版的預編譯核心。 [Windows CLI Release](https://github.com/johnson931128/WUWAOS/releases/tag/cli-windows-v1)
+解壓 Windows CLI Release，按發行說明安裝 QEMU，然後在解壓目錄用 CMD 執行 `WUWAOS`。這條路徑執行的是發行版的預編譯核心。現行原始碼的 Windows 啟動器另能在發現待復原的 journal 時啟動復原核心，舊版發行套件以其發行說明為準。 [Windows CLI Release](https://github.com/johnson931128/WUWAOS/releases/tag/cli-windows-v1)
 
 ## 確認已進入系統
 
@@ -32,8 +38,22 @@ wsl -d Ubuntu -- make run-disk
 
 既有自動化驗收從 WSL 執行 `python3 -B tools/test_kernel_cli.py`。工具會另建測試磁碟，涵蓋直接開機、Flash 開機、2／3 Hart、管線和 WUFS 重播。 [CLI 測試](https://github.com/johnson931128/WUWAOS/blob/3a3b273/tools/test_kernel_cli.py) · [既有驗收](../SPEC-35-copy-on-write.md#_2026-11-22-qemu-驗證)
 
+### 開機失敗時先看哪裡
+
+| 看到的現象 | 先檢查的階段 |
+| --- | --- |
+| 主機顯示編譯或連結錯誤 | 檢查工具鏈與建置輸出，QEMU 此時可能還沒開始。 |
+| OpenSBI 已出現，載入器回報找不到核心或 journal 待復原 | 檢查掛載的 WUFS 磁碟、`/boot/kernel.elf` 和 [journal 狀態](./09-filesystem.md#寫入到一半重啟怎麼辦)。 |
+| 已出現 `wuwaos/>` | 核心與 Shell 已啟動，可以用 `ps` 確認排程設定，或用 `ls /` 確認能讀取根目錄。 |
+
 ## 從韌體交接到 Shell
 
 沿著開機順序逐步查看 OpenSBI、載入器、核心和 Shell 如何交接。 [開機流程補充](../topics/boot.md)
 
 <BootTimeline />
+
+## 恐龍書與課堂筆記
+
+恐龍書第 10 版 §2.5、§2.9–2.10。開機與除錯的 WUWAOS 細節另見 [開機流程](../topics/boot.md)。
+
+- [作業系統服務、載入與核心結構](../theory/02-os-structures.md)

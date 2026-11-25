@@ -139,3 +139,14 @@ body:has(.block-lab,.fd-ofd-lab,.paging-lab,.journal-lab) .vp-doc > div > :is(h1
 @media(max-width:640px) { .editorial-hero {padding:1.25rem}.vp-doc {line-height:1.6} }
 @media(max-width:420px) { .roadmap-grid {grid-template-columns:1fr} }
 @media(prefers-reduced-motion:reduce) { html {scroll-behavior:auto} *,*::before,*::after {transition-duration:.01ms!important;animation-duration:.01ms!important;animation-iteration-count:1!important} }
+
+.course-formula {
+  display: inline-block;
+  max-width: 100%;
+  overflow-x: auto;
+  vertical-align: middle;
+}
+
+.course-formula math[display="block"] {
+  min-width: max-content;
+}

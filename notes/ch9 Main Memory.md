@@ -784,7 +784,7 @@ $$EAT = (1 + \varepsilon)\alpha + (2 + \varepsilon)(1 - \alpha) = 2 + \varepsilo
     * 解釋：附加在分頁表條目中的權限標籤。當程式試圖對一個標示為「唯讀」的分頁進行寫入時，會引發記憶體保護違規 (memory-protection violation) 的硬體陷阱。
 * **Valid-invalid bit (有效-無效位元)**
     * Definition: An additional bit attached to each entry in the page table. valid indicates the page is in the process's logical address space; invalid indicates that the page is not in the process's logical address space.
-    * 解釋：最基礎的越界防護機制。硬體會檢查這個位元，只要是 invalid (無效)，就代表程式試圖存取別人的記憶體，作業系統會立刻介入攔截。
+    * 解釋：硬體看到無效項目會觸發例外。核心再依位址空間的記錄判斷這是合法但尚未駐留的頁面，還是非法存取。
 * **PTLR (Page-table length register / 分頁表長度暫存器)**
     * Definition: A hardware register indicating the size of the page table to prevent wasting memory on unused page-table entries.
     * 解釋：如果一個行程只用了極少的記憶體，幫它建立一整張涵蓋全部位址範圍的分頁表非常浪費。PTLR 讓分頁表可以「只建立真正有在用的長度」，查表前若邏輯位址大於 PTLR 標示的範圍，就直接判定錯誤。

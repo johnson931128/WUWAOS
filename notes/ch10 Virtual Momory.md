@@ -1919,7 +1919,7 @@ Copy-on-Write，**COW**，中文可翻成「寫入時複製」。這個機制主
 COW 的做法比較聰明：一開始 parent 和 child 先**共享同一批 physical pages**。也就是 parent 的 page table 和 child 的 page table 會指向相同的 physical frames。只要雙方都只是讀取資料，就完全不用複製。
 
 真正發生複製的時機是：
-* **只要 parent 或 child 其中一方嘗試修改某個 shared page，OS 才真的複製那一頁。**
+* **當父或子首次寫入原本可寫且仍由多份映射共用的頁框，核心才為寫入方複製該頁。若只剩一份映射，實作可以恢復原頁框的寫入權限。**
 所以 COW 的名稱很直覺：
 * Copy on Write = 寫入時才複製。
 ## 為什麼 COW 可以加速 process creation？
@@ -1961,7 +1961,7 @@ COW 的關鍵是 page table 權限控制。
 
 **free pages are allocated from a pool of zero-fill-on-demand pages**
 
-意思是 OS 通常會維護一批已經清成 0 的 free frames。當 process 需要新的 page，例如 heap 長大、stack 長大，或 COW 需要新 page frame 時，可以快速拿一個乾淨的 frame 來用。
+零填充分頁必須在交給使用者程式前提供全零內容。系統可預先維護清零頁框，也可在分配時清零。有內容要完整覆蓋的 COW 複製頁框，最終內容來自來源頁。
 
 這裡有兩個目的。
 

@@ -11,6 +11,12 @@ import ThreadFlow from '../.vitepress/theme/components/ThreadFlow.vue'
 | [PCB](./glossary.md#pcb) | 行程的 PID、父 PID、頁表、檔案描述符、工作目錄、生命週期與退出狀態。 |
 | [TCB](./glossary.md#tcb) | 執行緒的 TID、所屬行程、狀態、等待原因、使用者／核心堆疊和保存的執行進度。 |
 
+### 同一個程式可以跑出什麼
+
+磁碟上的 ELF 是可載入的程式映像。啟動兩次時，各自建立行程和位址空間，即使兩份記憶體的虛擬位址看起來相同，也能映射到不同頁框。在同一行程建立第二條執行緒時，兩條執行緒則共用行程資源。共享可寫資料需要同步，暫存器與堆疊仍分別保存。
+
+以兩條執行緒共同操作一個行程內的緩衝區為例，程式只需傳遞緩衝區指標。若工作分到兩個不同的行程，可使用 Pipe 等行程間通訊機制，把資料交給另一邊處理。傳遞資源的方式和 CPU 如何逐條派發是兩個獨立的問題。 [行程結構](https://github.com/johnson931128/WUWAOS/blob/main/kernel/proc/process.h) · [執行緒結構](https://github.com/johnson931128/WUWAOS/blob/main/kernel/proc/thread.h)
+
 ## 行程如何建立、換程式和退出
 
 | 操作 | 呼叫後會發生什麼 |
@@ -21,6 +27,10 @@ import ThreadFlow from '../.vitepress/theme/components/ThreadFlow.vue'
 | `exit()`／`wait()` | `exit()` 開始整個行程的退出流程。核心清理其執行緒和資源，父行程可用 `wait(pid, &status)` 收取結果，或用 `wait(-1, &status)` 等任一子行程。沒有父行程的子行程由排程器安排回收。 |
 
 `kill(pid)` 只接受符合條件的直接子行程，PID 1 受保護。`fork()` 和 `exec()` 要求目前行程只占用一格 TCB，尚未 `join` 的 Zombie 執行緒也算一格。使用外部 ELF 時，核心支援受限的靜態 RV64 映像與 `exec_argv()` 傳遞的引數。
+
+### 一次 Shell 命令怎麼把三個操作串起來
+
+Shell 啟動外部程式時，`fork()` 讓子行程繼承準備好的資源，子行程可以先調整標準輸入、標準輸出，接著用 `exec` 換成目標程式。父行程視需要呼叫 `wait` 收回子行程的退出狀態。管線就是相同做法的延伸：Shell 先安排端點，再啟動各段，讓每個程式從自己的標準輸入與輸出讀寫。 [Shell 執行路徑](https://github.com/johnson931128/WUWAOS/blob/main/user/shell/shell_exec.c)
 
 ## 執行緒如何建立和回收
 
@@ -35,3 +45,10 @@ import ThreadFlow from '../.vitepress/theme/components/ThreadFlow.vue'
 比較時間片到期、等待 I/O 和等待 `join`。圖解以單 Hart 示意執行緒的狀態轉換。 [執行緒與硬體補充](../topics/threads.md)
 
 <ThreadFlow />
+
+## 恐龍書與課堂筆記
+
+恐龍書第 10 版 §3.1–3.4、§4.1–4.4。Linux 的行程和 POSIX 執行緒用於教材對照。
+
+- [行程、PCB、生命週期與行程間通訊](../theory/03-processes.md)
+- [執行緒、多核心與執行緒模型](../theory/04-threads.md)

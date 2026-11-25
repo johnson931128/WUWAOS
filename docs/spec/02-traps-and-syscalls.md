@@ -6,6 +6,12 @@ import TrapFlow from '../.vitepress/theme/components/TrapFlow.vue'
 
 使用者程式要讀檔時，會呼叫 `read()`，把檔案描述符、緩衝區位址和長度交給核心。它在 [U-mode](./glossary.md#privilege-mode) 執行 `ecall` 後，CPU 轉入核心使用的 S-mode。這次受控的交接稱為[系統呼叫](./glossary.md#syscall)。
 
+## 為什麼需要由核心接手
+
+一般函式呼叫在同一個權限層級內跳到另一段程式。讀檔需要查行程的資源、驗證使用者指標，還可能操作裝置。這些工作由核心負責。使用者端函式會先把參數放到雙方約定的暫存器，再用 `ecall` 請 CPU 轉入核心。這份「哪個暫存器放什麼、結果如何回來」的約定可從 WUWAOS 的使用者函式庫和分派器兩端對照。 [使用者 API](https://github.com/johnson931128/WUWAOS/blob/main/user/lib/api.c) · [系統呼叫分派](https://github.com/johnson931128/WUWAOS/blob/main/kernel/syscall/syscall.c)
+
+CPU 也可能因為別的原因進入同一條陷阱入口。執行指令本身引發的事件是同步例外，例如 `ecall` 或缺頁。裝置和計時器則可在指令流進行時提出非同步中斷。三者都會保存續跑需要的狀態，核心再依事由決定怎麼處理。
+
 ## 系統呼叫如何往返
 
 1. 使用者函式庫依約定放入參數。前三個參數用 `a0` 至 `a2`，呼叫編號用 `a7`。
@@ -24,6 +30,10 @@ import TrapFlow from '../.vitepress/theme/components/TrapFlow.vue'
 
 `scause` 表示為什麼進核心，`sepc` 表示返回或重試的位置，`stval` 在缺頁時提供相關虛擬位址。傳入的 user buffer 只是一個待驗證的位址。對應到頁框後，寫入還可能觸發[寫入時複製](./08-virtual-memory.md#寫入時複製)。
 
+### TrapFrame 和核心上下文各保存一次什麼
+
+以阻塞的 `read()` 為例，第一次保存發生在由使用者態進入核心時。TrapFrame 留下程式的暫存器和返回位置。第二次發生在核心的讀取函式等待資料時。排程器保存讓這條執行緒回到同一段核心呼叫所需的暫存器與堆疊位置。醒來後先回到核心函式，等到讀取有結果，才把回傳值寫回 TrapFrame，最後以 `sret` 回到使用者程式。 [陷阱組語](https://github.com/johnson931128/WUWAOS/blob/main/arch/riscv/trap.S) · [上下文切換](https://github.com/johnson931128/WUWAOS/blob/main/arch/riscv/swtch.S)
+
 ## 逐步看 CPU 如何返回
 
 切換系統呼叫、合法缺頁或計時器中斷，查看三條路徑如何處理保存的指令位置。
@@ -31,3 +41,10 @@ import TrapFlow from '../.vitepress/theme/components/TrapFlow.vue'
 <TrapFlow />
 
 原始碼與既有驗收見 [陷阱入口](https://github.com/johnson931128/WUWAOS/blob/3a3b273/arch/riscv/trap.S) · [Trap handler](https://github.com/johnson931128/WUWAOS/blob/3a3b273/arch/riscv/trap.c) · [Syscall dispatcher](https://github.com/johnson931128/WUWAOS/blob/3a3b273/kernel/syscall/syscall.c) · [陷阱章節](../topics/traps.md)。
+
+## 恐龍書與課堂筆記
+
+恐龍書第 10 版 §1.4、§2.3；RISC-V 的實際返回位置以 WUWAOS 陷阱程式碼為準。
+
+- [作業系統運作與特權模式](../theory/01-introduction.md)
+- [系統呼叫、API 與行程控制](../theory/02-os-structures.md)
