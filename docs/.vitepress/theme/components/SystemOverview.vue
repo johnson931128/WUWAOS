@@ -3,6 +3,8 @@ import { computed, onMounted, ref } from 'vue'
 import { useData, withBase } from 'vitepress'
 import ArchitectureIcon from './ArchitectureIcon.vue'
 
+const props = defineProps<{ embedded?: boolean }>()
+
 const parts = [
   { id: 'kernel', title: 'WUWAOS Kernel', sub: '協調資源，也建立執行邊界', privilege: 'S-mode', badge: 'KERNEL CORE', icon: 'kernel', tone: 'indigo', desc: '核心在 RISC-V S-mode 執行，串接 trap、虛擬記憶體、裝置、TTY、檔案系統與行程。Gate / Event 提供共用的同步與等待機制。可選桌面與終端繪製也位於核心端，使用者程式則以 ecall 請求服務。', source: 'kernel/boot/main.c', href: '/CODE_GUIDE.html', chapter: '完整程式碼導覽' },
   { id: 'shell', title: 'Shell', sub: '指令與管線', privilege: 'U-mode', badge: 'USER APP', icon: 'terminal', tone: 'blue', desc: 'U-mode shell 解析指令，透過 WUWAOS 自訂 syscall ABI 建立行程、存取檔案與串接 pipe，不直接操作裝置。', source: 'user/shell/shell.c', href: '/topics/applications.html', chapter: 'Shell 與應用程式' },
@@ -115,6 +117,7 @@ function moveStep(offset: number) {
 
 const { isDark } = useData()
 onMounted(() => {
+  if (props.embedded) return
   const appearance = localStorage.getItem('vitepress-theme-appearance')
   if (!appearance || appearance === 'auto') isDark.value = false
 })
@@ -307,7 +310,7 @@ onMounted(() => {
   font-family: var(--vp-font-family-base);
 }
 
-.architecture-home :is(h1, h2, h3, p) {
+.system-architecture :is(h1, h2, h3, p) {
   margin: 0;
   padding: 0;
   border: 0;

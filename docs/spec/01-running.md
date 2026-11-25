@@ -61,8 +61,22 @@ wsl -d Ubuntu -- make run-disk CLI_HARTS=2
 
 自動化回歸測試可於 WSL 執行 `python3 -B tools/test_kernel_cli.py`，涵蓋直接開機、Flash 開機、2／3 Hart、管線與 WUFS 重播。[Makefile](https://github.com/johnson931128/WUWAOS/blob/3a3b273/Makefile#L143) · [磁碟載入器](https://github.com/johnson931128/WUWAOS/blob/3a3b273/bootloader/boot.c) · [CLI 測試](https://github.com/johnson931128/WUWAOS/blob/3a3b273/tools/test_kernel_cli.py) · [既有驗收](../SPEC-35-copy-on-write.md#_2026-11-22-qemu-驗證)
 
+### 開機失敗時先看哪裡
+
+| 看到的現象 | 先檢查的階段 |
+| --- | --- |
+| 主機顯示編譯或連結錯誤 | 檢查工具鏈與建置輸出，QEMU 此時可能還沒開始。 |
+| OpenSBI 已出現，載入器回報找不到核心或 journal 待復原 | 檢查掛載的 WUFS 磁碟、`/boot/kernel.elf` 和 [journal 狀態](./09-filesystem.md#寫入到一半重啟怎麼辦)。 |
+| 已出現 `wuwaos/>` | 核心與 Shell 已啟動，可以用 `ps` 確認排程設定，或用 `ls /` 確認能讀取根目錄。 |
+
 ## 從韌體交接到 Shell
 
 下方互動時間線把課本的 Bootstrap 理論對應到 WUWAOS 的每一個記憶體位址與程式碼入口；可切換「磁碟開機」與「直接開機」比較差異。[開機流程補充](../topics/boot.md)
 
 <BootTimeline />
+
+## 恐龍書與課堂筆記
+
+恐龍書第 10 版 §2.5、§2.9–2.10。開機與除錯的 WUWAOS 細節另見 [開機流程](../topics/boot.md)。
+
+- [作業系統服務、載入與核心結構](../theory/02-os-structures.md)

@@ -87,6 +87,10 @@ void syscall_dispatch(TrapFrame *frame) {
 | 取指／讀寫缺頁 | `scause = 12 / 13 / 15`、`stval` | `vm_handle_fault()` 驗證權限並補頁或執行 [COW](./08-virtual-memory.md#寫入時複製) | 補頁成功後 **保留原 `sepc`** 重試該指令；非法存取則終止行程。 |
 | 計時器或外部中斷 | `scause` 最高位為 1 | 時間片到期可切換執行緒，外部 IRQ 交給裝置驅動 | 原執行緒恢復時 **保留原 `sepc`**，從被打斷的指令無縫接續。 |
 
+### TrapFrame 和核心上下文各保存一次什麼
+
+以阻塞的 `read()` 為例，第一次保存發生在由使用者態進入核心時。TrapFrame 留下程式的暫存器和返回位置。第二次發生在核心的讀取函式等待資料時。排程器保存讓這條執行緒回到同一段核心呼叫所需的暫存器與堆疊位置。醒來後先回到核心函式，等到讀取有結果，才把回傳值寫回 TrapFrame，最後以 `sret` 回到使用者程式。 [陷阱組語](https://github.com/johnson931128/WUWAOS/blob/main/arch/riscv/trap.S) · [上下文切換](https://github.com/johnson931128/WUWAOS/blob/main/arch/riscv/swtch.S)
+
 ## 逐步看 CPU 如何返回
 
 切換「系統呼叫」、「合法缺頁」與「計時器中斷」，觀察三條路徑如何處理 `TrapFrame` 與 `sepc`。

@@ -51,6 +51,12 @@ typedef struct ThreadControlBlock {
 } Thread;
 ```
 
+### 同一個程式可以跑出什麼
+
+磁碟上的 ELF 是可載入的程式映像。啟動兩次時，各自建立行程和位址空間，即使兩份記憶體的虛擬位址看起來相同，也能映射到不同頁框。在同一行程建立第二條執行緒時，兩條執行緒則共用行程資源。共享可寫資料需要同步，暫存器與堆疊仍分別保存。
+
+以兩條執行緒共同操作一個行程內的緩衝區為例，程式只需傳遞緩衝區指標。若工作分到兩個不同的行程，可使用 Pipe 等行程間通訊機制，把資料交給另一邊處理。傳遞資源的方式和 CPU 如何逐條派發是兩個獨立的問題。 [行程結構](https://github.com/johnson931128/WUWAOS/blob/main/kernel/proc/process.h) · [執行緒結構](https://github.com/johnson931128/WUWAOS/blob/main/kernel/proc/thread.h)
+
 ## 行程如何建立、換程式和退出
 
 | 操作 | WUWAOS 行為細節 |
@@ -59,6 +65,10 @@ typedef struct ThreadControlBlock {
 | `fork()` | 建立子行程、獨立頁表與核心堆疊；父子先共享常駐頁框（COW），繼承的 FD 指向相同的 OFD。 |
 | `exec()`／`exec_argv()` | 先準備新程式映像與堆疊，成功後才替換原位址空間；沿用原 PID／TID，失敗則安全回到原程式。 |
 | `exit()`／`wait()` | `exit()` 啟動整個行程退出流程；父行程以 `wait(pid, &status)` 或 `wait(-1, &status)` 收取結果。孤兒行程由排程器協助回收。 |
+
+### 一次 Shell 命令怎麼把三個操作串起來
+
+Shell 啟動外部程式時，`fork()` 讓子行程繼承準備好的資源，子行程可以先調整標準輸入、標準輸出，接著用 `exec` 換成目標程式。父行程視需要呼叫 `wait` 收回子行程的退出狀態。管線就是相同做法的延伸：Shell 先安排端點，再啟動各段，讓每個程式從自己的標準輸入與輸出讀寫。 [Shell 執行路徑](https://github.com/johnson931128/WUWAOS/blob/main/user/shell/shell_exec.c)
 
 ## 執行緒如何建立和回收
 

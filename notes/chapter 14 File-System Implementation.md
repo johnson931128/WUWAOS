@@ -1928,8 +1928,8 @@ Backup（備份） 是把資料從 disk 複製到另一個 storage device，例�
 
 Restore（還原） 則是從 backup 把資料救回來。
 Consistency checking 比較像「修理檔案系統結構」；backup / restore 則是「資料真的沒了時，從另一份副本救回」。
-## 2. Log Structured / Journaling File Systems
-第二張投影片是在講比較現代的 recovery 方法：**log structured / journaling file system（日誌式檔案系統）**。
+## 2. 日誌式檔案系統與復原
+日誌式檔案系統（journaling file system）先記錄交易，再依交易更新正式位置。日誌結構式檔案系統（log-structured file system）以追加寫入的 log 作為主要儲存結構。以下例子使用前者的 redo journal。
 
 這裡的重點是：檔案系統在真正修改 metadata 之前，會先把「等等要做哪些修改」寫進一個 **log（日誌）**。每一組相關修改稱為一個 **transaction（交易）**。
 
@@ -1961,7 +1961,7 @@ Consistency checking 比較像「修理檔案系統結構」；backup / restore 
 
 如果 log 裡有 committed transaction，代表這些操作已經被承認，但可能還沒真正全部寫到 file system，所以 recovery 時要 redo（重做），把它們補寫完成。
 
-如果 log 裡有 uncommitted transaction，代表當機前那筆交易還沒完整寫入 log，所以可以丟掉，不執行。**不把那一筆尚未 committed 的 transaction 所描述的檔案系統更新套用到真正的 file-system structures 上**。
+Redo 復原只套用完整且已提交的交易。一般模型會略過尚未提交的交易。WUFS 遇到看似待重播、驗證卻失敗的紀錄時，會拒絕掛載並盡可能保留原狀。
 
 概念如下：
 ```
