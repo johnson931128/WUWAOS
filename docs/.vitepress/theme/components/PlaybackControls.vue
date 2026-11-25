@@ -45,29 +45,56 @@ const status = computed(() => {
 
 <style scoped>
 .playback-controls {
-  --playback-bg: var(--os-surface, var(--vp-c-bg-soft, #f3f5f8));
-  --playback-border: var(--os-border, var(--vp-c-divider, #d7dce3));
-  --playback-text: var(--os-text, var(--vp-c-text-1, #202733));
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.55rem;
-  color: var(--playback-text);
+  gap: 0.5rem;
+  color: var(--os-ink);
 }
 .playback-controls button {
-  min-height: 2.75rem;
-  padding: 0.45rem 0.75rem;
-  border: 1px solid var(--playback-border);
+  min-height: 40px;
+  padding: 0.4rem 0.85rem;
+  border: 1px solid var(--os-line);
   border-radius: var(--os-radius-control);
-  background: var(--playback-bg);
-  color: inherit;
+  background: var(--os-panel);
+  color: var(--os-ink);
   font: inherit;
+  font-size: 0.875rem;
+  font-weight: 600;
   cursor: pointer;
+  transition: background-color var(--os-motion-fast) var(--os-ease), border-color var(--os-motion-fast) var(--os-ease), color var(--os-motion-fast) var(--os-ease);
 }
-.playback-controls button:disabled { opacity: 0.55; cursor: not-allowed; }
-.playback-controls button:focus-visible { outline: 3px solid var(--os-focus); outline-offset: 2px; }
-.playback-controls button[aria-pressed="true"] { border-color: var(--os-accent); background: var(--os-accent); color: var(--os-on-accent); }
-.playback-count { min-width: 3.5rem; font-variant-numeric: tabular-nums; text-align: center; }
+.playback-controls button:hover:not(:disabled) {
+  border-color: var(--os-accent);
+  background: var(--os-accent-soft);
+  color: var(--os-accent);
+}
+.playback-controls button:nth-of-type(4):not(:disabled) {
+  background: var(--os-accent);
+  border-color: var(--os-accent);
+  color: var(--os-on-accent);
+}
+.playback-controls button:nth-of-type(4):hover:not(:disabled) {
+  background: var(--os-accent-hover);
+  color: var(--os-on-accent);
+}
+.playback-controls button:disabled { opacity: 0.45; cursor: not-allowed; }
+.playback-controls button:focus-visible { outline: 2px solid var(--os-focus); outline-offset: 2px; }
+.playback-controls button[aria-pressed="true"] {
+  border-color: var(--os-accent);
+  background: var(--os-accent-soft);
+  color: var(--os-accent);
+}
+.playback-count {
+  margin-left: auto;
+  padding: 0.25rem 0.65rem;
+  border-radius: 999px;
+  background: var(--os-panel);
+  color: var(--os-muted);
+  font-size: 0.875rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
 .visually-hidden {
   position: absolute;
   width: 1px;

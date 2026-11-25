@@ -30,43 +30,42 @@
 
 <style scoped>
 .cow-flow {
-  max-width: 44rem;
-  margin: 1.25rem 0;
-  padding: clamp(.75rem, 3vw, 1.5rem);
-  border: 1px solid var(--os-line);
-  border-radius: var(--os-radius-panel);
-  background: var(--os-panel);
+  max-width: 46rem;
+  margin: 1.5rem 0;
+  padding: clamp(1rem, 2.5vw, 1.5rem);
+  border-radius: var(--os-radius-workspace);
+  background: var(--os-soft);
   color: var(--os-ink);
   font-size: 1rem;
   line-height: 1.65;
 }
-.cow-steps, .cow-branches {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
+.cow-steps, .cow-branches { margin: 0; padding: 0; list-style: none; }
 .cow-steps { text-align: center; }
-.cow-steps li + li { margin-top: .5rem; }
+.cow-steps li + li { margin-top: 0.65rem; }
 .cow-pair {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: .5rem;
-  max-width: 32rem;
-  margin: .5rem auto 0;
+  gap: 0.65rem;
+  max-width: 34rem;
+  margin: 0.65rem auto 0;
 }
 .cow-pair > span:first-child, .cow-pair > span:nth-child(2), .cow-frame, .cow-branches > li {
-  padding: .5rem .75rem;
-  border-radius: var(--os-radius-control);
+  padding: 0.65rem 0.9rem;
+  border-radius: var(--os-radius-panel);
+  box-shadow: var(--os-shadow-panel);
 }
-.cow-pair > span:first-child, .cow-pair > span:nth-child(2), .cow-branches > li { background: var(--os-soft); }
-.cow-frame { max-width: 32rem; margin: 0 auto; background: var(--os-active-soft); color: var(--os-memory); }
-.cow-arrow { display: block; color: var(--os-muted); }
-.cow-fault { color: var(--os-fault); }
+.cow-pair > span:first-child, .cow-pair > span:nth-child(2), .cow-branches > li { background: var(--os-panel); }
+.cow-frame { max-width: 34rem; margin: 0 auto; background: var(--os-accent-soft); color: var(--os-accent); font-weight: 600; }
+.cow-arrow { display: block; color: var(--os-subtle); font-weight: 600; }
+.cow-fault {
+  display: inline-block;
+  padding: 0.3rem 0.85rem;
+  border-radius: 999px;
+  background: var(--os-error-soft);
+  color: var(--os-fault);
+}
 .cow-branches > li + li { margin-top: 0; }
-.cow-branches strong { display: block; }
-figcaption { margin-top: 1rem; color: var(--os-muted); font-size: .9375rem; }
-
-@media (max-width: 500px) {
-  .cow-branches { grid-template-columns: minmax(0, 1fr); }
-}
+.cow-branches strong { display: block; margin-bottom: 0.2rem; color: var(--os-ink); }
+figcaption { margin-top: 1rem; color: var(--os-muted); font-size: 0.875rem; text-align: center; }
+@media (max-width: 500px) { .cow-branches { grid-template-columns: minmax(0, 1fr); } }
 </style>

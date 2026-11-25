@@ -182,8 +182,11 @@ onBeforeUnmount(pause)
 <style scoped>
 .boot-timeline {
   --boot-step-height: 4.5rem;
-  --boot-icon-size: 3.25rem;
-  margin-block: 1.5rem 2rem;
+  --boot-icon-size: 3.15rem;
+  margin-block: 1.5rem 2.25rem;
+  padding: clamp(1.1rem, 2.5vw, 1.5rem);
+  border-radius: var(--os-radius-workspace);
+  background: var(--os-soft);
   color: var(--os-ink);
   font-size: 1rem;
   line-height: 1.7;
@@ -195,22 +198,24 @@ onBeforeUnmount(pause)
   gap: .5rem;
 }
 
-.boot-playback { margin-bottom: .75rem; }
+.boot-playback { margin-bottom: .85rem; }
 
 .boot-controls button {
-  min-height: 44px;
-  padding: .35rem .7rem;
+  min-height: 40px;
+  padding: .4rem .9rem;
   border: 1px solid var(--os-line);
-  border-radius: var(--os-radius-control);
+  border-radius: 999px;
   background: var(--os-panel);
   font-size: .875rem;
   font-weight: 600;
+  transition: background-color var(--os-motion-fast) var(--os-ease), border-color var(--os-motion-fast) var(--os-ease), color var(--os-motion-fast) var(--os-ease);
 }
+.boot-playback button { border-radius: var(--os-radius-control); }
 
 .boot-controls button[aria-pressed="true"] {
   border-color: var(--os-accent);
-  background: var(--os-accent-soft);
-  color: var(--os-accent);
+  background: var(--os-accent);
+  color: var(--os-on-accent);
 }
 
 .boot-controls .boot-play {
@@ -218,9 +223,10 @@ onBeforeUnmount(pause)
   background: var(--os-accent);
   color: var(--os-on-accent);
 }
+.boot-controls .boot-play:hover { background: var(--os-accent-hover); }
 
-.boot-controls button:not(:disabled):hover { box-shadow: inset 0 0 0 1px var(--os-accent); }
-.boot-controls button:disabled { color: var(--os-muted); border-style: dashed; cursor: default; }
+.boot-controls button:not(:disabled):hover { border-color: var(--os-accent); }
+.boot-controls button:disabled { color: var(--os-muted); opacity: 0.45; cursor: default; }
 .boot-timeline button:focus-visible { outline: 2px solid var(--os-focus); outline-offset: 2px; }
 
 .boot-timeline .boot-route-summary {

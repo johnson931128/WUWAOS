@@ -22,7 +22,12 @@ export default defineConfig({
   description: '視覺化探索 WUWAOS：以 C 與 RISC-V RV64 實作、可在 QEMU 啟動的小型作業系統。',
   base: process.env.DOCS_BASE || '/',
   sitemap: { hostname: publicUrl },
-  head: [['meta', { name: 'robots', content: 'index, follow' }]],
+  head: [
+    ['meta', { name: 'robots', content: 'index, follow' }],
+    ['link', { rel: 'preconnect', href: 'https://fonts.googleapis.com' }],
+    ['link', { rel: 'preconnect', href: 'https://fonts.gstatic.com', crossorigin: '' }],
+    ['link', { rel: 'stylesheet', href: 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;600;700&display=swap' }],
+  ],
   transformHead({ pageData }) {
     if (pageData.relativePath === '404.md') return []
     const path = pageData.relativePath.replace(/(^|\/)index\.md$/, '$1').replace(/\.md$/, '.html')

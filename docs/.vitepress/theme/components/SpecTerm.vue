@@ -89,29 +89,38 @@ onBeforeUnmount(close)
 
 <style scoped>
 .vp-doc .spec-term-link {
+  color: inherit;
+  text-decoration: underline;
   text-decoration-style: dotted;
-  text-underline-offset: .22em;
+  text-decoration-color: var(--os-line-strong);
+  text-underline-offset: 0.24em;
+  text-decoration-thickness: 1.5px;
+  transition: color var(--os-motion-fast) var(--os-ease), text-decoration-color var(--os-motion-fast) var(--os-ease);
+}
+.vp-doc .spec-term-link:hover {
+  color: var(--os-accent);
+  text-decoration-color: var(--os-accent);
 }
 .spec-term-link:focus-visible {
   outline: 2px solid var(--os-focus);
   outline-offset: 3px;
-  border-radius: 2px;
+  border-radius: 3px;
 }
 .spec-term-note {
   position: fixed;
   z-index: 45;
   inset: auto;
   width: max-content;
-  max-width: min(23rem, calc(100vw - 24px));
-  padding: .65rem .85rem;
+  max-width: min(24rem, calc(100vw - 24px));
+  padding: 0.75rem 1rem;
   border: 1px solid var(--os-line);
-  border-radius: var(--os-radius-control);
+  border-radius: var(--os-radius-panel);
   background: var(--os-panel);
   color: var(--os-ink);
-  box-shadow: 0 4px 18px rgb(0 0 0 / 15%);
-  font-size: .9375rem;
+  box-shadow: 0 8px 28px rgb(15 23 42 / 12%);
+  font-size: 0.9375rem;
   font-weight: 400;
-  line-height: 1.55;
+  line-height: 1.6;
   white-space: normal;
   overflow-wrap: anywhere;
 }

@@ -4,35 +4,58 @@
 import CowFlow from '../.vitepress/theme/components/CowFlow.vue'
 </script>
 
-程式用[虛擬位址](./glossary.md#virtual-address)存取程式碼和資料。CPU 用這個行程的頁表，把位址換成實體 RAM 的位置。WUWAOS 以 4 KiB 為單位管理，[頁面](./glossary.md#page-frame)是位址空間中的一段，頁框是 RAM 裡放這段內容的位置。
+<div class="tb-box problem">
+<span class="tb-label">本章要解決的問題</span>
 
-## 從虛擬位址到實體頁框
+如果兩個程式都以為自己從位址 `0x400000` 開始執行，它們在實體 RAM 裡豈不是會撞在一起？而且當實體記憶體不夠裝下所有行程、或 `fork()` 剛複製完一個大行程馬上就 `exec()` 覆蓋掉時，該如何既做到行程隔離，又不浪費寶貴的實體 RAM？這就是**虛擬記憶體（Virtual Memory）**、**按需分頁（Demand Paging）**與**寫入時複製（Copy-on-Write）**要聯手解決的問題。
+</div>
 
-WUWAOS 使用 [Sv39](./glossary.md#sv39) 三級頁表。最後一級的 [PTE](./glossary.md#pte) 指出所在頁框與允許的操作。CPU 可把查到的轉譯保存在 [TLB](./glossary.md#tlb)。核心撤銷映射、換頁框或修改權限後，需要同步本地與相關遠端 Hart 的 TLB，再重用舊頁框。
+## 恐龍書核心理論：分頁、按需載入與頁面置換
 
-保留一段合法記憶體時，未必當下就占 RAM。例如 `sbrk()` 可先擴大 [heap](./glossary.md#heap)，第一次讀寫才觸發[缺頁](./glossary.md#page-fault)。核心先查驗位址和權限，再依來源載入程式映像、提供零填充頁，或從 [Swap](./glossary.md#swap) 讀回既有資料。完整準備好頁框才公布有效 PTE，CPU 再重試原指令。
+恐龍書第 9–10 章把虛擬記憶體拆解成三個環環相扣的機制：
+
+1. **分頁與多級頁表（Paging）**：將位址空間切成長度固定的 4 KiB [頁面（Page）](./glossary.md#page-frame)，實體 RAM 切成同樣大小的頁框（Frame）。每個行程擁有獨立頁表，由硬體 MMU 與高速快取 [TLB](./glossary.md#tlb) 負責把虛擬位址轉成實體位址——兩個行程都能用 `0x400000`，卻對應到完全不同的實體頁框。
+2. **按需分頁（Demand Paging）**：程式啟動或呼叫 `sbrk()` 擴大 [heap](./glossary.md#heap) 時，核心不急著立刻配置實體頁框；等到程式第一次存取該頁面觸發[缺頁例外（Page Fault）](./glossary.md#page-fault)時，核心才動態補頁，再重試同一條指令。
+3. **頁面置換與 Swap**：當實體頁框吃緊時，透過置換演算法（如 [FIFO](./glossary.md#fifo)）挑出受害頁框。未修改的 Clean 頁可直接丟棄（日後重讀映像或補零），修改過的 [Dirty 頁](./glossary.md#dirty-page)則必須先寫到磁碟 [Swap](./glossary.md#swap) 區保存。
+
+## 從虛擬位址到實體頁框（WUWAOS Sv39 實例）
+
+WUWAOS 採用 RISC-V 64 位元的 [Sv39](./glossary.md#sv39) 三級頁表（`L2 → L1 → L0`，每頁 4 KiB），並於 `kernel/mm/vm.h` 明確切分使用者虛擬位址空間：
+
+```c
+#define USER_ENTRY              0x400000UL  // 使用者程式碼起始位址
+#define USER_STACK              0x800000UL  // 主執行緒使用者堆疊
+#define USER_THREAD_STACK_BASE  0x900000UL  // 額外執行緒堆疊區（附防護頁）
+```
+
+每次核心撤銷映射、換出頁框或修改 [PTE](./glossary.md#pte) 權限後，都必須同步本地與相關遠端 Hart 的 TLB，確認沒有舊快取殘留後才重用該頁框。
 
 ## 記憶體吃緊時怎麼辦
 
-全系統的預設使用者常駐預算為 128 個頁框，最低可調至 8 個。核心用 [FIFO](./glossary.md#fifo) 選擇最早入駐且符合換出條件的頁框。暫時固定的頁框、含遠端執行中映射的頁框，以及 fork 準備期間受保護的來源都會跳過。
+<div class="tb-box wuwaos">
+<span class="tb-label">WUWAOS 常駐預算與回滾保護</span>
 
-- [Clean 頁](./glossary.md#dirty-page)可用原映像、零頁或有效 Swap 副本重建。
-- Dirty 頁需要保存修改。核心撤銷映射並同步 TLB 後寫出；失敗時還原映射，保留 RAM 資料。沒有可用的 Swap 時，仍可丟棄能重建的頁，無法寫出需要保存的頁會形成資源限制。
+- **常駐頁框上限**：全系統預設使用者常駐預算為 **128 個頁框**（可透過 `vm_control` 調低至 8 個以測試置換壓力）。
+- **FIFO 換出與跳過規則**：核心挑選最早入駐的受害頁框，但會自動跳過暫時固定（Pinned）、含遠端執行中映射，或正在 `fork` 保護中的頁框。
+- **Swap 失敗回滾**：Dirty 頁寫往 Swap 時，核心會先撤銷映射並同步 TLB 再寫出；若磁碟寫入失敗，核心會**還原原映射並保留 RAM 資料**，絕不靜默遺失使用者修改。
+</div>
 
 ## 寫入時複製
 
-`fork()` 先建立獨立子頁表，已在 RAM 的頁面由父子共用頁框。原本可寫的 PTE 暫時清除寫權限，並設置 [COW](./glossary.md#cow) 標記。首次寫入觸發缺頁，核心檢查原權限後依頁框引用數處理：
+傳統 `fork()` 逐頁複製整個父行程記憶體既慢又浪費（因為子行程常常緊接著就呼叫 `exec()`）。透過 **Copy-on-Write（[COW](./glossary.md#cow)）**，`fork()` 只建立獨立子頁表，已在 RAM 中的頁面先由父子共享同一頁框，並把原本可寫的 PTE 暫時清除寫權限、打上 COW 標記：
 
-- 引用大於一份時，複製 4 KiB 並將寫入者的 PTE 改到新頁框。
-- 只剩一份引用時，恢復原頁框的寫權限。
+- 只要雙方都只「讀取」，完全不需要複製記憶體。
+- 任何一方首次「寫入」時觸發 Store Page Fault，核心檢查原權限與頁框引用計數：
+  - **引用 > 1**：分配新 4 KiB 頁框並複製內容，寫入者的 PTE 改指新頁框並恢復可寫。
+  - **引用 = 1**：只剩自己使用，直接恢復原頁框的寫權限，連複製都省了。
 
 <CowFlow />
 
-核心用 `user_copy_to()` 寫入使用者緩衝區時也會先解決 COW。原本唯讀的程式碼維持唯讀。已換出的頁由父子各自持有獨立 Swap 副本。共享頁框換出時整組撤銷映射，必要的資料分別寫入各映射的槽位，失敗就復原整組 PTE。最後一份映射撤銷並完成 TLB 同步後，才歸還頁框。
-
-可用 `vmstat` 查看常駐頁框、COW 缺頁、複製次數和 Swap I/O。`make test-cow` 的既有驗收涵蓋低常駐預算、共享換出、回滾與 2／3 Hart。整機實體配置池耗盡和部分磁區已成功寫入後才失敗仍未驗證。 [VM 實作](https://github.com/johnson931128/WUWAOS/blob/3a3b273/kernel/mm/vm.c) · [COW 規格與量測](../SPEC-35-copy-on-write.md) · [早期分頁規格](../SPEC-10-demand-paging.md)
+核心透過 `user_copy_to()` 寫入使用者緩衝區時也會先解決 COW。原本唯讀的程式碼頁永遠維持唯讀；已換出的頁由父子各自持有獨立 Swap 副本。可用 Shell 指令 `vmstat` 即時觀察常駐頁框、COW 缺頁、複製次數與 Swap I/O。
 
 ## 動手觀察
 
-- [Sv39 位址轉譯](../topics/memory.md)可以選擇虛擬位址，逐層查看頁表索引。
-- [FIFO 置換與 Swap](../topics/paging.md)可以看頁框成功寫出，或在磁碟寫入失敗後恢復原映射。
+- [Sv39 位址轉譯互動工具](../topics/memory.md)：輸入任意虛擬位址，逐層拆解 `VPN[2] / VPN[1] / VPN[0] / offset` 與葉節點 PTE 權限。
+- [FIFO 置換與 Swap 實驗室](../topics/paging.md)：實際比較 Clean 頁丟棄、Dirty 頁換出，以及 Swap 磁碟寫入失敗時的原子回滾。
+
+原始碼與驗收：[VM 實作 (`kernel/mm/vm.c`)](https://github.com/johnson931128/WUWAOS/blob/3a3b273/kernel/mm/vm.c) · [位址佈局 (`kernel/mm/vm.h`)](https://github.com/johnson931128/WUWAOS/blob/3a3b273/kernel/mm/vm.h) · [COW 規格與量測](../SPEC-35-copy-on-write.md) · [早期分頁規格](../SPEC-10-demand-paging.md)
