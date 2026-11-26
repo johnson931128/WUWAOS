@@ -11,15 +11,58 @@
 unsigned char hart_boot_stacks[HART_LIMIT][HART_BOOT_STACK] __attribute__((aligned(16)));
 static unsigned long online_mask;
 static unsigned kernel_lock;
+static unsigned kernel_lock_owner_slot;
+static uint64_t kernel_lock_acquisitions;
+static uint64_t kernel_lock_contentions;
+static uint64_t kernel_lock_wait_ticks;
 
 extern void hart_secondary_entry(void);
 
+int kernel_lock_held(void) {
+    return __atomic_load_n(&kernel_lock_owner_slot, __ATOMIC_RELAXED) == hart_id() + 1U;
+}
+
 void kernel_lock_acquire(void) {
-    while (__atomic_exchange_n(&kernel_lock, 1, __ATOMIC_ACQUIRE)) {}
+    const unsigned self = hart_id() + 1U;
+    if (__atomic_load_n(&kernel_lock_owner_slot, __ATOMIC_RELAXED) == self) {
+        console_puts("[smp] Recursive kernel_lock acquire on hart=");
+        console_number(hart_id());
+        console_putc('\n');
+        kernel_idle();
+    }
+    if (__atomic_exchange_n(&kernel_lock, 1, __ATOMIC_ACQUIRE) != 0) {
+        const uint64_t wait_start = clock_ticks();
+        for (;;) {
+            while (__atomic_load_n(&kernel_lock, __ATOMIC_RELAXED) != 0) {}
+            if (__atomic_exchange_n(&kernel_lock, 1, __ATOMIC_ACQUIRE) == 0) break;
+        }
+        kernel_lock_wait_ticks += clock_ticks() - wait_start;
+        ++kernel_lock_contentions;
+    }
+    __atomic_store_n(&kernel_lock_owner_slot, self, __ATOMIC_RELAXED);
+    ++kernel_lock_acquisitions;
 }
 
 void kernel_lock_release(void) {
+    const unsigned self = hart_id() + 1U;
+    if (__atomic_load_n(&kernel_lock_owner_slot, __ATOMIC_RELAXED) != self) {
+        console_puts("[smp] kernel_lock release without ownership on hart=");
+        console_number(hart_id());
+        console_putc('\n');
+        kernel_idle();
+    }
+    __atomic_store_n(&kernel_lock_owner_slot, 0, __ATOMIC_RELAXED);
     __atomic_store_n(&kernel_lock, 0, __ATOMIC_RELEASE);
+}
+
+void kernel_lock_print_stats(void) {
+    console_puts("Kernel lock: acquires=");
+    console_number((long)kernel_lock_acquisitions);
+    console_puts(" contentions=");
+    console_number((long)kernel_lock_contentions);
+    console_puts(" wait_us=");
+    console_number((long)(kernel_lock_wait_ticks / (CLOCK_TIMEBASE_HZ / 1000000UL)));
+    console_putc('\n');
 }
 
 unsigned long hart_online_mask(void) {

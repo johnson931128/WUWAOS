@@ -104,5 +104,6 @@ void scheduler_print_ready(void) {
     fs_print_cache_stats();
     console_puts("Online hart mask="); console_hex(hart_online_mask());
     console_puts(" kernel_preemptions="); console_number(trap_kernel_preemptions()); console_putc('\n');
+    kernel_lock_print_stats();
     block_print_stats();
 }
